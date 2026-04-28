@@ -7,6 +7,11 @@
 
 ### Fixed
 
+- **REPL 终端闪烁修复。** v0.1 的 `ChatView` 把所有消息放在动态渲染区，
+  Ink 的 `log-update` 在每次输入或新消息到达时都要清屏重绘整片区域，
+  内容超过终端高度时表现为整屏闪烁。改用 Ink 的 `<Static>` 组件包裹
+  已完成消息：渲染一次后写入 scrollback、永不重绘；只有 spinner 留在
+  动态区。动态区面积始终保持几行，从根本上消除闪烁。
 - **Hydration prompt: 语言漂移修复（#6）。** v0.1 的 system prompt 是英文且没有
   "保持源语言"约束，导致中文 README 经 ingest 后被翻译成英文（实际观察到
   `compressionRatio = 0.79` 且整篇英文化）。重写 prompt 加入：

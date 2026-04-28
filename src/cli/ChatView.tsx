@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Text } from 'ink';
+import { Box, Static, Text } from 'ink';
 import Spinner from 'ink-spinner';
 
 export interface DisplayMessage {
@@ -14,18 +14,29 @@ interface Props {
   inFlight: boolean;
 }
 
+/**
+ * 已完成的消息走 <Static>，只渲染一次然后写入终端 scrollback，
+ * 之后任何 React state 变化（输入框打字、spinner 动画）都不会重绘它们。
+ *
+ * 只有 spinner 留在动态渲染区。这样 Ink 的 log-update 每次刷新的面积
+ * 极小，不会触发整屏闪烁。
+ *
+ * 参考 Claude Code 的同款实现思路。
+ */
 export function ChatView({ messages, inFlight }: Props) {
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      {messages.map((m) => (
-        <Box key={m.id} flexDirection="column" marginTop={1}>
-          <Text color={colorFor(m.role)} bold>
-            {labelFor(m.role)}
-            {m.meta ? <Text color="gray"> {m.meta}</Text> : null}
-          </Text>
-          <Text>{m.text}</Text>
-        </Box>
-      ))}
+    <>
+      <Static items={messages}>
+        {(m) => (
+          <Box key={m.id} flexDirection="column" marginTop={1}>
+            <Text color={colorFor(m.role)} bold>
+              {labelFor(m.role)}
+              {m.meta ? <Text color="gray"> {m.meta}</Text> : null}
+            </Text>
+            <Text>{m.text}</Text>
+          </Box>
+        )}
+      </Static>
       {inFlight ? (
         <Box marginTop={1}>
           <Text color="cyan">
@@ -33,7 +44,7 @@ export function ChatView({ messages, inFlight }: Props) {
           </Text>
         </Box>
       ) : null}
-    </Box>
+    </>
   );
 }
 
