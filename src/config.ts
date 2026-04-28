@@ -15,6 +15,13 @@ const ConfigSchema = z.object({
   readOnly: z.boolean(),
   maxToolPayloadBytes: z.number().int().positive(),
   historyFile: z.string().min(1),
+  /**
+   * 额外的可读目录列表（绝对路径）。
+   * 仅扩展读权限：read_file / list_dir 工具会接受落在其中任意一条之内的路径。
+   * 写工具（write_file）不受此项影响——写仍只能落在 workspaceRoot 或 wikiRoot 内。
+   * 目的：让 LLM 能查阅项目外的资料目录（笔记、参考文档等）但不会动到它们。
+   */
+  additionalReadPaths: z.array(z.string()).default([]),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -27,6 +34,7 @@ export interface ConfigOverrides {
   wikiRoot?: string;
   readOnly?: boolean;
   maxToolPayloadBytes?: number;
+  additionalReadPaths?: string[];
 }
 
 const DEFAULTS = {
@@ -45,6 +53,18 @@ function loadFileConfig(): Partial<Config> {
   }
 }
 
+/**
+ * 解析 LLM_WIKI_READ_PATHS 环境变量。
+ * 多条路径用 path.delimiter 分隔（POSIX 是 ':', Windows 是 ';'）。
+ * 例：LLM_WIKI_READ_PATHS=/Users/me/notes:/var/log
+ */
+function parseEnvReadPaths(): string[] | undefined {
+  const raw = process.env.LLM_WIKI_READ_PATHS;
+  if (!raw) return undefined;
+  const items = raw.split(path.delimiter).map((s) => s.trim()).filter(Boolean);
+  return items.length ? items : undefined;
+}
+
 export function loadConfig(overrides: ConfigOverrides = {}): Config {
   const file = loadFileConfig();
   const cwd = process.cwd();
@@ -55,6 +75,12 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     process.env.LLM_WIKI_ROOT ??
     file.wikiRoot ??
     path.join(workspaceRoot, 'wiki-data');
+
+  // additionalReadPaths：CLI flag > env > 配置文件 > 空数组。
+  // 一旦提供，所有路径都规范化为绝对路径（相对路径相对 cwd 解析）。
+  const additionalReadPathsRaw =
+    overrides.additionalReadPaths ?? parseEnvReadPaths() ?? file.additionalReadPaths ?? [];
+  const additionalReadPaths = additionalReadPathsRaw.map((p) => path.resolve(p));
 
   const merged = {
     apiKey: overrides.apiKey ?? process.env.DEEPSEEK_API_KEY ?? file.apiKey ?? '',
@@ -71,6 +97,7 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     maxToolPayloadBytes:
       overrides.maxToolPayloadBytes ?? file.maxToolPayloadBytes ?? DEFAULTS.maxToolPayloadBytes,
     historyFile: path.join(os.homedir(), '.llm-wiki', 'history'),
+    additionalReadPaths,
   };
 
   return ConfigSchema.parse(merged);

@@ -17,6 +17,7 @@ export const readFileTool: ToolDef<typeof params> = {
       wikiRoot: ctx.config.wikiRoot,
       maxPayloadBytes: ctx.config.maxToolPayloadBytes,
       readOnly: ctx.config.readOnly,
+      additionalReadPaths: ctx.config.additionalReadPaths,
     });
     if (!fs.existsSync(safe)) {
       return { ok: false, error: `File does not exist: ${inputPath}` };

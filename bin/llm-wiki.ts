@@ -19,6 +19,13 @@ interface GlobalOpts {
   readOnly?: boolean;
   model?: string;
   root?: string;
+  /** --read-path 可重复，commander 用 collectPaths 累积。 */
+  readPath?: string[];
+}
+
+/** commander 自定义 collector：每次出现 --read-path 把值追加到累计数组里。 */
+function collectPaths(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 const program = new Command();
@@ -28,14 +35,23 @@ program
   .version('0.1.0')
   .option('--read-only', 'Disable file writes.')
   .option('--model <name>', 'Override the LLM model.')
-  .option('--root <dir>', 'Override the wiki storage root.');
+  .option('--root <dir>', 'Override the wiki storage root.')
+  .option(
+    '--read-path <dir>',
+    'Additional readable directory (repeatable). Extends read-only sandbox; writes still locked to workspace + wiki.',
+    collectPaths,
+    [] as string[],
+  );
 
 const configFor = (extra: Partial<Config> = {}): Config => {
   const opts = program.opts<GlobalOpts>();
+  // --read-path 至少一次时覆盖 env / 配置文件；为空数组时让 loadConfig 走更低优先级源。
+  const readPathOverride = opts.readPath && opts.readPath.length > 0 ? opts.readPath : undefined;
   const config = loadConfig({
     readOnly: opts.readOnly,
     model: opts.model,
     wikiRoot: opts.root,
+    additionalReadPaths: readPathOverride,
     ...extra,
   });
   ensureWikiRoot(config);

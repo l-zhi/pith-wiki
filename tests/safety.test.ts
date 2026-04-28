@@ -31,11 +31,18 @@ afterEach(() => {
 });
 
 /** 便捷构造：默认 SafetyOptions，调用方按需覆盖。 */
-const opts = (overrides: Partial<{ readOnly: boolean; maxPayloadBytes: number }> = {}) => ({
+const opts = (
+  overrides: Partial<{
+    readOnly: boolean;
+    maxPayloadBytes: number;
+    additionalReadPaths: string[];
+  }> = {},
+) => ({
   workspaceRoot: workspace,
   wikiRoot: wiki,
   maxPayloadBytes: overrides.maxPayloadBytes ?? 100,
   readOnly: overrides.readOnly ?? false,
+  additionalReadPaths: overrides.additionalReadPaths,
 });
 
 describe('resolveSafePath — 沙箱接受', () => {
@@ -130,6 +137,99 @@ describe('resolveSafePath — 不存在路径的 realpath 攀升', () => {
     // 即使父目录不存在，也不能允许逃逸。
     expect(() =>
       resolveSafePath('/var/never/exists/foo.md', 'write', opts()),
+    ).toThrow(SafetyError);
+  });
+});
+
+describe('resolveSafePath — additionalReadPaths（扩展只读目录）', () => {
+  let extraDir: string;
+  let outsideDir: string;
+
+  beforeEach(() => {
+    extraDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-extra-'));
+    outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-out-'));
+    fs.writeFileSync(path.join(extraDir, 'note.md'), '额外目录里的笔记');
+    fs.writeFileSync(path.join(outsideDir, 'secret.txt'), '不该被读到');
+  });
+
+  afterEach(() => {
+    fs.rmSync(extraDir, { recursive: true, force: true });
+    fs.rmSync(outsideDir, { recursive: true, force: true });
+  });
+
+  it('配置的额外读目录里的文件可被读取', () => {
+    const filePath = path.join(extraDir, 'note.md');
+    const safe = resolveSafePath(filePath, 'read', opts({ additionalReadPaths: [extraDir] }));
+    expect(safe).toBe(fs.realpathSync(filePath));
+  });
+
+  it('额外读目录的子目录里的文件也可读', () => {
+    const subdir = path.join(extraDir, 'sub');
+    fs.mkdirSync(subdir);
+    const filePath = path.join(subdir, 'deep.md');
+    fs.writeFileSync(filePath, 'x');
+    const safe = resolveSafePath(filePath, 'read', opts({ additionalReadPaths: [extraDir] }));
+    expect(safe).toBe(fs.realpathSync(filePath));
+  });
+
+  it('未配置任何额外目录时，额外目录里的文件仍被拒绝', () => {
+    // 锁定默认行为：不传 additionalReadPaths 时只接受 workspace ∪ wiki。
+    const filePath = path.join(extraDir, 'note.md');
+    expect(() => resolveSafePath(filePath, 'read', opts())).toThrow(SafetyError);
+  });
+
+  it('额外读目录"扩展只读"——写入仍被拒绝', () => {
+    // 这是该特性的核心安全边界：读 OK、写 NO。
+    const filePath = path.join(extraDir, 'should-not-write.md');
+    expect(() =>
+      resolveSafePath(filePath, 'write', opts({ additionalReadPaths: [extraDir] })),
+    ).toThrow(SafetyError);
+  });
+
+  it('多条额外目录，命中其中任意一条即可', () => {
+    const otherExtra = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-other-'));
+    fs.writeFileSync(path.join(otherExtra, 'b.md'), 'x');
+    try {
+      const safe = resolveSafePath(path.join(otherExtra, 'b.md'), 'read', opts({
+        additionalReadPaths: [extraDir, otherExtra],
+      }));
+      expect(safe.startsWith(fs.realpathSync(otherExtra))).toBe(true);
+    } finally {
+      fs.rmSync(otherExtra, { recursive: true, force: true });
+    }
+  });
+
+  it('请求的路径在所有额外目录之外仍被拒绝', () => {
+    // outsideDir 没有列入 additionalReadPaths，访问应失败。
+    expect(() =>
+      resolveSafePath(path.join(outsideDir, 'secret.txt'), 'read', opts({
+        additionalReadPaths: [extraDir],
+      })),
+    ).toThrow(SafetyError);
+  });
+
+  it('额外目录内的 symlink 指向沙箱外，realpath 后被拒绝', () => {
+    // 攻击向量：在 extraDir 里建一个软链接指向 outsideDir，企图借 extraDir 白名单逃逸。
+    const link = path.join(extraDir, 'escape');
+    fs.symlinkSync(outsideDir, link);
+    expect(() =>
+      resolveSafePath(path.join(link, 'secret.txt'), 'read', opts({
+        additionalReadPaths: [extraDir],
+      })),
+    ).toThrow(SafetyError);
+  });
+
+  it('readOnly=true 时额外读目录仍可读（只锁写）', () => {
+    const filePath = path.join(extraDir, 'note.md');
+    expect(() =>
+      resolveSafePath(filePath, 'read', opts({ readOnly: true, additionalReadPaths: [extraDir] })),
+    ).not.toThrow();
+  });
+
+  it('空 additionalReadPaths 数组等同于不传（仅 workspace ∪ wiki）', () => {
+    const filePath = path.join(extraDir, 'note.md');
+    expect(() =>
+      resolveSafePath(filePath, 'read', opts({ additionalReadPaths: [] })),
     ).toThrow(SafetyError);
   });
 });

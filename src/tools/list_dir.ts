@@ -22,6 +22,7 @@ export const listDirTool: ToolDef<typeof params> = {
       wikiRoot: ctx.config.wikiRoot,
       maxPayloadBytes: ctx.config.maxToolPayloadBytes,
       readOnly: ctx.config.readOnly,
+      additionalReadPaths: ctx.config.additionalReadPaths,
     });
     if (!fs.existsSync(safe)) {
       return { ok: false, error: `Directory does not exist: ${inputPath}` };

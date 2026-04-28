@@ -194,8 +194,29 @@ tags: agent, retry, reliability · links: error-handling
 | `--read-only` | 全局禁用 `write_file` 工具与所有写盘行为 |
 | `--model <name>` | 覆盖 LLM 模型（默认 `deepseek-chat`） |
 | `--root <dir>` | 覆盖 wiki 存储根目录（默认 `./wiki-data`） |
+| `--read-path <dir>` | 额外可读目录，可重复传。仅扩展读权限，写仍只在 workspace ∪ wiki 内 |
 | `--version` / `-V` | 版本号 |
 | `--help` / `-h` | 帮助 |
+
+**`--read-path` 示例**：
+
+```bash
+# CLI 单次扩展
+llm-wiki --read-path ~/notes --read-path ~/research/papers
+
+# 环境变量（多条用 path.delimiter 分隔——POSIX `:`、Windows `;`）
+LLM_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research llm-wiki
+
+# ~/.llm-wiki/config.json
+{ "additionalReadPaths": ["/Users/me/notes", "/Users/me/research"] }
+```
+
+来源优先级：CLI flag > 环境变量 > 配置文件 > 默认 `[]`。
+
+约束：
+- 仅作用于 `read_file` / `list_dir`；`write_file` 始终被锁在 workspace ∪ wiki。
+- 所有路径经 `realpath` 归一化，符号链接逃逸仍被拒绝。
+- `--read-only` 模式下额外目录依然可读（毕竟它们本来就不允许写）。
 
 ---
 

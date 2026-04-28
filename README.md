@@ -134,6 +134,26 @@ compressionRatio: 0.12
 | `wikiRoot` | `LLM_WIKI_ROOT` | `<cwd>/wiki-data` |
 | `workspaceRoot` | `LLM_WIKI_WORKSPACE` | `<cwd>` |
 | `readOnly` | `LLM_WIKI_READ_ONLY` | `false` |
+| `additionalReadPaths` | `LLM_WIKI_READ_PATHS`（用 `:` / `;` 分隔多条） | `[]` |
+
+### 额外可读目录
+
+默认情况下，`read_file` / `list_dir` 工具只能访问当前工作目录与 `wikiRoot` 之下。
+如果你希望让 LLM 也能查阅项目外的资料目录（笔记库、参考论文等），但**不让它修改**这些目录，可用：
+
+```bash
+# CLI flag（可重复）
+llm-wiki --read-path ~/notes --read-path ~/research/papers
+
+# 环境变量（多条用 : 分隔，Windows 用 ;）
+LLM_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers llm-wiki
+
+# ~/.llm-wiki/config.json
+{ "additionalReadPaths": ["/Users/me/notes", "/Users/me/research/papers"] }
+```
+
+**这只扩展读权限**：写工具 (`write_file`) 仍然只能写到 `workspaceRoot ∪ wikiRoot` 之内。
+所有路径都经 `realpath` 归一化，符号链接逃逸到沙箱外仍会被拒绝。
 
 ## 测试
 

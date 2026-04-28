@@ -7,6 +7,16 @@
 
 ### Added
 
+- **可配置的额外只读目录 `additionalReadPaths`。** 默认情况下 `read_file` /
+  `list_dir` 工具只能访问 `workspaceRoot ∪ wikiRoot`。新增配置项允许把若干外部
+  目录加入"只读白名单"，让 LLM 能查阅项目外的笔记 / 参考资料，但**不能修改**
+  这些目录（`write_file` 仍只锁定在 workspace + wiki）。三种来源：
+  - 全局 CLI flag `--read-path <dir>`（可重复）；
+  - 环境变量 `LLM_WIKI_READ_PATHS`（多条用 `path.delimiter` 分隔）；
+  - 配置文件 `~/.llm-wiki/config.json` 的 `additionalReadPaths` 字段。
+  优先级：flag > env > 配置文件 > 默认 `[]`。所有路径经 `realpath` 归一化，
+  符号链接逃逸仍会被拒绝。`tests/safety.test.ts` 增加 9 用例（21 → 30）覆盖
+  扩展读、写仍被拒、symlink 逃逸、多条目录命中、空数组等边界。
 - **批量 ingest：`--batch <glob>` 与 `--dir <folder>`。** v0.1 只能一次脱水
   一个文件，现在可以一次扫整个文件夹。
   - `--batch 'papers/**/*.md'` 用 fast-glob 语法，支持排除模式。

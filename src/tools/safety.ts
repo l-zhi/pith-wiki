@@ -13,6 +13,11 @@ export interface SafetyOptions {
   wikiRoot: string;
   maxPayloadBytes: number;
   readOnly: boolean;
+  /**
+   * 额外允许读取的目录列表（仅 kind='read' 生效）。
+   * 写操作仍只接受 workspaceRoot ∪ wikiRoot，确保 LLM 不会篡改这些"参考资料"目录。
+   */
+  additionalReadPaths?: string[];
 }
 
 function isWithin(parent: string, child: string): boolean {
@@ -58,10 +63,20 @@ export function resolveSafePath(
 
   const realWorkspace = realPathOrLiteral(opts.workspaceRoot);
   const realWiki = realPathOrLiteral(opts.wikiRoot);
-  const allowed = isWithin(realWorkspace, realCheck) || isWithin(realWiki, realCheck);
+
+  // 写：永远只接受 workspaceRoot ∪ wikiRoot。
+  // 读：上述两者 ∪ 用户配置的 additionalReadPaths（也走 realpath 防 symlink 逃逸）。
+  const allowedRoots: string[] = [realWorkspace, realWiki];
+  if (kind === 'read' && opts.additionalReadPaths?.length) {
+    for (const extra of opts.additionalReadPaths) {
+      allowedRoots.push(realPathOrLiteral(extra));
+    }
+  }
+
+  const allowed = allowedRoots.some((root) => isWithin(root, realCheck));
   if (!allowed) {
     throw new SafetyError(
-      `Path escapes sandbox: ${realCheck} is outside ${realWorkspace} and ${realWiki}`,
+      `Path escapes sandbox: ${realCheck} is outside ${allowedRoots.join(', ')}`,
     );
   }
   return realCheck;
