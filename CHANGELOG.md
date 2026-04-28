@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- **REPL 命令历史记录与回溯。** 启动时从 `~/.llm-wiki/history` 加载最近 20 条
+  命令，REPL 内按 ↑/↓ 浏览（↑ 进入更老，↓ 朝当前方向走，到底回到正在编辑
+  的草稿）。提交（含 slash 命令）会即时追加到内存数组与磁盘文件。
+  - 进入历史前自动暂存当前草稿，从历史回到 -1 时还原。
+  - 修复 `ink-text-input` 已知行为：外部 setValue 不会自动把光标挪到末尾；
+    用 `key={historyIndex}` 强制 remount，让光标在切换历史项时落在末尾。
+  - 历史助手抽到独立模块 `src/cli/history.ts`，便于测试。
+  - 新增 `tests/history.test.ts`（17 用例），覆盖 limit 截尾、UTF-8、IO 容错、
+    跨会话 round-trip。
+- `/help` 输出现在显示历史回溯按键说明。
+
 ### Fixed
 
 - **REPL 终端闪烁修复。** v0.1 的 `ChatView` 把所有消息放在动态渲染区，

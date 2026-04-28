@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import fs from 'node:fs';
 import { Box, Text, useApp, useInput } from 'ink';
 import OpenAI from 'openai';
 import { Agent, AgentError } from '../llm/agent.js';
@@ -9,6 +8,7 @@ import { ChatView, DisplayMessage } from './ChatView.js';
 import { InputBox } from './InputBox.js';
 import { ToolApproval, ApprovalRequest } from './ToolApproval.js';
 import { TokenMeter } from './TokenMeter.js';
+import { appendHistory, loadHistory } from './history.js';
 
 interface Props {
   config: Config;
@@ -27,6 +27,10 @@ export function App({ config, client }: Props) {
   const [inFlight, setInFlight] = useState(false);
   const [usage, setUsage] = useState({ inputTokens: 0, outputTokens: 0 });
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+  // 历史命令：启动时从 ~/.llm-wiki/history 加载最近 N 条；每次提交追加。
+  const [history, setHistory] = useState<string[]>(() =>
+    loadHistory(config.historyFile, HISTORY_LIMIT),
+  );
 
   const abortRef = useRef<AbortController | null>(null);
   const lastInterruptRef = useRef<number>(0);
@@ -80,12 +84,17 @@ export function App({ config, client }: Props) {
     const trimmed = raw.trim();
     if (!trimmed) return;
 
+    // 任何提交（含 slash 命令）都进历史，方便回溯重用。
+    setHistory((prev) => {
+      const next = [...prev, trimmed];
+      return next.length > HISTORY_LIMIT ? next.slice(-HISTORY_LIMIT) : next;
+    });
+    appendHistory(config.historyFile, trimmed);
+
     if (trimmed.startsWith('/')) {
       handleSlashCommand(trimmed);
       return;
     }
-
-    appendHistory(config.historyFile, trimmed);
 
     append({ role: 'user', text: trimmed });
     const ac = new AbortController();
@@ -131,7 +140,10 @@ export function App({ config, client }: Props) {
     if (cmd === '/help') {
       append({
         role: 'system',
-        text: 'Slash commands: /help · /clear · /reset · /exit\nTools: read_file, write_file, list_dir, wiki_ingest, wiki_get, wiki_query',
+        text:
+          'Slash commands: /help · /clear · /reset · /exit\n' +
+          `Up/Down arrows browse the last ${HISTORY_LIMIT} commands.\n` +
+          'Tools: read_file, write_file, list_dir, wiki_ingest, wiki_get, wiki_query',
       });
     } else if (cmd === '/clear') {
       setMessages([{ id: nextId(), role: 'system', text: 'screen cleared' }]);
@@ -157,22 +169,21 @@ export function App({ config, client }: Props) {
       {approval ? <ToolApproval request={approval} /> : null}
       <Box flexDirection="column">
         <TokenMeter inputTokens={usage.inputTokens} outputTokens={usage.outputTokens} />
-        <InputBox disabled={inFlight || approval !== null} onSubmit={handleSubmit} />
+        <InputBox
+          disabled={inFlight || approval !== null}
+          onSubmit={handleSubmit}
+          history={history}
+        />
       </Box>
       {config.readOnly ? <Text color="gray">read-only mode</Text> : null}
     </Box>
   );
 }
 
+/** 历史浏览容量：上下键最多回溯多少条。文件本身不限大小，仅加载尾部。 */
+const HISTORY_LIMIT = 20;
+
 function truncateJson(args: unknown): string {
   const json = JSON.stringify(args);
   return json.length > 80 ? `${json.slice(0, 80)}…` : json;
-}
-
-function appendHistory(file: string, line: string): void {
-  try {
-    fs.appendFileSync(file, `${line}\n`);
-  } catch {
-    // Non-fatal.
-  }
 }
