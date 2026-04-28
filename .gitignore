@@ -1,0 +1,55 @@
+# --- dependencies & build ---
+node_modules/
+dist/
+*.tsbuildinfo
+
+# --- secrets & local config ---
+.env
+.env.*
+!.env.example
+
+# --- logs ---
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- test & coverage ---
+coverage/
+.vitest/
+.nyc_output/
+
+# --- editor / IDE ---
+.vscode/
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# --- runtime / temp ---
+*.tmp
+*.pid
+*.seed
+.cache/
+
+# --- llm-wiki local data ---
+# Wiki entries are user data; keep them out of the repo by default.
+# Remove the next line if you want to version-control your wiki.
+wiki-data/*/
+!wiki-data/.gitkeep
+
+# Per-user history & local config
+.llm-wiki/
+
+# --- Claude Code local artifacts ---
+.claude/
+skills-lock.json
+plans/
