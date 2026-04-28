@@ -10,6 +10,7 @@ import { LibraryService } from '../wiki/library.js';
 import { HydrationService } from '../wiki/hydration.js';
 import { ContextAssembler } from '../wiki/assembler.js';
 import { runBatch } from '../wiki/batch.js';
+import { resolveSafePath, SafetyError } from '../tools/safety.js';
 import { Source } from '../wiki/types.js';
 
 interface BuildArgs {
@@ -49,17 +50,61 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
       const library = new LibraryService(config.wikiRoot);
       const hydrator = new HydrationService(client, config.model, library);
 
+      // 公共读沙箱选项：复用 read_file/list_dir 的同款校验，让 ingest 文件路径
+      // 必须落在 workspaceRoot ∪ wikiRoot ∪ additionalReadPaths 之内。
+      // 防止有人写出 `llm-wiki ingest --file /etc/passwd` 这类调用。
+      const readSandbox = {
+        workspaceRoot: config.workspaceRoot,
+        wikiRoot: config.wikiRoot,
+        maxPayloadBytes: config.maxToolPayloadBytes,
+        readOnly: config.readOnly,
+        additionalReadPaths: config.additionalReadPaths,
+      };
+
       // 批量分支：--batch <glob> 或 --dir <folder>
       if (opts.batch || opts.dir) {
-        const files = await enumerateBatchFiles(opts);
-        if (files.length === 0) {
+        const allFiles = await enumerateBatchFiles(opts);
+        if (allFiles.length === 0) {
           console.error(chalk.yellow('No files matched.'));
           process.exitCode = 1;
           return;
         }
-        console.log(chalk.gray(`Found ${files.length} file(s).`));
+
+        // 严格校验：批内任一文件越界都立即 abort，让用户先把读沙箱配置改对。
+        const outOfSandbox: string[] = [];
+        for (const f of allFiles) {
+          try {
+            resolveSafePath(f, 'read', readSandbox);
+          } catch (err) {
+            if (err instanceof SafetyError) {
+              outOfSandbox.push(f);
+            } else {
+              throw err;
+            }
+          }
+        }
+        if (outOfSandbox.length > 0) {
+          console.error(
+            chalk.red(
+              `Error: ${outOfSandbox.length} file(s) lie outside the read sandbox (workspace + wiki + additionalReadPaths):`,
+            ),
+          );
+          for (const f of outOfSandbox.slice(0, 5)) console.error(chalk.red(`  - ${f}`));
+          if (outOfSandbox.length > 5) {
+            console.error(chalk.red(`  ... and ${outOfSandbox.length - 5} more`));
+          }
+          console.error(
+            chalk.gray(
+              'Add --read-path <dir> or set LLM_WIKI_READ_PATHS to include these locations.',
+            ),
+          );
+          process.exitCode = 1;
+          return;
+        }
+
+        console.log(chalk.gray(`Found ${allFiles.length} file(s).`));
         const summary = await runBatch({
-          files,
+          files: allFiles,
           collection: opts.collection,
           force: !!opts.force,
           concurrency: Math.max(1, opts.concurrency || 3),
@@ -82,7 +127,26 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
         return;
       }
 
-      // 单文件分支（与 v0.1 完全兼容）：--file 或 stdin
+      // 单文件分支（与 v0.1 完全兼容）：--file 或 stdin。
+      // --file 要走读沙箱校验；stdin 因为没路径就跳过（用户主动喂内容）。
+      if (opts.file) {
+        const absFile = path.resolve(opts.file);
+        try {
+          resolveSafePath(absFile, 'read', readSandbox);
+        } catch (err) {
+          if (err instanceof SafetyError) {
+            console.error(
+              chalk.red(
+                `Error: ${absFile} lies outside the read sandbox.\n` +
+                  '       Add --read-path <dir> or LLM_WIKI_READ_PATHS to allow it.',
+              ),
+            );
+            process.exitCode = 1;
+            return;
+          }
+          throw err;
+        }
+      }
       const raw = await readRaw(opts.file);
       const source: Source = opts.url
         ? { type: 'url', value: opts.url }

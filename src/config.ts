@@ -54,15 +54,61 @@ function loadFileConfig(): Partial<Config> {
 }
 
 /**
- * 解析 LLM_WIKI_READ_PATHS 环境变量。
- * 多条路径用 path.delimiter 分隔（POSIX 是 ':', Windows 是 ';'）。
- * 例：LLM_WIKI_READ_PATHS=/Users/me/notes:/var/log
+ * 把 `~` 或 `~/foo` 展开成 `<homedir>/foo`。
+ * 注意：仅识别字面量 `~` 开头，不展开任意 user 的 home（不支持 `~user/`）。
  */
-function parseEnvReadPaths(): string[] | undefined {
-  const raw = process.env.LLM_WIKI_READ_PATHS;
+function expandHome(p: string): string {
+  if (p === '~') return os.homedir();
+  if (p.startsWith('~/') || p.startsWith('~\\')) return path.join(os.homedir(), p.slice(2));
+  return p;
+}
+
+/**
+ * 把环境变量里的"路径列表"解析成数组。
+ *
+ * 支持两种语法（自动判别）：
+ *   1. JSON 数组：以 `[` 开头，例 `["~/notes", "~/papers"]`
+ *   2. 分隔符串：用 path.delimiter 分隔（POSIX 是 `:`，Windows 是 `;`），
+ *      例 `~/notes:/Users/me/papers`
+ *
+ * 两种语法都自动做 `~/` 展开，便于 `.env` 里跨机器复用配置。
+ *
+ * 导出供 tests/config.test.ts 直接单元测试，loadConfig 内部只用环境变量值喂它。
+ */
+export function parseReadPathsFromEnv(raw: string | undefined): string[] | undefined {
   if (!raw) return undefined;
-  const items = raw.split(path.delimiter).map((s) => s.trim()).filter(Boolean);
-  return items.length ? items : undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+
+  let items: string[];
+  // 既识别 `[`（数组）也识别 `{`（对象）作为"JSON 入口"，对象会被立即拒绝。
+  // 这样用户写错语法时拿到的是清晰错误，而不是被悄悄按分隔符切片成奇怪 paths。
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (err) {
+      throw new Error(
+        `LLM_WIKI_READ_PATHS looks like JSON but failed to parse: ${(err as Error).message}`,
+      );
+    }
+    if (!Array.isArray(parsed)) {
+      throw new Error(
+        `LLM_WIKI_READ_PATHS JSON value must be a string array, got ${typeof parsed}`,
+      );
+    }
+    items = parsed.map((v) => {
+      if (typeof v !== 'string') {
+        throw new Error(`LLM_WIKI_READ_PATHS array entry is not a string: ${JSON.stringify(v)}`);
+      }
+      return v;
+    });
+  } else {
+    items = trimmed.split(path.delimiter);
+  }
+
+  const cleaned = items.map((s) => expandHome(s.trim())).filter(Boolean);
+  return cleaned.length ? cleaned : undefined;
 }
 
 export function loadConfig(overrides: ConfigOverrides = {}): Config {
@@ -77,10 +123,13 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     path.join(workspaceRoot, 'wiki-data');
 
   // additionalReadPaths：CLI flag > env > 配置文件 > 空数组。
-  // 一旦提供，所有路径都规范化为绝对路径（相对路径相对 cwd 解析）。
+  // 一旦提供，所有路径都先做 `~/` 展开，再规范化为绝对路径（相对路径相对 cwd）。
   const additionalReadPathsRaw =
-    overrides.additionalReadPaths ?? parseEnvReadPaths() ?? file.additionalReadPaths ?? [];
-  const additionalReadPaths = additionalReadPathsRaw.map((p) => path.resolve(p));
+    overrides.additionalReadPaths ??
+    parseReadPathsFromEnv(process.env.LLM_WIKI_READ_PATHS) ??
+    file.additionalReadPaths ??
+    [];
+  const additionalReadPaths = additionalReadPathsRaw.map((p) => path.resolve(expandHome(p)));
 
   const merged = {
     apiKey: overrides.apiKey ?? process.env.DEEPSEEK_API_KEY ?? file.apiKey ?? '',

@@ -204,8 +204,11 @@ tags: agent, retry, reliability · links: error-handling
 # CLI 单次扩展
 llm-wiki --read-path ~/notes --read-path ~/research/papers
 
-# 环境变量（多条用 path.delimiter 分隔——POSIX `:`、Windows `;`）
-LLM_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research llm-wiki
+# 环境变量 / .env —— JSON 数组（~ 自动展开成 home 目录）
+LLM_WIKI_READ_PATHS=["~/notes", "~/research/papers"]
+
+# 环境变量也支持 path.delimiter 分隔符串（POSIX `:`、Windows `;`）
+LLM_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research
 
 # ~/.llm-wiki/config.json
 { "additionalReadPaths": ["/Users/me/notes", "/Users/me/research"] }
@@ -213,8 +216,17 @@ LLM_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research llm-wiki
 
 来源优先级：CLI flag > 环境变量 > 配置文件 > 默认 `[]`。
 
+环境变量的两种语法（自动判别）：
+- 以 `[` 开头 → 按 JSON 数组解析；语法错或不是字符串数组立即抛错（不静默回退）。
+- 否则按 `path.delimiter` 切分。
+- 两种语法都支持 `~` / `~/foo` 展开成用户 home 目录。
+
 约束：
-- 仅作用于 `read_file` / `list_dir`；`write_file` 始终被锁在 workspace ∪ wiki。
+- **读**：作用于 `read_file` / `list_dir` 与 `ingest` 三类操作。
+- **写**：`write_file` 始终被锁在 `workspaceRoot ∪ wikiRoot`，不受此项扩展。
+- **`ingest` 的源文件**必须落在读沙箱内（workspace ∪ wiki ∪ additionalReadPaths）。
+  对单文件、`--batch <glob>`、`--dir <folder>` 三种模式都生效。沙箱外的源会被立即
+  拒绝并提示用户加 `--read-path` / `LLM_WIKI_READ_PATHS`。
 - 所有路径经 `realpath` 归一化，符号链接逃逸仍被拒绝。
 - `--read-only` 模式下额外目录依然可读（毕竟它们本来就不允许写）。
 

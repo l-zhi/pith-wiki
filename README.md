@@ -145,14 +145,23 @@ compressionRatio: 0.12
 # CLI flag（可重复）
 llm-wiki --read-path ~/notes --read-path ~/research/papers
 
-# 环境变量（多条用 : 分隔，Windows 用 ;）
-LLM_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers llm-wiki
+# 环境变量 / .env —— 推荐 JSON 数组写法，~ 自动展开
+LLM_WIKI_READ_PATHS=["~/notes", "~/research/papers"]
+
+# 环境变量也支持分隔符串（POSIX `:` / Windows `;`）
+LLM_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers
 
 # ~/.llm-wiki/config.json
 { "additionalReadPaths": ["/Users/me/notes", "/Users/me/research/papers"] }
 ```
 
-**这只扩展读权限**：写工具 (`write_file`) 仍然只能写到 `workspaceRoot ∪ wikiRoot` 之内。
+**两层效果**：
+
+1. **读扩展**：`read_file` / `list_dir` 工具能读到这些目录；`write_file` 仍只锁在 `workspaceRoot ∪ wikiRoot`。
+2. **入库门槛**：`llm-wiki ingest --file <p>` 与 `--batch` / `--dir` 模式都强制要求源文件落在
+   `workspaceRoot ∪ wikiRoot ∪ additionalReadPaths` 之内。从沙箱外的路径 ingest 会立即报错并拒绝。
+   这避免了"`llm-wiki ingest --file /etc/passwd`"这种意外把任意系统文件 wiki 化的可能。
+
 所有路径都经 `realpath` 归一化，符号链接逃逸到沙箱外仍会被拒绝。
 
 ## 测试

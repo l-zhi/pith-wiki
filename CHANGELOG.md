@@ -7,6 +7,21 @@
 
 ### Added
 
+- **`.env` 配可读目录支持 JSON 数组语法 + `~/` 展开。** v0.2 早期版本只支持
+  `path.delimiter` 分隔串（`/a:/b:/c`），现在 `LLM_WIKI_READ_PATHS` 还可以写成：
+  ```
+  LLM_WIKI_READ_PATHS=["~/notes", "~/research/papers"]
+  ```
+  自动判别：以 `[` 或 `{` 开头按 JSON 解析，对象/语法错误立刻抛错（不静默回退到分隔符模式）；
+  否则按 `path.delimiter` 切分。两种语法都把 `~` 展开成用户 home 目录。
+  `parseReadPathsFromEnv` 抽到 `src/config.ts` 命名导出，新增
+  `tests/config.test.ts`（24 用例）覆盖两种语法、JSON 错误、空输入、`~` 展开等边界。
+- **`ingest` 强制源文件位于读沙箱内。** 之前 `llm-wiki ingest --file /etc/passwd`
+  能跳过 `read_file` 的沙箱直接读任意系统文件，这是个安全漏洞。现在单文件
+  (`--file`)、glob (`--batch`)、目录 (`--dir`) 三种模式都把源路径走 `resolveSafePath`
+  校验，必须落在 `workspaceRoot ∪ wikiRoot ∪ additionalReadPaths` 之内才进入
+  hydration。批量模式下任一文件越界即整体 abort，提示用户先调整 `--read-path` /
+  `LLM_WIKI_READ_PATHS`。
 - **可配置的额外只读目录 `additionalReadPaths`。** 默认情况下 `read_file` /
   `list_dir` 工具只能访问 `workspaceRoot ∪ wikiRoot`。新增配置项允许把若干外部
   目录加入"只读白名单"，让 LLM 能查阅项目外的笔记 / 参考资料，但**不能修改**
