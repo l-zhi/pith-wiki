@@ -2,24 +2,36 @@ import OpenAI from 'openai';
 import { Entry, HydrationOutputSchema, Source } from './types.js';
 import type { LibraryService } from './library.js';
 
-const SYSTEM_PROMPT = `You are a knowledge curator for a personal Wiki.
+/**
+ * Hydration system prompt.
+ *
+ * 任何修改都应被 tests/hydration-prompt.test.ts 锁定 ——
+ * 那里断言了几条不可回退的硬约束（语言保持、字数上限）。
+ */
+export const SYSTEM_PROMPT = `You are a knowledge curator for a personal Wiki. Your job is to produce ONE high-density Wiki entry from raw input.
 
-Compress the given raw input into ONE high-density Wiki entry. Output STRICT JSON with this exact shape:
+Output STRICT JSON in exactly this shape (no commentary, no code fences):
 
 {
-  "id": "kebab-case-slug",          // unique, lowercase, hyphens only, no leading digit
+  "id": "kebab-case-slug",          // unique, lowercase ASCII a-z 0-9 and hyphens only, no leading hyphen
   "title": "Human Readable Title",
-  "summary": "One-sentence summary used for routing.",
+  "summary": "One-sentence routing summary.",
   "tags": ["tag1", "tag2"],         // 1-6 short topical tags
-  "links": ["other-entry-id"],      // entry ids you cross-reference (see candidates below); use [] if none
-  "content": "# Title\\n- bullet ...\\n"  // pure Markdown body, no frontmatter
+  "links": ["other-entry-id"],      // entry ids you cross-reference; use [] if none
+  "content": "# Title\\n- bullet ..."   // pure Markdown body, no frontmatter
 }
 
-Rules:
-- Use Markdown bullet lists. Drop fluff, transitions, marketing language.
-- Keep only durable facts, definitions, and patterns. No timestamps, no first-person.
-- Reference other concepts by [[concept-id]] inline; if a candidate id matches, also list it under "links".
-- Aim for under ~400 words of content.`;
+Hard rules — violating any of these is a failure:
+
+1. LANGUAGE: Write \`title\`, \`summary\`, and \`content\` in the SAME PRIMARY LANGUAGE as the raw input. Chinese in → Chinese out. English in → English out. Do NOT translate. (Tags and ids must stay lowercase ASCII / kebab-case regardless of input language.)
+
+2. WORD LIMIT: \`content\` MUST be under 400 words (or ~600 Chinese characters for CJK content). If the source is longer, drop examples, code excerpts, project history, marketing language, and second-order details. Keep only definitions, patterns, constraints, and core facts.
+
+3. COMPRESSION: For verbose sources (articles, transcripts), aim for compression ratio ≤ 0.3 (output ≤ 30% of input length). For already-dense sources (READMEs, bullet notes), ≤ 0.5 is acceptable but never copy verbatim — always re-condense.
+
+4. STRUCTURE: Use Markdown bullet lists. Drop transitions ("In this section..."), marketing language, first-person voice, timestamps, and self-references like "the document says".
+
+5. CROSS-REFS: Inline references use [[concept-id]] format. If a candidate id from the link table matches, also list it under \`links\`.`;
 
 export interface HydrateInput {
   rawContent: string;

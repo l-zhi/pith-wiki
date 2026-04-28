@@ -1,6 +1,20 @@
+/**
+ * LibraryService 单元测试。
+ *
+ * 测试范围（仅外部行为）：
+ * - put / get / list / delete 的 CRUD 语义
+ * - 链接索引：正向链接持久化、反向链接懒加载、写入后失效
+ * - frontmatter 序列化与反序列化的边界情况（Date 对象、undefined 字段、中文）
+ * - 扫描器对格式错误文件的容错
+ *
+ * 测试不覆盖（v0 设计决策）：
+ * - HydrationService 调 LLM 的部分（属于 integration test）
+ * - 文件锁 / 并发写入（v0 假定单进程）
+ */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import matter from 'gray-matter';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { LibraryService } from '../src/wiki/library.js';
 import type { Entry } from '../src/wiki/types.js';
@@ -8,13 +22,18 @@ import type { Entry } from '../src/wiki/types.js';
 let tmpDir: string;
 
 beforeEach(() => {
+  // 每个用例都用独立的临时目录，避免互相污染。
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-lib-'));
 });
+
 afterEach(() => {
+  // 用例结束后无条件清理临时目录。
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+/** 便捷构造：返回一个最小可用的 Entry，调用方可用 overrides 覆盖任意字段。 */
 function makeEntry(overrides: Partial<Entry> = {}): Entry {
+  // 注意：compressionRatio 必须显式从 overrides 透传，否则会被 spread 之外的默认值"吃掉"。
   return {
     id: overrides.id ?? 'foo',
     collection: overrides.collection ?? 'tech',
@@ -25,51 +44,250 @@ function makeEntry(overrides: Partial<Entry> = {}): Entry {
     content: overrides.content ?? '# Foo\n- bar',
     source: overrides.source ?? { type: 'inline' },
     updated: overrides.updated ?? new Date().toISOString(),
+    compressionRatio: overrides.compressionRatio,
   };
 }
 
-describe('LibraryService', () => {
-  it('round-trips an entry through put/get', () => {
+describe('LibraryService — 基本 CRUD', () => {
+  it('put 后 get 拿得到完整 Entry，字段一一对应', () => {
     const lib = new LibraryService(tmpDir);
-    const entry = makeEntry({ id: 'agent-design', tags: ['agent', 'arch'] });
+    const entry = makeEntry({
+      id: 'agent-design',
+      title: 'Agent 设计',
+      tags: ['agent', 'arch'],
+    });
+
     lib.put(entry);
     const fetched = lib.get('agent-design');
+
     expect(fetched).not.toBeNull();
+    // 关键字段必须 round-trip 一致（不依赖任何字段顺序假设）。
     expect(fetched!.id).toBe('agent-design');
+    expect(fetched!.title).toBe('Agent 设计');
     expect(fetched!.tags).toEqual(['agent', 'arch']);
+    expect(fetched!.collection).toBe('tech');
   });
 
-  it('builds backlinks lazily and invalidates on write', () => {
+  it('再次 put 同一 id 会覆盖原文件，不产生重复条目', () => {
+    const lib = new LibraryService(tmpDir);
+    lib.put(makeEntry({ id: 'a', title: '原始版本' }));
+    lib.put(makeEntry({ id: 'a', title: '更新版本' }));
+
+    // list 只应返回一条；title 是新版本。
+    const all = lib.list();
+    expect(all.length).toBe(1);
+    expect(all[0].title).toBe('更新版本');
+  });
+
+  it('delete 删除存在的 entry 返回 true，再 get 返回 null', () => {
+    const lib = new LibraryService(tmpDir);
+    lib.put(makeEntry({ id: 'a' }));
+
+    expect(lib.get('a')).not.toBeNull();
+    expect(lib.delete('a', 'tech')).toBe(true);
+    expect(lib.get('a')).toBeNull();
+  });
+
+  it('delete 不存在的 entry 返回 false 而不是抛异常', () => {
+    const lib = new LibraryService(tmpDir);
+    // 防御性检查：用户/LLM 可能误调 delete，应该静默失败。
+    expect(lib.delete('does-not-exist', 'tech')).toBe(false);
+  });
+
+  it('list 不传 collection 返回所有 collection 的条目', () => {
+    const lib = new LibraryService(tmpDir);
+    lib.put(makeEntry({ id: 'a', collection: 'tech' }));
+    lib.put(makeEntry({ id: 'b', collection: 'cooking' }));
+    lib.put(makeEntry({ id: 'c', collection: 'reading' }));
+
+    expect(lib.list().length).toBe(3);
+  });
+
+  it('list 传 collection 仅返回该 collection 的条目', () => {
+    const lib = new LibraryService(tmpDir);
+    lib.put(makeEntry({ id: 'a', collection: 'tech' }));
+    lib.put(makeEntry({ id: 'b', collection: 'cooking' }));
+
+    expect(lib.list('tech').map((e) => e.id)).toEqual(['a']);
+    expect(lib.list('cooking').map((e) => e.id)).toEqual(['b']);
+    expect(lib.list('does-not-exist')).toEqual([]);
+  });
+});
+
+describe('LibraryService — 链接索引（懒加载 + 失效）', () => {
+  it('多对一反向链接：A、B 都指向 C 时，C 的 backward 包含 A 和 B', () => {
+    const lib = new LibraryService(tmpDir);
+    lib.put(makeEntry({ id: 'a', links: ['c'] }));
+    lib.put(makeEntry({ id: 'b', links: ['c'] }));
+    lib.put(makeEntry({ id: 'c' }));
+
+    const node = lib.linkIndex().get('c');
+    expect(node).toBeDefined();
+    expect(node!.backward).toEqual(expect.arrayContaining(['a', 'b']));
+    expect(node!.backward).toHaveLength(2);
+  });
+
+  it('修改 A 的 links 后再 put，反向链接索引同步更新', () => {
     const lib = new LibraryService(tmpDir);
     lib.put(makeEntry({ id: 'a', links: ['b', 'c'] }));
     lib.put(makeEntry({ id: 'b' }));
     lib.put(makeEntry({ id: 'c' }));
 
-    const idx = lib.linkIndex();
+    // 初次：B 和 C 都被 A 引用。
+    let idx = lib.linkIndex();
     expect(idx.get('b')!.backward).toContain('a');
     expect(idx.get('c')!.backward).toContain('a');
 
+    // 改成只指向 C：B 的反向链接里不再有 A。
     lib.put(makeEntry({ id: 'a', links: ['c'] }));
-    const idx2 = lib.linkIndex();
-    expect(idx2.get('b')!.backward).not.toContain('a');
-    expect(idx2.get('c')!.backward).toContain('a');
+    idx = lib.linkIndex();
+    expect(idx.get('b')!.backward).not.toContain('a');
+    expect(idx.get('c')!.backward).toContain('a');
   });
 
-  it('lists entries by collection', () => {
+  it('孤儿链接：A 指向不存在的 ghost 时，索引中也会为 ghost 建一个空节点', () => {
     const lib = new LibraryService(tmpDir);
-    lib.put(makeEntry({ id: 'a', collection: 'tech' }));
-    lib.put(makeEntry({ id: 'b', collection: 'cooking' }));
-    expect(lib.list('tech').map((e) => e.id)).toEqual(['a']);
-    expect(lib.list('cooking').map((e) => e.id)).toEqual(['b']);
-    expect(lib.list().length).toBe(2);
+    // ghost 这个 id 没有对应文件，但 A 在 frontmatter 里引用了它。
+    lib.put(makeEntry({ id: 'a', links: ['ghost'] }));
+
+    const idx = lib.linkIndex();
+    const ghost = idx.get('ghost');
+    expect(ghost).toBeDefined();
+    expect(ghost!.forward).toEqual([]); // 不存在的实体没有正向链接
+    expect(ghost!.backward).toEqual(['a']); // 但有谁引用了它
   });
 
-  it('delete removes file and invalidates index', () => {
+  it('delete 后再查 backward，反向链接索引被刷新', () => {
     const lib = new LibraryService(tmpDir);
-    lib.put(makeEntry({ id: 'a' }));
-    expect(lib.get('a')).not.toBeNull();
-    expect(lib.delete('a', 'tech')).toBe(true);
-    expect(lib.get('a')).toBeNull();
-    expect(lib.delete('a', 'tech')).toBe(false);
+    lib.put(makeEntry({ id: 'a', links: ['b'] }));
+    lib.put(makeEntry({ id: 'b' }));
+
+    expect(lib.linkIndex().get('b')!.backward).toContain('a');
+
+    lib.delete('a', 'tech');
+    // a 文件不存在了，索引应该不再把它列为 b 的 backward。
+    expect(lib.linkIndex().get('b')!.backward).toEqual([]);
+  });
+});
+
+describe('LibraryService — frontmatter 序列化边界', () => {
+  it('frontmatter 中的 Date 对象在读取时归一化为 ISO 字符串', () => {
+    // 模拟用户用 Obsidian 或手工编辑时把 updated 写成 YAML 日期字面量
+    // （不带引号），gray-matter 会解析成 Date 对象。
+    const dir = path.join(tmpDir, 'tech');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'a.md'),
+      [
+        '---',
+        'id: a',
+        'collection: tech',
+        'title: A',
+        'summary: ""',
+        'tags: []',
+        'links: []',
+        'source:',
+        '  type: inline',
+        'updated: 2026-04-28T00:00:00Z', // YAML 会把这解析成 Date
+        '---',
+        '',
+        '# A',
+      ].join('\n'),
+    );
+
+    const lib = new LibraryService(tmpDir);
+    const entry = lib.get('a');
+    expect(entry).not.toBeNull();
+    // updated 必须是 string 类型，否则 zod schema 会校验失败。
+    expect(typeof entry!.updated).toBe('string');
+    expect(entry!.updated).toMatch(/^2026-04-28T/);
+  });
+
+  it('compressionRatio 为 undefined 时不影响 put（YAML 不能 dump undefined）', () => {
+    const lib = new LibraryService(tmpDir);
+    // makeEntry 没设 compressionRatio，put 不应抛 "unacceptable kind of an object to dump"。
+    expect(() => lib.put(makeEntry({ id: 'no-ratio' }))).not.toThrow();
+
+    const entry = lib.get('no-ratio');
+    expect(entry).not.toBeNull();
+    expect(entry!.compressionRatio).toBeUndefined();
+  });
+
+  it('compressionRatio 非空时正常 round-trip', () => {
+    const lib = new LibraryService(tmpDir);
+    lib.put(makeEntry({ id: 'with-ratio', compressionRatio: 0.123 }));
+
+    const entry = lib.get('with-ratio');
+    expect(entry!.compressionRatio).toBeCloseTo(0.123, 5);
+  });
+});
+
+describe('LibraryService — 中文内容', () => {
+  it('中文标题、摘要、标签、正文可以完整 round-trip', () => {
+    const lib = new LibraryService(tmpDir);
+    const entry = makeEntry({
+      id: 'zhongwen-tiaomu',
+      title: '中文条目示例',
+      summary: '一句话中文摘要：用来测试 UTF-8 序列化。',
+      tags: ['中文', '测试', 'utf-8'],
+      content: '# 中文条目示例\n\n- 第一条要点\n- 第二条要点\n- [[other-zh-entry]] 的引用',
+    });
+
+    lib.put(entry);
+    const fetched = lib.get('zhongwen-tiaomu');
+
+    expect(fetched!.title).toBe('中文条目示例');
+    expect(fetched!.summary).toBe('一句话中文摘要：用来测试 UTF-8 序列化。');
+    expect(fetched!.tags).toEqual(['中文', '测试', 'utf-8']);
+    expect(fetched!.content).toContain('第一条要点');
+    expect(fetched!.content).toContain('[[other-zh-entry]]');
+  });
+
+  it('文件落盘后用 gray-matter 读出来 frontmatter 的字段都对', () => {
+    const lib = new LibraryService(tmpDir);
+    const entry = makeEntry({
+      id: 'check-disk',
+      title: '验证落盘格式',
+      tags: ['标签一', '标签二'],
+    });
+    lib.put(entry);
+
+    // 直接读文件，确认 frontmatter 是有效的 YAML 且字段正确。
+    const filePath = path.join(tmpDir, 'tech', 'check-disk.md');
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const parsed = matter(raw);
+
+    expect(parsed.data.id).toBe('check-disk');
+    expect(parsed.data.title).toBe('验证落盘格式');
+    expect(parsed.data.tags).toEqual(['标签一', '标签二']);
+    expect(parsed.content.trim()).toContain('# Foo'); // 正文是 makeEntry 默认值
+  });
+});
+
+describe('LibraryService — 扫描器容错', () => {
+  it('遇到格式错误的 .md 文件时跳过，不影响其他条目', () => {
+    const lib = new LibraryService(tmpDir);
+    // 先写一条正常条目。
+    lib.put(makeEntry({ id: 'good' }));
+
+    // 然后手工写一条 frontmatter 缺失字段的坏条目（id 字段不见了）。
+    const dir = path.join(tmpDir, 'tech');
+    fs.writeFileSync(
+      path.join(dir, 'broken.md'),
+      ['---', 'title: 没有 id 字段', '---', '内容'].join('\n'),
+    );
+
+    // list 应该至少返回 good，不应抛异常。
+    // broken.md 由于 id 字段是文件名兜底（'broken'），可能也会被收纳；
+    // 关键是不能 crash。
+    const ids = lib.list().map((e) => e.id);
+    expect(ids).toContain('good');
+  });
+
+  it('wikiRoot 不存在时 list 返回空数组而不是抛异常', () => {
+    // 给一个明显不存在的路径，模拟首次启动还没建目录的情形。
+    const lib = new LibraryService(path.join(tmpDir, 'never-created'));
+    expect(lib.list()).toEqual([]);
+    expect(lib.linkIndex().size).toBe(0);
   });
 });
