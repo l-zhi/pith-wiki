@@ -7,6 +7,20 @@
 
 ### Added
 
+- **批量 ingest：`--batch <glob>` 与 `--dir <folder>`。** v0.1 只能一次脱水
+  一个文件，现在可以一次扫整个文件夹。
+  - `--batch 'papers/**/*.md'` 用 fast-glob 语法，支持排除模式。
+  - `--dir ./folder` 递归找该目录下所有 `.md`。
+  - `--concurrency <n>` 控制并发（默认 3）；429 限流自动指数退避重试 ≤ 3 次。
+  - `--force` 跳过"源路径已入库"的去重检查，强制重脱水覆盖。
+  - 批内 id 冲突自动追加 `-2`、`-3` 后缀，不会静默覆盖。
+  - 单条失败不影响其它文件；末尾汇总打印 `N ingested · M skipped · K failed`。
+  - 兼容 v0.1 时代用相对路径写入的 `source.value`（双向归一化比较）。
+  - 新增 `src/wiki/batch.ts` 编排器；hydrator 增加 `linkCandidates` /
+    `filenameHint` 可选入参以支持批量场景的 snapshot 链接候选。
+  - 新增 `tests/batch.test.ts`（17 用例），覆盖去重、id 冲突、429 重试、
+    日志格式、退出码、snapshot 行为等。
+  - 新增依赖 `fast-glob`。
 - **REPL 命令历史记录与回溯。** 启动时从 `~/.llm-wiki/history` 加载最近 20 条
   命令，REPL 内按 ↑/↓ 浏览（↑ 进入更老，↓ 朝当前方向走，到底回到正在编辑
   的草稿）。提交（含 slash 命令）会即时追加到内存数组与磁盘文件。

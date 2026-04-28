@@ -31,9 +31,17 @@ REPL 内可用的斜杠命令：`/help`、`/clear`、`/reset`、`/exit`。
 子命令（脚本化或人工操作均可）：
 
 ```bash
-# 把一段原文脱水入库
+# 单文件脱水入库
 llm-wiki ingest --collection tech --file ./paper.md
 # 或从 stdin：cat paper.md | llm-wiki ingest --collection tech
+
+# 批量入库：glob 模式（fast-glob 语法）
+llm-wiki ingest --collection tech --batch 'papers/**/*.md'
+
+# 批量入库：递归整个目录的 .md 文件
+llm-wiki ingest --collection tech --dir ./papers/
+# 默认并发 3、自动 429 退避、源路径已入库会跳过；--force 强制重脱水覆盖
+llm-wiki ingest --collection tech --dir ./papers/ --force --concurrency 5
 
 # 查看一个词条
 llm-wiki get llm-agent-design

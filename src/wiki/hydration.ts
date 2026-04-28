@@ -38,6 +38,16 @@ export interface HydrateInput {
   source: Source;
   collectionId: string;
   autoLink?: boolean;
+  /**
+   * 批量场景下由编排器一次性 snapshot 后注入，避免每文件 list() 触发链接索引颠簸。
+   * 当此项存在时，hydrator 不再调 library.list；候选直接来自这里。
+   */
+  linkCandidates?: Entry[];
+  /**
+   * 源文件名（不含路径），作为提示词里的辅助信号——LLM 看到 filename 倾向于
+   * 产出与之相关的 slug，可以降低批量入库时多个文件被分配同一个 id 的概率。
+   */
+  filenameHint?: string;
 }
 
 export class HydrationService {
@@ -48,16 +58,23 @@ export class HydrationService {
   ) {}
 
   async hydrate(input: HydrateInput): Promise<Entry> {
-    const candidates = input.autoLink
-      ? this.library
-          .list(input.collectionId)
-          .map((e) => `- ${e.id}: ${e.title} — ${e.summary}`)
-          .join('\n')
+    // 候选链接来源优先级：
+    //   1. 显式注入的 linkCandidates（批量场景）
+    //   2. autoLink=true 时通过 library.list 实时取（单文件场景）
+    //   3. 都没有 → 空字符串（不注入候选）
+    const candidateEntries: Entry[] | null = input.linkCandidates
+      ? input.linkCandidates
+      : input.autoLink
+        ? this.library.list(input.collectionId)
+        : null;
+    const candidates = candidateEntries
+      ? candidateEntries.map((e) => `- ${e.id}: ${e.title} — ${e.summary}`).join('\n')
       : '';
 
+    const filenameLine = input.filenameHint ? `Filename: ${input.filenameHint}\n\n` : '';
     const userMessage = candidates
-      ? `Existing entries you may link to:\n${candidates}\n\nRaw input:\n---\n${input.rawContent}\n---`
-      : `Raw input:\n---\n${input.rawContent}\n---`;
+      ? `${filenameLine}Existing entries you may link to:\n${candidates}\n\nRaw input:\n---\n${input.rawContent}\n---`
+      : `${filenameLine}Raw input:\n---\n${input.rawContent}\n---`;
 
     const completion = await this.client.chat.completions.create({
       model: this.model,
