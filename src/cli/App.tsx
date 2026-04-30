@@ -1,14 +1,21 @@
+import path from 'node:path';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import OpenAI from 'openai';
 import { Agent, AgentError } from '../llm/agent.js';
 import { buildContext } from '../tools/index.js';
-import type { Config } from '../config.js';
+import { ensureOutputDir, ensureQueueDirs, ensureWikiRoot, type Config } from '../config.js';
 import { ChatView, DisplayMessage } from './ChatView.js';
 import { InputBox } from './InputBox.js';
 import { ToolApproval, ApprovalRequest } from './ToolApproval.js';
 import { TokenMeter } from './TokenMeter.js';
 import { appendHistory, loadHistory } from './history.js';
+import { QueueIndicator, type QueueWorkerStatus } from './QueueIndicator.js';
+import { TranscriptLogger, deriveTranscriptPath } from './transcript.js';
+import { QueueLockedError, QueueStore } from '../wiki/queue/store.js';
+import { runQueue } from '../wiki/queue/runner.js';
+import { LibraryService } from '../wiki/library.js';
+import { HydrationService } from '../wiki/hydration.js';
 
 interface Props {
   config: Config;
@@ -21,7 +28,12 @@ export function App({ config, client }: Props) {
     {
       id: 'welcome',
       role: 'system',
-      text: `llm-wiki ready. model=${config.model} root=${config.workspaceRoot}\nType /help for commands. Ctrl+C cancels in-flight; press twice to exit.`,
+      text:
+        `llm-wiki ready. model=${config.model} root=${config.workspaceRoot}\n` +
+        `Type /help for commands. Ctrl+C cancels in-flight; press twice to exit.` +
+        (config.transcriptEnabled
+          ? `\ntranscript on (use /transcript to see path)`
+          : '\ntranscript off'),
     },
   ]);
   const [inFlight, setInFlight] = useState(false);
@@ -36,6 +48,62 @@ export function App({ config, client }: Props) {
   const lastInterruptRef = useRef<number>(0);
   const idCounterRef = useRef(0);
   const nextId = () => `m${++idCounterRef.current}`;
+
+  // 队列 worker：随 REPL session 一起起，组件 unmount 时 abort + 释放锁。
+  // 锁被另一个进程占着（用户开了 `queue run`）时降级为只读状态展示。
+  const [queueWorkerStatus, setQueueWorkerStatus] = useState<QueueWorkerStatus>(() => ({
+    mode: config.queueAutoStart ? 'self' : 'off',
+  }));
+  useEffect(() => {
+    if (!config.queueAutoStart) return;
+    ensureQueueDirs(config);
+    const store = new QueueStore(config.queueStatePath);
+    let release: (() => void) | null = null;
+    try {
+      release = store.acquireLock();
+    } catch (err) {
+      if (err instanceof QueueLockedError) {
+        setQueueWorkerStatus({ mode: 'external', externalPid: err.lockingPid });
+        return; // 不起 worker，但 QueueIndicator 仍会 poll 状态展示
+      }
+      setQueueWorkerStatus({ mode: 'error', error: (err as Error).message });
+      return;
+    }
+
+    const ac = new AbortController();
+    const library = new LibraryService(config.wikiRoot);
+    const hydrator = new HydrationService(client, config.model, library);
+
+    const workerPromise = runQueue({
+      store,
+      hydrator,
+      library,
+      concurrency: config.queueConcurrency,
+      maxAttempts: config.queueMaxAttempts,
+      backoffMs: [5_000, 30_000, 120_000],
+      logDir: config.queueLogDir,
+      signal: ac.signal,
+      // REPL 内 worker 不打控制台 log（会污染对话视图）；进度看底部 QueueIndicator
+      // 和 ~/.llm-wiki/queue/logs/<jobId>.log。
+      log: () => {},
+      idleBehavior: 'wait',
+    }).catch((err: Error) => {
+      setQueueWorkerStatus({ mode: 'error', error: err.message });
+    });
+
+    return () => {
+      ac.abort();
+      // 释放锁：worker 的 finally 也会清，但同步释放更稳——React unmount 之后
+      // 进程通常立刻退出，没机会等异步 finally 跑完。
+      try {
+        release?.();
+      } catch {
+        // 锁已被 worker finally 释放也无妨，吞掉。
+      }
+      // 异步 worker 后续可能再 mutate state.json 一次（写最终态），无害。
+      void workerPromise;
+    };
+  }, [config, client]);
 
   const requestApproval = useMemo(
     () =>
@@ -52,6 +120,29 @@ export function App({ config, client }: Props) {
         }),
     [],
   );
+
+  // Transcript logger：每次 REPL session 一份独立 markdown 文件，写在 config.outputDir。
+  // 用 useMemo 而不是 useState，保证整个 session 期间只构造一次；构造时立即写 header。
+  const transcript = useMemo(() => {
+    if (!config.transcriptEnabled) return null;
+    try {
+      ensureOutputDir(config);
+    } catch (err) {
+      // 目录创建失败就放弃 transcript，但不影响 REPL 启动
+      process.stderr.write(`transcript: failed to create outputDir — ${(err as Error).message}\n`);
+      return null;
+    }
+    const startedAt = new Date();
+    const filePath = deriveTranscriptPath(config.outputDir, startedAt);
+    const logger = new TranscriptLogger(filePath);
+    logger.writeHeader({
+      model: config.model,
+      workspaceRoot: config.workspaceRoot,
+      wikiRoot: config.wikiRoot,
+      startedAt: startedAt.toISOString(),
+    });
+    return logger;
+  }, [config]);
 
   const agent = useMemo(() => {
     const ctx = buildContext(config, client, requestApproval);
@@ -97,6 +188,7 @@ export function App({ config, client }: Props) {
     }
 
     append({ role: 'user', text: trimmed });
+    transcript?.recordUser(trimmed);
     const ac = new AbortController();
     abortRef.current = ac;
     setInFlight(true);
@@ -104,17 +196,24 @@ export function App({ config, client }: Props) {
       await agent.send(trimmed, {
         signal: ac.signal,
         events: {
-          onAssistantText: (text) => append({ role: 'assistant', text }),
-          onToolCall: ({ name, args }) =>
+          onAssistantText: (text) => {
+            append({ role: 'assistant', text });
+            transcript?.recordAssistant(text);
+          },
+          onToolCall: ({ name, args }) => {
             append({
               role: 'tool',
               text: `→ ${name}(${truncateJson(args)})`,
-            }),
-          onToolResult: ({ name, ok, preview }) =>
+            });
+            transcript?.recordToolCall(name, args);
+          },
+          onToolResult: ({ name, ok, preview }) => {
             append({
               role: 'tool',
               text: `${ok ? '✓' : '✗'} ${name}: ${preview}`,
-            }),
+            });
+            transcript?.recordToolResult(name, ok, preview);
+          },
           onUsage: (d) =>
             setUsage((u) => ({
               inputTokens: u.inputTokens + d.inputTokens,
@@ -126,13 +225,18 @@ export function App({ config, client }: Props) {
       if ((err as Error).name === 'AbortError') {
         // Already surfaced via the cancel handler.
       } else if (err instanceof AgentError) {
-        append({ role: 'error', text: `[${err.kind}] ${err.message}` });
+        const text = `[${err.kind}] ${err.message}`;
+        append({ role: 'error', text });
+        transcript?.recordError(text);
       } else {
-        append({ role: 'error', text: (err as Error).message });
+        const text = (err as Error).message;
+        append({ role: 'error', text });
+        transcript?.recordError(text);
       }
     } finally {
       abortRef.current = null;
       setInFlight(false);
+      transcript?.endTurn();
     }
   };
 
@@ -141,19 +245,81 @@ export function App({ config, client }: Props) {
       append({
         role: 'system',
         text:
-          'Slash commands: /help · /clear · /reset · /exit\n' +
+          'Slash commands: /help · /clear · /reset · /transcript · /digest [collection] · /exit\n' +
           `Up/Down arrows browse the last ${HISTORY_LIMIT} commands.\n` +
-          'Tools: read_file, write_file, list_dir, wiki_ingest, wiki_get, wiki_query',
+          'Tools: read_file, write_file, list_dir, wiki_ingest, wiki_get, wiki_query, wiki_queue_add, wiki_queue_status',
       });
     } else if (cmd === '/clear') {
       setMessages([{ id: nextId(), role: 'system', text: 'screen cleared' }]);
     } else if (cmd === '/reset') {
       agent.reset();
       setMessages([{ id: nextId(), role: 'system', text: 'conversation reset' }]);
+    } else if (cmd === '/transcript') {
+      append({
+        role: 'system',
+        text: transcript
+          ? `transcript: ${transcript.filePath}`
+          : 'transcript disabled (run with --no-transcript or transcriptEnabled=false)',
+      });
+    } else if (cmd === '/digest' || cmd.startsWith('/digest ')) {
+      const arg = cmd === '/digest' ? '' : cmd.slice('/digest '.length).trim();
+      void handleDigest(arg);
     } else if (cmd === '/exit' || cmd === '/quit') {
       exit();
     } else {
       append({ role: 'error', text: `Unknown command: ${cmd}` });
+    }
+  };
+
+  /**
+   * /digest 处理：
+   *   1. 抓 agent 当前对话快照（自上次 /reset）
+   *   2. 喂给 HydrationService.hydrate，落进 wiki 的 digestCollection
+   *   3. 落库后把新 entry id / 路径告诉用户；transcript 也记一行
+   * 不会 reset agent —— 摘要后用户可能还想继续聊。
+   * 期间设 inFlight=true 防止用户并发触发；hydrate 不支持 abort，所以
+   * Ctrl-C 不会取消（这点跟普通对话不同，一次 hydrate 通常 1-3s 可接受）。
+   */
+  const handleDigest = async (rawArg: string) => {
+    const collection = rawArg.trim() || config.digestCollection;
+    if (!agent.hasContent()) {
+      append({ role: 'error', text: 'no conversation to digest yet (try after at least one user/assistant turn)' });
+      return;
+    }
+    const snapshot = agent.snapshot();
+    if (!snapshot) {
+      append({ role: 'error', text: 'conversation snapshot is empty' });
+      return;
+    }
+    append({
+      role: 'system',
+      text: `digesting current conversation into collection "${collection}"…`,
+    });
+    setInFlight(true);
+    try {
+      ensureWikiRoot(config);
+      // 复用同一个 Library/Hydrator —— agent 内部 toolCtx 没暴露出来，这里
+      // 重建一份成本可忽略；落库后 LibraryService 缓存自动 invalidate
+      const library = new LibraryService(config.wikiRoot);
+      const hydrator = new HydrationService(client, config.model, library);
+      const entry = await hydrator.hydrate({
+        rawContent: snapshot,
+        collectionId: collection,
+        autoLink: true,
+        source: { type: 'inline' },
+        // 关键：对话模式 — 让 hydrator 用 CONVERSATION_SYSTEM_PROMPT，强制保留
+        // 问题视角，避免"成长与低谷期"被笼统压成"成长经历"
+        mode: 'conversation',
+      });
+      const saved = library.put(entry);
+      const filePath = path.join(config.wikiRoot, saved.collection, `${saved.id}.md`);
+      const summary = `digest saved: ${saved.id} (collection=${saved.collection})\n  title: ${saved.title}\n  tags: ${saved.tags.join(', ') || '(none)'}\n  links: ${saved.links.join(', ') || '(none)'}\n  path: ${filePath}`;
+      append({ role: 'system', text: summary });
+      transcript?.recordSystem(`digest saved as ${saved.id} in ${saved.collection} (${filePath})`);
+    } catch (err) {
+      append({ role: 'error', text: `digest failed: ${(err as Error).message}` });
+    } finally {
+      setInFlight(false);
     }
   };
 
@@ -169,6 +335,10 @@ export function App({ config, client }: Props) {
       {approval ? <ToolApproval request={approval} /> : null}
       <Box flexDirection="column">
         <TokenMeter inputTokens={usage.inputTokens} outputTokens={usage.outputTokens} />
+        <QueueIndicator
+          statePath={config.queueStatePath}
+          workerStatus={queueWorkerStatus}
+        />
         <InputBox
           disabled={inFlight || approval !== null}
           onSubmit={handleSubmit}

@@ -7,6 +7,89 @@
 
 ### Added
 
+- **`/digest [collection]` slash 命令：把当前对话压缩成 wiki entry。** 在 REPL
+  里抓 agent 自上次 `/reset` 起的全部 `user` / `assistant` 消息（含 `tool_calls`
+  名字 + 参数），喂给 `HydrationService.hydrate`，产出一条规整的高密度
+  wiki entry 落到 `<wikiRoot>/<digestCollection>/`。从此这条对话的精华就成了
+  可被 `query` / `wiki_query` 检索的正式条目，形成"对话 → wiki 条目 → 下次
+  对话又能查到"的反馈环。
+  - 新增 `Agent.snapshot()`：把 messages 数组格式化成 markdown，原始 tool 返回值
+    不引入（噪声大且关键结论已在下一条 assistant 消息里被复述）。
+  - 新增 `Agent.hasContent()`：reset 后只剩 system prompt 时返回 false。
+  - 新增 config 字段 `digestCollection`（默认 `output`）。
+  - 新增 `tests/agent-snapshot.test.ts`（9 用例）覆盖 reset / 多轮顺序 / tool_calls
+    格式化 / 空 content 不产生空段 / raw tool 返回值不被引入。
+- **Conversation 专用 hydration prompt（`CONVERSATION_SYSTEM_PROMPT`）。**
+  早期 `/digest` 直接套用文档脱水的 `SYSTEM_PROMPT`，把对话当成单边材料压缩，
+  导致用户视角丢失——例如"成长**和低谷期**"被笼统压成"成长经历"。修复：
+  - 新增 `CONVERSATION_SYSTEM_PROMPT`，硬约束"PRESERVE THE QUESTION"——
+    title / summary 必须反映用户问的角度而不是仅总结答案，多对比维度不能合并。
+  - `content` 用 `## Q: <提问>` 段按原对话顺序排列，独立话题不混为一谈；
+    `tags` 必须同时覆盖"用户问的角度"和"答案的领域"。
+  - `HydrateInput` 新增 `mode?: 'document' | 'conversation'`（默认
+    `'document'`），`/digest` 路径传 `'conversation'`，其它入库路径不变。
+  - `tests/hydration-prompt.test.ts` 增加 9 个对话 prompt 不变量断言，
+    其中一条把"成长和低谷期 → 成长经历"反例直接焊死。
+- **transcript 默认目录挪进 wiki-data 树。** `outputDir` 默认从
+  `<workspaceRoot>/output/` 改为 `<wikiRoot>/output/transcripts/`。和数字化
+  的 wiki 条目共享同一棵树根，但子目录 `transcripts/` 屏蔽 `LibraryService` 的
+  collection 扫描（scanAll 只读 `<wikiRoot>/<collection>/*.md` 一层）。
+  这样 raw transcripts 和 `/digest` 产出的 entry 自然共生：前者在
+  `<wikiRoot>/output/transcripts/`，后者在 `<wikiRoot>/output/<id>.md`。
+
+- **REPL 自动 transcript：每 session 一份 markdown 落盘。** 默认开，
+  路径为 `<workspaceRoot>/output/<ISO 时间戳>.md`。每个回合按时间顺序记录
+  `User → tool call → tool result → Assistant`，工具参数与返回值原样保留，
+  方便复盘 LLM 决策路径。同步 `appendFileSync` 落盘，REPL 异常退出（kill -9 /
+  断电）也不丢内容；写失败吞掉一次 stderr 后静默，主流程不受影响。
+  - 新增 `src/cli/transcript.ts`（`TranscriptLogger` + `deriveTranscriptPath`）。
+  - 新增 config 字段 `outputDir`、`transcriptEnabled`，新增 `ensureOutputDir`。
+  - 新增 CLI flag `chat --no-transcript`，新增 REPL slash 命令 `/transcript`
+    显示当前 session 文件路径。
+  - `tests/transcript.test.ts`（7 用例）覆盖文件名派生稳定性、写入顺序、
+    markdown 转义（``` 不会提前关闭代码块）、错误吞掉。
+
+- **REPL 启动时自动起队列 worker（idleBehavior=wait）。** 进 REPL 即拥有
+  "聊天 + 队列消费" 双能力，单进程单事件循环，无子进程、无线程。组件 unmount
+  时 abort 释放锁，worker 协程自然结束。锁被另一进程占着（用户开了 `queue run`）
+  时降级为只读状态展示，不报错。
+  - 新增 `runner.ts` 的 `idleBehavior: 'exit' | 'wait'` 选项 + `idlePollMs`。
+    `'wait'` 模式下空闲不退出，定期重读 state 让外部新增 pending 被自动拾起。
+  - 新增 `src/cli/QueueIndicator.tsx` 状态行，每 2s 轮询 `state.json` 显示
+    `worker / external / off / error` 模式 + `pending / running / completed / dead` 计数。
+  - 新增 config 字段 `queueAutoStart`，新增 CLI flag `chat --no-auto-queue`。
+  - `tests/queue.runner.test.ts` 增加 `idleBehavior=wait` 集成测试，验证
+    外部 mutate 入队后 worker 自动拾起。
+
+- **持久化 ingest 队列。** 把"待 wiki 化的文件"做成跨进程持久化队列，
+  支持任意时刻入队 / 查进度 / 异常重试。
+  - **CLI 子命令族**：`queue add`（去重 enqueue，`deriveJobId = sha1(file|collection)`
+    前 12 hex）、`status`（counts + running + dead + 最近 10 条事件，`--json`
+    机器可读）、`run`（前台 worker，进程锁 + Ctrl-C 排干）、`clear`
+    （`--completed | --dead | --all`）、`retry [ids...] | --all-dead`。
+  - **REPL 工具**：`wiki_queue_add`（带读沙箱校验）、`wiki_queue_status`。
+  - **状态机**：`pending → running → completed`，失败 `attempts++` 不到上限走
+    `pending + nextEarliestRunAt`（退避 5s/30s/2min），到上限归档 `dead`。
+    崩溃恢复在 worker 启动时把残留的 `running` 重置为 `pending`，attempts 不变。
+  - **持久化**：`~/.llm-wiki/queue/state.json` 整文件 atomic write
+    （`.tmp + rename`，仿 LibraryService.put），事件环形缓冲 cap 200 条。
+  - **进程锁**：`state.json.lock` 含 pid + ISO ts，`fs.openSync(... 'wx')`
+    原子创建；陈旧锁（`process.kill(pid, 0)` 探活失败）自动接管。
+  - **每 job 独立 log**：`<queueLogDir>/<jobId>.log`，append-only，`tail -f` 友好。
+  - **collection 级 snapshot**：每次成功 `library.put` 后刷新该 collection 的
+    `linkCandidates / claimedIds`，长跑队列下保持新鲜，避免反链索引颠簸。
+  - **共享底层逻辑**：把原 `batch.ts` 的 `processOne / claimUniqueId /
+    formatResultLine / resolveSourcePath` 抽到 `src/wiki/queue/processJob.ts`，
+    `runBatch` 与 `runQueue` 共用同一份单文件处理逻辑（`tests/batch.test.ts`
+    全部 17 用例零回归）。
+  - 新增 config 字段：`queueStatePath`、`queueLogDir`、`queueConcurrency`（默认
+    `2`）、`queueMaxAttempts`（默认 `3`），新增 `ensureQueueDirs`。
+  - 新增 5 个 queue 模块文件 + 1 个 CLI 命令文件 + 2 个 REPL 工具文件。
+  - 新增 `tests/queue.state.test.ts`（16 用例）+ `tests/queue.runner.test.ts`
+    （10 用例），覆盖：deriveJobId 稳定性、原子写、事件环形缓冲、进程锁
+    + 陈旧锁接管、状态机全分支、并发、崩溃恢复、snapshot 刷新、id 冲突避让、
+    AbortSignal 排干、退避闸门、idleBehavior=wait。
+
 - **`.env` 配可读目录支持 JSON 数组语法 + `~/` 展开。** v0.2 早期版本只支持
   `path.delimiter` 分隔串（`/a:/b:/c`），现在 `LLM_WIKI_READ_PATHS` 还可以写成：
   ```

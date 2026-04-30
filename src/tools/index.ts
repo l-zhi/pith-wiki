@@ -10,6 +10,8 @@ import { listDirTool } from './list_dir.js';
 import { wikiIngestTool } from './wiki_ingest.js';
 import { wikiGetTool } from './wiki_get.js';
 import { wikiQueryTool } from './wiki_query.js';
+import { wikiQueueAddTool } from './wiki_queue_add.js';
+import { wikiQueueStatusTool } from './wiki_queue_status.js';
 
 export type ApprovalAnswer = 'yes' | 'no' | 'always';
 
@@ -57,6 +59,8 @@ export const ALL_TOOLS: AnyToolDef[] = [
   wikiIngestTool,
   wikiGetTool,
   wikiQueryTool,
+  wikiQueueAddTool,
+  wikiQueueStatusTool,
 ];
 
 function zodToJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {

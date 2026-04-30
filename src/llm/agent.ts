@@ -45,6 +45,56 @@ export class Agent {
     this.messages = [{ role: 'system', content: SYSTEM_PROMPT }];
   }
 
+  /**
+   * 当前是否有可摘要的对话内容。
+   * 仅 system prompt（reset 后的初始状态）→ false；至少有一轮 user/assistant → true。
+   */
+  hasContent(): boolean {
+    return this.messages.some((m) => m.role !== 'system');
+  }
+
+  /**
+   * 把当前对话（自上次 reset 起）格式化成 markdown，供 `/digest` 喂给 hydrator。
+   *
+   * 包含：user 提问、assistant 回复、tool_calls 的名字 + 参数（让 digest 知道
+   * LLM 查阅过哪些资料）。tool 角色的原始返回值 byte-blob 不带——通常太长、且
+   * 关键结论已经在下一条 assistant 消息里被复述。
+   */
+  snapshot(): string {
+    const lines: string[] = [];
+    for (const m of this.messages) {
+      if (m.role === 'system') continue;
+      if (m.role === 'user') {
+        const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+        lines.push('## User');
+        lines.push('');
+        lines.push(content.trim());
+        lines.push('');
+      } else if (m.role === 'assistant') {
+        const content = typeof m.content === 'string' ? m.content : '';
+        if (content.trim()) {
+          lines.push('## Assistant');
+          lines.push('');
+          lines.push(content.trim());
+          lines.push('');
+        }
+        const toolCalls = (m as { tool_calls?: ChatCompletionMessageToolCall[] }).tool_calls;
+        if (toolCalls && toolCalls.length) {
+          for (const tc of toolCalls) {
+            lines.push(`### Tool: ${tc.function.name}`);
+            lines.push('```json');
+            // arguments 已经是 JSON 字符串，不强行 re-parse 防止格式被破坏
+            lines.push(tc.function.arguments);
+            lines.push('```');
+            lines.push('');
+          }
+        }
+      }
+      // tool 角色原始返回值不引入：assistant 后续消息通常已经总结过
+    }
+    return lines.join('\n').trim();
+  }
+
   async send(userMessage: string, opts: RunOptions = {}): Promise<string> {
     this.messages.push({ role: 'user', content: userMessage });
     const events = opts.events ?? {};

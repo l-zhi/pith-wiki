@@ -12,6 +12,7 @@ import { ContextAssembler } from '../wiki/assembler.js';
 import { runBatch } from '../wiki/batch.js';
 import { resolveSafePath, SafetyError } from '../tools/safety.js';
 import { Source } from '../wiki/types.js';
+import { buildQueueCommands } from './queueCommands.js';
 
 interface BuildArgs {
   configFor: (overrides?: Partial<Config>) => Config;
@@ -235,13 +236,17 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
       console.log();
       console.log(result.context);
     });
+
+  buildQueueCommands(program, args);
 }
 
 /**
  * 把 --batch <glob> 或 --dir <folder> 展开成绝对路径数组。
  * 都不传时返回 []（理论上不会被调用，但保险起见）。
+ *
+ * 导出供 queue add 命令复用同一份枚举语义。
  */
-async function enumerateBatchFiles(opts: {
+export async function enumerateBatchFiles(opts: {
   batch?: string;
   dir?: string;
 }): Promise<string[]> {

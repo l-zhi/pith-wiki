@@ -64,10 +64,23 @@ buildSubcommands(program, { configFor });
 program
   .command('chat', { isDefault: true })
   .description('Start the interactive REPL (default).')
-  .action(async () => {
+  .option(
+    '--no-auto-queue',
+    'Do not auto-start the queue worker in this REPL session.',
+  )
+  .option(
+    '--no-transcript',
+    'Do not write a markdown transcript of this session to outputDir.',
+  )
+  .action(async (chatOpts) => {
     let config: Config;
     try {
-      config = configFor();
+      // commander 把 --no-auto-queue / --no-transcript 解析为 autoQueue=false / transcript=false。
+      // 仅在显式给出时覆盖配置；不传时保持 configFor 默认。
+      const overrides: Partial<Config> = {};
+      if (chatOpts.autoQueue === false) overrides.queueAutoStart = false;
+      if (chatOpts.transcript === false) overrides.transcriptEnabled = false;
+      config = configFor(overrides);
       requireApiKey(config);
     } catch (err) {
       reportError(err);

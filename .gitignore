@@ -46,6 +46,11 @@ desktop.ini
 wiki-data/*/
 !wiki-data/.gitkeep
 
+# Legacy / overridden transcript outputs at workspace root.
+# The new default outputDir is <wikiRoot>/output/transcripts/, already covered by
+# `wiki-data/*/` above, but keep this for users who set outputDir back to cwd.
+/output/
+
 # Per-user history & local config
 .llm-wiki/
 
