@@ -217,32 +217,40 @@ describe('ContextAssembler — context 渲染', () => {
   });
 });
 
-describe('ContextAssembler — 中文 tokenize 行为（v0 已知局限）', () => {
-  // 实现细节：tokenize 用 JavaScript 正则 /\W+/ 切分，再过滤 length ≤ 1。
-  // JS 里 \W ≡ [^a-zA-Z0-9_]，所以 CJK 字符全部是 \W，会被切掉。
-  // 这意味着 v0 无法用纯中文查询命中纯中文内容。
-  // Roadmap 里已经把"接 jieba/segmenter"列在 v1+。
+describe('ContextAssembler — 中文 bigram tokenize（接入 CJK 后）', () => {
+  // 实现：tokenize 现在分两条管线
+  //   1. ASCII：原 \W+ 切词
+  //   2. CJK：抽出连续 CJK 段，按 2 字符滑窗生成 bigrams
+  // 这让"成长和低谷期" → ["成长","长和","和低","低谷","谷期"] 参与匹配，
+  // 中文查询能在中文 entry 上拿到分数。
 
-  it('纯中文标题用纯中文查询不能命中（已知局限）', () => {
+  it('纯中文标题用纯中文查询能命中', () => {
     lib.put(entry({ id: 'a', title: '设计模式与可靠性' }));
     const r = assembler.query('设计模式');
-    // 锁定当前行为：纯中文查询 + 纯中文标题完全不命中。
-    expect(r.referencedEntries).not.toContain('a');
+    expect(r.referencedEntries).toContain('a');
   });
 
-  it('中英混合：英文 token 能命中，中文部分被忽略', () => {
-    // "agent 设计" 被切成 ["agent"]（"设计" 不到 length > 1 之后还包含 CJK 但被 \W 整体切掉）。
-    // 实际：split("agent 设计", /\W+/) → ["agent", ""]，filter 后只剩 "agent"。
+  it('bigram 命中越多分越高', () => {
+    lib.put(entry({ id: 'long-match', title: '成长和低谷期记录' }));
+    lib.put(entry({ id: 'partial-match', title: '成长记录' }));
+    lib.put(entry({ id: 'unrelated', title: '量子加密学' }));
+
+    const r = assembler.query('成长和低谷');
+    // long-match 命中 ["成长","长和","和低","低谷"]：4 个 bigram × 2(title) = 8
+    // partial-match 命中 ["成长"]：1 × 2 = 2
+    expect(r.referencedEntries[0]).toBe('long-match');
+    expect(r.referencedEntries).not.toContain('unrelated');
+  });
+
+  it('中英混合：两条管线各自命中各自部分', () => {
     lib.put(entry({ id: 'mixed', title: 'agent 设计', tags: ['retry'] }));
     lib.put(entry({ id: 'other', title: '完全无关 quicksort' }));
 
     const r = assembler.query('agent retry');
-    // mixed 命中 title 的 "agent" + tag 的 "retry"，分数 4。
     expect(r.referencedEntries[0]).toBe('mixed');
   });
 
   it('英文 token 能匹配混合内容里的对应词', () => {
-    // 这是中英混合内容下能正确工作的场景：英文关键词查询英文部分。
     lib.put(entry({ id: 'a', title: '可靠性 reliability patterns' }));
     lib.put(entry({ id: 'b', title: '性能 performance tuning' }));
 
@@ -251,10 +259,16 @@ describe('ContextAssembler — 中文 tokenize 行为（v0 已知局限）', () 
     expect(r.referencedEntries).not.toContain('b');
   });
 
-  it('中文 tag 用英文查询不命中（CJK 标签整体被切掉）', () => {
-    // 锁定行为：纯中文 tag 在 v0 检索体系里基本是"装饰"，不参与匹配。
-    lib.put(entry({ id: 'a', title: '无关', tags: ['可靠性'] }));
+  it('中文 tag 用纯中文查询能命中', () => {
+    lib.put(entry({ id: 'a', title: '无关 unrelated', tags: ['可靠性'] }));
     const r = assembler.query('可靠性');
+    expect(r.referencedEntries).toContain('a');
+  });
+
+  it('单字查询不命中（bigram 至少需要两字）', () => {
+    // 单字噪声大，刻意不参与匹配
+    lib.put(entry({ id: 'a', title: '设计模式' }));
+    const r = assembler.query('设');
     expect(r.referencedEntries).not.toContain('a');
   });
 });

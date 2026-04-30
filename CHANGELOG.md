@@ -7,6 +7,33 @@
 
 ### Added
 
+- **检索链路升级：四级检索阶梯 + 中文 bigram + source 路径透传给模型。**
+  彻底解决 v0 的两个软肋——中文查询打不中、模型不知道何时该读原文。
+  - **`ContextAssembler.tokenize` 接入 CJK bigram**。原 `\W+` 切词把整段中文当一
+    个 token，纯中文查询全打不中。新管线分两条：ASCII 走 `\W+`，CJK 抽连续段做
+    2 字符滑窗（`成长和低谷期` → `成长/长和/和低/低谷/谷期`）。不上 jieba/segmentit
+    是因为依赖体积大，bigram 已能覆盖 80%+"问句对题目"召回；真要语义检索得换
+    embedding。单字仍不参与匹配，避免"的/了"高频字噪声。
+  - **新增工具 `wiki_list`**：浏览内存索引（id/title/summary/tags/source），不带
+    content。当 `wiki_query` 关键词打不中时，让模型语义性地从摘要列表挑候选。
+    支持 `collection` / `tags`（OR） / `contains`（id+title+summary 子串）过滤，
+    按 `updated` 降序。
+  - **新增工具 `wiki_read_source`**：读 entry.source.value 指向的原始文件。把
+    "wiki_get → 取 source 路径 → read_file" 三步压成一个动作；source.type ≠ 'file'
+    时清晰报错，路径在沙箱外 / 文件已删除时给出可操作的提示。
+  - **`wiki_query` 返回新增 `references` + `total_entries_in_library`**。每条
+    `references[]` 含 `{id, title, collection, source: {type, value?}}`，模型据此
+    直接判断"hydrated digest 不够细 → wiki_read_source 这条原文"。
+    `total_entries_in_library` 让模型在零结果时知道是"库空"还是"没匹配"。
+    旧字段 `referenced_entries: string[]` 保留兼容。
+  - **SYSTEM_PROMPT 重写**：把检索阶梯（query → list → get → read_source）写成
+    显式 4 步 workflow，标明 wiki_query 是关键词打分而非语义检索、context 是
+    ~30-50% 压缩 digest、Chinese 用 bigram 等关键不变量。模型从此知道"何时该
+    fallback、何时该读原文"。
+  - 新增 `tests/wiki-tools.test.ts`（15 用例覆盖 list 过滤组合 / read_source 各种
+    source.type 与沙箱失败路径 / query 新字段形状）；更新 `tests/assembler.test.ts`
+    把"v0 已知中文局限"6 条断言翻转成"接入 bigram 后能正常工作"。
+
 - **REPL slash 命令实时提示 + Tab 补全。** 在输入框打 `/` 会立即弹出全部 slash
   命令的清单（`/help` / `/clear` / `/reset` / `/transcript` / `/digest` / `/exit`），
   按命令前缀实时过滤；Tab 触发补全（1 个匹配 → 完整补全；多匹配 → 最长公共前缀，
