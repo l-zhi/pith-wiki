@@ -41,14 +41,14 @@ desktop.ini
 .cache/
 
 # --- llm-wiki local data ---
-# Wiki entries are user data; keep them out of the repo by default.
-# Remove the next line if you want to version-control your wiki.
-wiki-data/*/
-!wiki-data/.gitkeep
+# Wiki 默认存放在 ~/.llm-wiki/wiki-data（不在 repo 内，自然被忽略）。
+# 如果用户用 LLM_WIKI_ROOT 或配置把 wikiRoot 指回项目内的 ./wiki-data，
+# 这一条保证那份本地数据不会被误提交。
+/wiki-data/
 
-# Legacy / overridden transcript outputs at workspace root.
-# The new default outputDir is <wikiRoot>/output/transcripts/, already covered by
-# `wiki-data/*/` above, but keep this for users who set outputDir back to cwd.
+# 旧默认 / 用户重写过的 transcript 输出目录。当前默认 outputDir 是
+# <wikiRoot>/output/transcripts/，跟 wikiRoot 同根。下面这条是给把 outputDir
+# 设回项目 cwd 的用户兜底。
 /output/
 
 # Per-user history & local config

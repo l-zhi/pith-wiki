@@ -336,7 +336,7 @@ compressionRatio: 0.12
 | `apiKey` | `DEEPSEEK_API_KEY` | _必填_（仅 ingest 与 REPL 需要） |
 | `baseURL` | `LLM_WIKI_BASE_URL` | `https://api.deepseek.com` |
 | `model` | `LLM_WIKI_MODEL` | `deepseek-chat` |
-| `wikiRoot` | `LLM_WIKI_ROOT` | `<cwd>/wiki-data` |
+| `wikiRoot` | `LLM_WIKI_ROOT` | `~/.llm-wiki/wiki-data` |
 | `workspaceRoot` | `LLM_WIKI_WORKSPACE` | `<cwd>` |
 | `readOnly` | `LLM_WIKI_READ_ONLY` | `false` |
 | `additionalReadPaths` | `LLM_WIKI_READ_PATHS`（用 `:` / `;` 分隔多条） | `[]` |
@@ -379,26 +379,37 @@ LLM_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers
 
 ## 文件落在哪
 
-```
-<workspaceRoot>/                         # 默认 cwd
-└── wiki-data/                           # 默认 wikiRoot
-    ├── tech/                            # collection（被 LibraryService 索引）
-    │   └── agent-loop.md                # entry：YAML frontmatter + Markdown body
-    ├── reading/                         # collection
-    └── output/                          # collection（默认 digestCollection）
-        ├── agent-retry-policy.md        # /digest 产出的 wiki entry（被索引）
-        └── transcripts/                 # raw transcripts 子目录（不被索引）
-            └── 2026-04-30T08-15-32-100Z.md   # 每次 REPL session 一份
+所有 llm-wiki 的本地数据都在 `~/.llm-wiki/` 下，**不沾染任何 workspace**：
 
+```
 ~/.llm-wiki/
 ├── config.json                          # 可选用户配置
 ├── history                              # REPL 上下键的命令历史（最近 N 条）
+├── wiki-data/                           # 默认 wikiRoot —— 你的整套 wiki
+│   ├── tech/                            # collection（被 LibraryService 索引）
+│   │   └── agent-loop.md                # entry：YAML frontmatter + Markdown body
+│   ├── reading/                         # collection
+│   └── output/                          # collection（默认 digestCollection）
+│       ├── agent-retry-policy.md        # /digest 产出的 wiki entry（被索引）
+│       └── transcripts/                 # raw transcripts 子目录（不被索引）
+│           └── 2026-04-30T08-15-32-100Z.md   # 每次 REPL session 一份
 └── queue/
     ├── state.json                       # 持久化队列状态（jobs + 事件环形缓冲）
     ├── state.json.lock                  # worker 持锁时存在；含 pid/ts
     └── logs/
         └── <jobId>.log                  # 每个 job 的独立 append-only 日志
 ```
+
+> **从早期版本升级**：v0.1～v0.2 默认把 wiki 写在 `<workspaceRoot>/wiki-data/`，
+> 容易被误提交进项目仓库。当前默认改成 `~/.llm-wiki/wiki-data/`。已经在项目目录
+> 下积了内容的用户：
+>
+> ```bash
+> mv ./wiki-data ~/.llm-wiki/wiki-data
+> # 或者保留原位置：在 ~/.llm-wiki/config.json 里写
+> #   { "wikiRoot": "/Users/me/code/llm-wiki/wiki-data" }
+> # 也可以用 env：export LLM_WIKI_ROOT=$PWD/wiki-data
+> ```
 
 ## 典型 day-to-day 工作流
 

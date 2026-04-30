@@ -157,11 +157,15 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   const cwd = process.cwd();
   const workspaceRoot =
     overrides.workspaceRoot ?? process.env.LLM_WIKI_WORKSPACE ?? file.workspaceRoot ?? cwd;
+  // wikiRoot 默认放在 ~/.llm-wiki/wiki-data：与队列状态、命令历史、配置同源在
+  // 用户 home 下。这样多个 workspace 共享同一份 wiki，且 git 不会无意把数据
+  // 提交进项目仓库（旧默认 <workspaceRoot>/wiki-data 容易误入版本控制）。
+  // 想把 wiki 跟 workspace 绑在一起的用户可设 LLM_WIKI_ROOT 或配置文件。
   const wikiRoot =
     overrides.wikiRoot ??
     process.env.LLM_WIKI_ROOT ??
     file.wikiRoot ??
-    path.join(workspaceRoot, 'wiki-data');
+    path.join(os.homedir(), '.llm-wiki', 'wiki-data');
   const resolvedWikiRoot = path.resolve(wikiRoot);
 
   // additionalReadPaths：CLI flag > env > 配置文件 > 空数组。

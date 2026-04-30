@@ -5,6 +5,20 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **`wikiRoot` 默认值挪到 `~/.llm-wiki/wiki-data`。** 旧默认是
+  `<workspaceRoot>/wiki-data/`——容易被无意提交进项目仓库，且多个 workspace
+  无法共享同一份 wiki。新默认让所有 llm-wiki 本地数据（wiki / config /
+  history / 队列状态 / 队列日志）都集中在 `~/.llm-wiki/` 下。
+  - **升级方式**：旧用户已经在项目下攒了条目时手动 `mv ./wiki-data
+    ~/.llm-wiki/wiki-data`；想保留原位置在 `~/.llm-wiki/config.json` 里
+    写 `"wikiRoot": "<绝对路径>"` 或 export `LLM_WIKI_ROOT`。
+  - `.gitignore` 同步：去掉 `wiki-data/*/` + `!wiki-data/.gitkeep` 这套
+    特例，换成更直白的 `/wiki-data/`——给那些把 wikiRoot 设回项目内的
+    用户兜底，避免他们的 wiki 数据误入版本控制。
+  - 删除 `wiki-data/.gitkeep`（旧默认占位符，新默认下没意义）。
+
 ### Added
 
 - **`/digest [collection]` slash 命令：把当前对话压缩成 wiki entry。** 在 REPL
