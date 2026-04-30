@@ -7,6 +7,36 @@
 
 ### Added
 
+- **多 provider 配置：CLI / 环境变量 / 配置文件 / `/provider` slash 命令任选一种切换。**
+  llm-wiki 一直只走单一 OpenAI-compatible endpoint（默认 DeepSeek）。现在 config
+  里能并列声明多个 provider，按需在它们之间切换，整个 v0 单 provider 行为完全保留——
+  不写 `providers` 字段就还是老样子。
+  - **配置形式**（`~/.llm-wiki/config.json`）：
+    ```jsonc
+    {
+      "providers": {
+        "deepseek": { "baseURL": "https://api.deepseek.com", "model": "deepseek-chat", "apiKeyEnv": "DEEPSEEK_API_KEY" },
+        "qwen":     { "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus", "apiKeyEnv": "DASHSCOPE_API_KEY" },
+        "openai":   { "baseURL": "https://api.openai.com/v1", "model": "gpt-4o-mini", "apiKeyEnv": "OPENAI_API_KEY" }
+      },
+      "activeProvider": "deepseek"
+    }
+    ```
+    每个 entry：`baseURL` + `model` 必填；`apiKey`（字面）或 `apiKeyEnv`（env 变量名）二选一。
+  - **激活 provider 的优先级**：CLI `--provider <name>` > env `LLM_WIKI_PROVIDER` >
+    config `activeProvider`。指向不存在的 entry 会 fail-fast（避免静默回退）。
+  - **REPL `/provider` slash 命令**：
+    - `/provider`（无参）→ 列出全部配置的 provider，标 `*` 表示当前激活，缺 key 的
+      条目带 `(no key — set apiKey or apiKeyEnv)` 提示
+    - `/provider qwen` → 切换 + 隐式 reset 对话（不同模型不该共享 history）
+    - 切换瞬间 `client` / `agent` 整条 useMemo 链自动重建，无需重启进程
+  - **架构**：App.tsx prop 改为 `initialConfig`，在组件内 `useMemo` 派生出当前
+    生效的 `config`（按 active provider 把 apiKey/baseURL/model overlay 上去）。
+    现有 `config.X` 调用面零迁移成本。`createClient` 从 `bin/llm-wiki.ts` 移进
+    App.tsx 的 useMemo（CLI 子命令仍直接用工具内的 hydrator/client，不受影响）。
+  - 11 个新增 config 测试覆盖 `resolveProviderEntry` 优先级、`applyActiveProvider`
+    overlay 与不存在 entry 的报错、`loadConfig` 端到端的 CLI > env > file 优先级。
+
 - **持久化索引 `<wikiRoot>/index.json`：冷启动免去全量 scanAll。**
   LibraryService 现在把 entryCache 防抖（默认 5s）写到磁盘；下次启动若磁盘
   cache 比 collection 目录新鲜（mtime 比较），直接跳过 `readFileSync + matter.parse`

@@ -188,7 +188,46 @@ llm-wiki list --collection tech
 
 ### 全局开关
 
-`--read-only`（禁用一切写入）、`--model <name>`、`--root <dir>`、`--read-path <dir>`（可重复）。
+`--read-only`（禁用一切写入）、`--model <name>`、`--root <dir>`、`--read-path <dir>`（可重复）、`--provider <name>`。
+
+### 多 provider 切换
+
+llm-wiki 走的是 OpenAI-compatible 协议——任何同协议的服务（DeepSeek / Qwen
+DashScope / OpenAI / Moonshot Kimi / Zhipu GLM / OpenRouter / Groq / 本地
+Ollama …）都能直接接入。在 `~/.llm-wiki/config.json` 里并列声明多条：
+
+```jsonc
+{
+  "providers": {
+    "deepseek": { "baseURL": "https://api.deepseek.com", "model": "deepseek-chat", "apiKeyEnv": "DEEPSEEK_API_KEY" },
+    "qwen":     { "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus", "apiKeyEnv": "DASHSCOPE_API_KEY" },
+    "openai":   { "baseURL": "https://api.openai.com/v1", "model": "gpt-4o-mini", "apiKeyEnv": "OPENAI_API_KEY" },
+    "kimi":     { "baseURL": "https://api.moonshot.cn/v1", "model": "moonshot-v1-32k", "apiKeyEnv": "MOONSHOT_API_KEY" },
+    "ollama":   { "baseURL": "http://localhost:11434/v1", "model": "llama3.1:70b", "apiKey": "ollama" }
+  },
+  "activeProvider": "deepseek"
+}
+```
+
+每个 entry 的 API key：`apiKey`（字面，不推荐写在 JSON 里）或 `apiKeyEnv`（env 变量名）。
+
+切换方式（优先级从高到低）：
+
+```bash
+llm-wiki --provider qwen                  # 仅当前命令
+LLM_WIKI_PROVIDER=qwen llm-wiki           # 当前 shell session
+# config.json 里 "activeProvider": "qwen" → 持久默认
+```
+
+REPL 内动态切换：
+
+```
+› /provider                # 列出全部，* 标当前
+› /provider qwen           # 切换；隐式 /reset 对话（不同模型不共享 history）
+```
+
+provider 必须支持 **function calling + JSON mode** 才能完整工作；缺前者 REPL
+agent loop 卡死，缺后者 `wiki_ingest` / `/digest` 失败。
 
 ## 多终端协作
 
@@ -393,9 +432,11 @@ compressionRatio: 0.12
 
 | 字段 | 环境变量 | 默认 |
 | --- | --- | --- |
-| `apiKey` | `DEEPSEEK_API_KEY` | _必填_（仅 ingest 与 REPL 需要） |
+| `apiKey` | `DEEPSEEK_API_KEY` | _必填_（仅 ingest 与 REPL 需要；多 provider 模式下被 active entry 覆盖） |
 | `baseURL` | `LLM_WIKI_BASE_URL` | `https://api.deepseek.com` |
 | `model` | `LLM_WIKI_MODEL` | `deepseek-chat` |
+| `providers` | _（无 env，复杂结构）_ | `{}`（详见 [多 provider 切换](#多-provider-切换)） |
+| `activeProvider` | `LLM_WIKI_PROVIDER` | _未设_（CLI `--provider` 优先） |
 | `wikiRoot` | `LLM_WIKI_ROOT` | `~/.llm-wiki/wiki-data` |
 | `workspaceRoot` | `LLM_WIKI_WORKSPACE` | `<cwd>` |
 | `readOnly` | `LLM_WIKI_READ_ONLY` | `false` |

@@ -11,7 +11,6 @@ import {
   type Config,
 } from '../src/config.js';
 import { ZodError } from 'zod';
-import { createClient } from '../src/llm/client.js';
 import { buildSubcommands } from '../src/cli/subcommands.js';
 import { App } from '../src/cli/App.js';
 
@@ -21,6 +20,8 @@ interface GlobalOpts {
   root?: string;
   /** --read-path 可重复，commander 用 collectPaths 累积。 */
   readPath?: string[];
+  /** --provider <name>：选 config.providers 里某条作为 active 入口。 */
+  provider?: string;
 }
 
 /** commander 自定义 collector：每次出现 --read-path 把值追加到累计数组里。 */
@@ -41,6 +42,10 @@ program
     'Additional readable directory (repeatable). Extends read-only sandbox; writes still locked to workspace + wiki.',
     collectPaths,
     [] as string[],
+  )
+  .option(
+    '--provider <name>',
+    'Use a named provider entry from config.providers (overrides LLM_WIKI_PROVIDER and config.activeProvider).',
   );
 
 const configFor = (extra: Partial<Config> = {}): Config => {
@@ -52,6 +57,7 @@ const configFor = (extra: Partial<Config> = {}): Config => {
     model: opts.model,
     wikiRoot: opts.root,
     additionalReadPaths: readPathOverride,
+    activeProvider: opts.provider,
     ...extra,
   });
   ensureWikiRoot(config);
@@ -91,8 +97,9 @@ program
       reportError(err);
       process.exit(1);
     }
-    const client = createClient(config);
-    const instance = render(React.createElement(App, { config, client }));
+    // App 自己持有 client：REPL 内 /provider 切换需要重建 client + agent，
+    // 留给 App 统一控制（bin 只负责传初始 config）。
+    const instance = render(React.createElement(App, { config }));
     await instance.waitUntilExit();
   });
 

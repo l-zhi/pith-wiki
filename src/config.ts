@@ -16,10 +16,47 @@ dotenv.config({
   override: true,
 });
 
+/**
+ * 多 provider 配置：每个条目对应一个 OpenAI-compatible endpoint。
+ *
+ * 用法（在 ~/.llm-wiki/config.json 里）：
+ *   {
+ *     "providers": {
+ *       "deepseek": { "baseURL": "https://api.deepseek.com", "model": "deepseek-chat", "apiKeyEnv": "DEEPSEEK_API_KEY" },
+ *       "qwen":     { "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus", "apiKeyEnv": "DASHSCOPE_API_KEY" },
+ *       "openai":   { "baseURL": "https://api.openai.com/v1", "model": "gpt-4o-mini", "apiKeyEnv": "OPENAI_API_KEY" }
+ *     },
+ *     "activeProvider": "deepseek"
+ *   }
+ *
+ * 优先级 activeProvider：CLI `--provider` > env `LLM_WIKI_PROVIDER` > 配置文件
+ *
+ * 字段：
+ *   - apiKey:    字面 key（不推荐写在 config.json 里，会被签入 git）
+ *   - apiKeyEnv: env 变量名，loadConfig 时取 process.env[apiKeyEnv]
+ *   - baseURL / model：照常
+ *
+ * 切换 provider 时机：
+ *   - CLI 调用：传 `--provider <name>`，整个 process 用这个
+ *   - REPL 内：用 `/provider <name>` slash 命令，App.tsx 重建 client + agent
+ *     （隐式 reset 对话——不同模型不该共享 history）
+ */
+const ProviderSchema = z.object({
+  baseURL: z.string().url(),
+  model: z.string().min(1),
+  apiKey: z.string().optional(),
+  apiKeyEnv: z.string().optional(),
+});
+export type ProviderConfig = z.infer<typeof ProviderSchema>;
+
 const ConfigSchema = z.object({
   apiKey: z.string().default(''),
   baseURL: z.string().url(),
   model: z.string().min(1),
+  /** Multi-provider map（可选）。空 → 走顶层 apiKey/baseURL/model（v0 行为）。 */
+  providers: z.record(z.string(), ProviderSchema).default({}),
+  /** 当前激活的 provider key（必须出现在 providers 里）。空 → 不切换。 */
+  activeProvider: z.string().optional(),
   workspaceRoot: z.string().min(1),
   wikiRoot: z.string().min(1),
   readOnly: z.boolean(),
@@ -99,6 +136,8 @@ export interface ConfigOverrides {
   apiKey?: string;
   baseURL?: string;
   model?: string;
+  providers?: Record<string, ProviderConfig>;
+  activeProvider?: string;
   workspaceRoot?: string;
   wikiRoot?: string;
   readOnly?: boolean;
@@ -284,6 +323,11 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       overrides.transcriptEnabled ?? file.transcriptEnabled ?? DEFAULTS.transcriptEnabled,
     digestCollection:
       overrides.digestCollection ?? file.digestCollection ?? DEFAULTS.digestCollection,
+    // multi-provider：providers 表来自 file（不接受 env，结构复杂），activeProvider
+    // 走 CLI > env > file。Zod 校验之后再 overlay 到顶层 apiKey/baseURL/model。
+    providers: overrides.providers ?? file.providers ?? {},
+    activeProvider:
+      overrides.activeProvider ?? process.env.LLM_WIKI_PROVIDER ?? file.activeProvider,
   };
 
   const parsed = ConfigSchema.parse(merged);
@@ -293,7 +337,49 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
     ...wd,
     path: path.resolve(expandHome(wd.path)),
   }));
-  return parsed;
+  // 应用 active provider：把对应 entry 的 apiKey/baseURL/model 覆盖到顶层，
+  // 让现有调用方（agent / hydrator）继续读 config.apiKey 等字段不需要改。
+  return applyActiveProvider(parsed);
+}
+
+/**
+ * 把 entry.apiKey / apiKeyEnv 折成最终的 apiKey 字符串。
+ * 优先级：字面 apiKey > env[apiKeyEnv]。两者都没给 → 空串。
+ */
+export function resolveProviderEntry(entry: ProviderConfig): {
+  apiKey: string;
+  baseURL: string;
+  model: string;
+} {
+  const fromEnv = entry.apiKeyEnv ? (process.env[entry.apiKeyEnv] ?? '') : '';
+  const apiKey = entry.apiKey && entry.apiKey.length > 0 ? entry.apiKey : fromEnv;
+  return { apiKey, baseURL: entry.baseURL, model: entry.model };
+}
+
+/**
+ * 把 activeProvider 指向的 entry 覆盖到顶层 apiKey/baseURL/model。
+ * 没设 activeProvider，或 providers map 里找不到该 key → 原样返回（v0 单一 provider 行为）。
+ *
+ * 显式找不到 entry 但 activeProvider 非空 → 抛 Error。这是用户明确选择的 provider
+ * 不存在；silent fallback 容易让人 debug 半天。
+ */
+export function applyActiveProvider(parsed: Config): Config {
+  const name = parsed.activeProvider;
+  if (!name) return parsed;
+  const entry = parsed.providers[name];
+  if (!entry) {
+    throw new Error(
+      `activeProvider="${name}" not found in providers map. ` +
+        `Configured: ${Object.keys(parsed.providers).join(', ') || '(empty)'}`,
+    );
+  }
+  const resolved = resolveProviderEntry(entry);
+  return {
+    ...parsed,
+    apiKey: resolved.apiKey,
+    baseURL: resolved.baseURL,
+    model: resolved.model,
+  };
 }
 
 export function ensureWikiRoot(config: Config): void {

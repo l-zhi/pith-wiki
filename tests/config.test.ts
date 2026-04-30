@@ -7,7 +7,13 @@
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { parseReadPathsFromEnv } from '../src/config.js';
+import {
+  applyActiveProvider,
+  loadConfig,
+  parseReadPathsFromEnv,
+  resolveProviderEntry,
+  type Config,
+} from '../src/config.js';
 
 describe('parseReadPathsFromEnv — JSON 数组语法', () => {
   it('标准 JSON 数组被解析成路径数组', () => {
@@ -142,5 +148,214 @@ describe('process.env 端到端（loadConfig 钩进 LLM_WIKI_READ_PATHS）', () 
   it('从真实 process.env 取到分隔符串并解析', () => {
     process.env.LLM_WIKI_READ_PATHS = `/tmp/a${path.delimiter}/tmp/b`;
     expect(parseReadPathsFromEnv(process.env.LLM_WIKI_READ_PATHS)).toEqual(['/tmp/a', '/tmp/b']);
+  });
+});
+
+/**
+ * Multi-provider 解析测试。
+ *
+ * 重点：
+ *   1. resolveProviderEntry 优先级（apiKey 字面 > apiKeyEnv > 空）
+ *   2. applyActiveProvider 把 entry 覆盖到顶层 apiKey/baseURL/model
+ *   3. activeProvider 指向不存在的 entry → 抛错（不能 silent 回退）
+ *   4. loadConfig 端到端：CLI override > env > 配置文件 activeProvider
+ */
+describe('multi-provider — resolveProviderEntry', () => {
+  let savedEnv: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    savedEnv = {
+      QWEN_KEY: process.env.QWEN_KEY,
+      DEEPSEEK_KEY: process.env.DEEPSEEK_KEY,
+    };
+  });
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it('字面 apiKey 直接返回', () => {
+    const r = resolveProviderEntry({
+      baseURL: 'https://api.example.com',
+      model: 'm',
+      apiKey: 'literal-key',
+    });
+    expect(r).toEqual({ apiKey: 'literal-key', baseURL: 'https://api.example.com', model: 'm' });
+  });
+
+  it('apiKeyEnv → 从 process.env 取值', () => {
+    process.env.QWEN_KEY = 'sk-from-env';
+    const r = resolveProviderEntry({
+      baseURL: 'https://api.example.com',
+      model: 'm',
+      apiKeyEnv: 'QWEN_KEY',
+    });
+    expect(r.apiKey).toBe('sk-from-env');
+  });
+
+  it('字面 apiKey 和 apiKeyEnv 都给 → 字面优先', () => {
+    process.env.QWEN_KEY = 'env-key';
+    const r = resolveProviderEntry({
+      baseURL: 'https://api.example.com',
+      model: 'm',
+      apiKey: 'literal',
+      apiKeyEnv: 'QWEN_KEY',
+    });
+    expect(r.apiKey).toBe('literal');
+  });
+
+  it('字面 apiKey 是空串 → 退化到 apiKeyEnv', () => {
+    process.env.QWEN_KEY = 'env-key';
+    const r = resolveProviderEntry({
+      baseURL: 'https://api.example.com',
+      model: 'm',
+      apiKey: '',
+      apiKeyEnv: 'QWEN_KEY',
+    });
+    expect(r.apiKey).toBe('env-key');
+  });
+
+  it('两者都没给 → 空串（让 require API key 在调用时报错）', () => {
+    const r = resolveProviderEntry({ baseURL: 'https://api.example.com', model: 'm' });
+    expect(r.apiKey).toBe('');
+  });
+});
+
+describe('multi-provider — applyActiveProvider', () => {
+  function baseConfig(extra: Partial<Config> = {}): Config {
+    return {
+      apiKey: 'top-level-key',
+      baseURL: 'https://top-level.example.com',
+      model: 'top-level-model',
+      providers: {},
+      activeProvider: undefined,
+      workspaceRoot: '/tmp/ws',
+      wikiRoot: '/tmp/wiki',
+      readOnly: false,
+      maxToolPayloadBytes: 100_000,
+      historyFile: '/tmp/h',
+      additionalReadPaths: [],
+      queueStatePath: '/tmp/q/state.json',
+      queueLogDir: '/tmp/q/logs',
+      queueConcurrency: 2,
+      queueMaxAttempts: 3,
+      queueAutoStart: true,
+      watchDirs: [],
+      watchAutoStart: true,
+      outputDir: '/tmp/out',
+      transcriptEnabled: true,
+      digestCollection: 'output',
+      ...extra,
+    } as Config;
+  }
+
+  it('activeProvider 未设 → 顶层值原样返回（v0 单 provider 行为）', () => {
+    const result = applyActiveProvider(baseConfig());
+    expect(result.apiKey).toBe('top-level-key');
+    expect(result.baseURL).toBe('https://top-level.example.com');
+    expect(result.model).toBe('top-level-model');
+  });
+
+  it('activeProvider 指向有效 entry → entry 的值覆盖顶层', () => {
+    const cfg = baseConfig({
+      providers: {
+        qwen: {
+          baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          model: 'qwen-plus',
+          apiKey: 'qwen-literal',
+        },
+      },
+      activeProvider: 'qwen',
+    });
+    const result = applyActiveProvider(cfg);
+    expect(result.apiKey).toBe('qwen-literal');
+    expect(result.baseURL).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1');
+    expect(result.model).toBe('qwen-plus');
+    // 非 provider 字段保持
+    expect(result.workspaceRoot).toBe('/tmp/ws');
+  });
+
+  it('activeProvider 指向不存在的 entry → 抛错（避免静默用顶层 fallback）', () => {
+    const cfg = baseConfig({
+      providers: {
+        qwen: { baseURL: 'https://x', model: 'q' },
+      },
+      activeProvider: 'openai',
+    });
+    expect(() => applyActiveProvider(cfg)).toThrow(/not found/);
+  });
+});
+
+describe('multi-provider — loadConfig 端到端', () => {
+  let savedEnv: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    savedEnv = {
+      LLM_WIKI_PROVIDER: process.env.LLM_WIKI_PROVIDER,
+      DEEPSEEK_KEY: process.env.DEEPSEEK_KEY,
+      QWEN_KEY: process.env.QWEN_KEY,
+    };
+  });
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  });
+
+  it('CLI override 的 activeProvider 覆盖 env', () => {
+    process.env.LLM_WIKI_PROVIDER = 'qwen';
+    process.env.QWEN_KEY = 'qwen-env';
+    process.env.DEEPSEEK_KEY = 'deepseek-env';
+    const cfg = loadConfig({
+      activeProvider: 'deepseek',
+      providers: {
+        deepseek: {
+          baseURL: 'https://api.deepseek.com',
+          model: 'deepseek-chat',
+          apiKeyEnv: 'DEEPSEEK_KEY',
+        },
+        qwen: {
+          baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          model: 'qwen-plus',
+          apiKeyEnv: 'QWEN_KEY',
+        },
+      },
+    });
+    // CLI 赢：active 是 deepseek
+    expect(cfg.activeProvider).toBe('deepseek');
+    expect(cfg.apiKey).toBe('deepseek-env');
+    expect(cfg.model).toBe('deepseek-chat');
+  });
+
+  it('env LLM_WIKI_PROVIDER 在没 CLI override 时被采用', () => {
+    process.env.LLM_WIKI_PROVIDER = 'qwen';
+    process.env.QWEN_KEY = 'qwen-from-env';
+    const cfg = loadConfig({
+      providers: {
+        deepseek: { baseURL: 'https://api.deepseek.com', model: 'deepseek-chat' },
+        qwen: {
+          baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+          model: 'qwen-plus',
+          apiKeyEnv: 'QWEN_KEY',
+        },
+      },
+    });
+    expect(cfg.activeProvider).toBe('qwen');
+    expect(cfg.apiKey).toBe('qwen-from-env');
+    expect(cfg.model).toBe('qwen-plus');
+  });
+
+  it('providers 空 + activeProvider 也空 → 完全 v0 行为（顶层默认）', () => {
+    delete process.env.LLM_WIKI_PROVIDER;
+    const cfg = loadConfig({});
+    expect(cfg.activeProvider).toBeUndefined();
+    expect(cfg.providers).toEqual({});
+    // baseURL 走 DEFAULTS
+    expect(cfg.baseURL).toBe('https://api.deepseek.com');
   });
 });

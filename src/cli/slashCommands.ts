@@ -31,6 +31,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: 'Distill current conversation into a wiki entry (optional collection arg).',
     takesArg: true,
   },
+  {
+    name: '/provider',
+    description: 'Show or switch active LLM provider (use without arg to list configured ones).',
+    takesArg: true,
+  },
   { name: '/exit', description: 'Exit the REPL.', aliases: ['/quit'] },
 ];
 

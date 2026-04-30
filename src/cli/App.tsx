@@ -1,10 +1,16 @@
 import path from 'node:path';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
-import OpenAI from 'openai';
 import { Agent, AgentError } from '../llm/agent.js';
+import { createClient } from '../llm/client.js';
 import { buildContext } from '../tools/index.js';
-import { ensureOutputDir, ensureQueueDirs, ensureWikiRoot, type Config } from '../config.js';
+import {
+  ensureOutputDir,
+  ensureQueueDirs,
+  ensureWikiRoot,
+  resolveProviderEntry,
+  type Config,
+} from '../config.js';
 import { ChatView, DisplayMessage } from './ChatView.js';
 import { InputBox } from './InputBox.js';
 import { ToolApproval, ApprovalRequest } from './ToolApproval.js';
@@ -20,19 +26,49 @@ import { LibraryService } from '../wiki/library.js';
 import { HydrationService } from '../wiki/hydration.js';
 
 interface Props {
+  /**
+   * 启动时的 config（已经 applyActiveProvider 过；apiKey/baseURL/model 是当前
+   * provider 的值）。REPL 内通过 `/provider` 切换时不会改写这个对象，而是
+   * 用 activeProviderName state + useMemo 派生出运行时 config 喂给下游。
+   */
   config: Config;
-  client: OpenAI;
 }
 
-export function App({ config, client }: Props) {
+export function App({ config: initialConfig }: Props) {
   const { exit } = useApp();
+  // 当前生效的 provider 名（来自 initialConfig.activeProvider；undefined = 没用
+  // multi-provider，走顶层 apiKey/baseURL/model）。
+  const [activeProviderName, setActiveProviderName] = useState<string | undefined>(
+    () => initialConfig.activeProvider,
+  );
+
+  // 把当前 provider overlay 到 config 上。下面所有 `config.X` 都读这个派生值，
+  // /provider 切换时整棵 useMemo 链（client → agent → hydrator）自动重建。
+  const config = useMemo<Config>(() => {
+    if (!activeProviderName) return initialConfig;
+    const entry = initialConfig.providers[activeProviderName];
+    if (!entry) return initialConfig; // 兜底；slash 命令切换前已经校验过
+    const resolved = resolveProviderEntry(entry);
+    return {
+      ...initialConfig,
+      apiKey: resolved.apiKey,
+      baseURL: resolved.baseURL,
+      model: resolved.model,
+      activeProvider: activeProviderName,
+    };
+  }, [initialConfig, activeProviderName]);
+
+  // OpenAI client 跟随 config；切换 provider 时自动重建。
+  const client = useMemo(() => createClient(config), [config]);
+
   const [messages, setMessages] = useState<DisplayMessage[]>([
     {
       id: 'welcome',
       role: 'system',
       text:
-        `llm-wiki ready. model=${config.model} root=${config.workspaceRoot}\n` +
-        `Type "/" for command suggestions (Tab completes). Ctrl+C cancels in-flight; press twice to exit.` +
+        `llm-wiki ready. model=${config.model} root=${config.workspaceRoot}` +
+        (activeProviderName ? ` provider=${activeProviderName}` : '') +
+        `\nType "/" for command suggestions (Tab completes). Ctrl+C cancels in-flight; press twice to exit.` +
         (config.transcriptEnabled
           ? `\ntranscript on (use /transcript to see path)`
           : '\ntranscript off'),
@@ -320,11 +356,92 @@ export function App({ config, client }: Props) {
     } else if (cmd === '/digest' || cmd.startsWith('/digest ')) {
       const arg = cmd === '/digest' ? '' : cmd.slice('/digest '.length).trim();
       void handleDigest(arg);
+    } else if (cmd === '/provider' || cmd.startsWith('/provider ')) {
+      const arg = cmd === '/provider' ? '' : cmd.slice('/provider '.length).trim();
+      handleProvider(arg);
     } else if (cmd === '/exit' || cmd === '/quit') {
       exit();
     } else {
       append({ role: 'error', text: `Unknown command: ${cmd}` });
     }
+  };
+
+  /**
+   * /provider 处理：
+   *   - 无参 → 列出所有配置的 provider，标注当前激活、缺 key 的条目
+   *   - 有参 → 校验 + 切换：setActiveProviderName 触发 useMemo 链重建
+   *     （config → client → agent），相当于隐式 reset 对话——不同模型不该共享 history
+   */
+  const handleProvider = (arg: string): void => {
+    const providers = initialConfig.providers;
+    const names = Object.keys(providers);
+
+    if (!arg) {
+      if (names.length === 0) {
+        append({
+          role: 'system',
+          text:
+            'No providers configured. Add a "providers" map in ~/.llm-wiki/config.json. Example:\n' +
+            '  {\n' +
+            '    "providers": {\n' +
+            '      "deepseek": { "baseURL": "https://api.deepseek.com", "model": "deepseek-chat", "apiKeyEnv": "DEEPSEEK_API_KEY" },\n' +
+            '      "qwen":     { "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1", "model": "qwen-plus", "apiKeyEnv": "DASHSCOPE_API_KEY" }\n' +
+            '    },\n' +
+            '    "activeProvider": "deepseek"\n' +
+            '  }',
+        });
+        return;
+      }
+      const lines = names.map((n) => {
+        const e = providers[n];
+        const r = resolveProviderEntry(e);
+        const marker = n === activeProviderName ? '* ' : '  ';
+        const keyNote = r.apiKey ? '' : ' (no key — set apiKey or apiKeyEnv)';
+        return `${marker}${n}  →  model=${e.model}  baseURL=${e.baseURL}${keyNote}`;
+      });
+      append({
+        role: 'system',
+        text:
+          `providers (* = active):\n${lines.join('\n')}\n` +
+          `\nUse "/provider <name>" to switch. Switching resets the conversation.`,
+      });
+      return;
+    }
+
+    if (!(arg in providers)) {
+      append({
+        role: 'error',
+        text: `Unknown provider: "${arg}". Configured: ${names.join(', ') || '(none)'}`,
+      });
+      return;
+    }
+    const resolved = resolveProviderEntry(providers[arg]);
+    if (!resolved.apiKey) {
+      const envHint = providers[arg].apiKeyEnv
+        ? ` (set env ${providers[arg].apiKeyEnv})`
+        : ' (set "apiKey" or "apiKeyEnv" in config)';
+      append({
+        role: 'error',
+        text: `Cannot switch to "${arg}": no API key resolved${envHint}.`,
+      });
+      return;
+    }
+    if (arg === activeProviderName) {
+      append({ role: 'system', text: `already on "${arg}"; nothing to switch` });
+      return;
+    }
+
+    setActiveProviderName(arg);
+    // 显式 reset agent 之外的状态：messages 清屏、usage 计数清零。
+    // agent 本身会随 useMemo 链重建（client / activeConfig 变化 → 新 Agent 实例）。
+    setMessages([
+      {
+        id: nextId(),
+        role: 'system',
+        text: `switched to provider "${arg}" (model=${resolved.model}). conversation reset.`,
+      },
+    ]);
+    setUsage({ inputTokens: 0, outputTokens: 0 });
   };
 
   /**
