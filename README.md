@@ -11,9 +11,14 @@
 
 ```bash
 npm install            # 或 pnpm i / yarn
-cp .env.example .env   # 填入 DEEPSEEK_API_KEY
+mkdir -p ~/.llm-wiki && cp .env.example ~/.llm-wiki/.env && chmod 600 ~/.llm-wiki/.env
+# 编辑 ~/.llm-wiki/.env，填入 DEEPSEEK_API_KEY
 npm run build
 ```
+
+`.env` 默认从 `~/.llm-wiki/.env` 读取（跨 workspace 共用一份密钥）。
+若 workspace 根目录里也存在 `.env`，会被先加载作为 fallback，但
+home 里的同名变量优先级更高（`override: true`）。
 
 ## 使用
 
@@ -383,6 +388,7 @@ LLM_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers
 
 ```
 ~/.llm-wiki/
+├── .env                                 # 默认 .env 加载位置（mode 600）
 ├── config.json                          # 可选用户配置
 ├── history                              # REPL 上下键的命令历史（最近 N 条）
 ├── wiki-data/                           # 默认 wikiRoot —— 你的整套 wiki
@@ -400,16 +406,25 @@ LLM_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers
         └── <jobId>.log                  # 每个 job 的独立 append-only 日志
 ```
 
-> **从早期版本升级**：v0.1～v0.2 默认把 wiki 写在 `<workspaceRoot>/wiki-data/`，
-> 容易被误提交进项目仓库。当前默认改成 `~/.llm-wiki/wiki-data/`。已经在项目目录
-> 下积了内容的用户：
+> **从早期版本升级**：
+>
+> v0.1～v0.2 把 wiki 默认放在 `<workspaceRoot>/wiki-data/`、`.env` 放在
+> 项目根，两者都容易被误提交进项目仓库。当前默认全部挪到 `~/.llm-wiki/`：
 >
 > ```bash
+> # 1. wiki 数据
 > mv ./wiki-data ~/.llm-wiki/wiki-data
-> # 或者保留原位置：在 ~/.llm-wiki/config.json 里写
+>
+> # 2. .env 密钥（如果原来在项目根）
+> mv ./.env ~/.llm-wiki/.env && chmod 600 ~/.llm-wiki/.env
+>
+> # 想保留 wiki 在原位置：在 ~/.llm-wiki/config.json 里写
 > #   { "wikiRoot": "/Users/me/code/llm-wiki/wiki-data" }
-> # 也可以用 env：export LLM_WIKI_ROOT=$PWD/wiki-data
+> # 或 export LLM_WIKI_ROOT=$PWD/wiki-data
 > ```
+>
+> 项目根的 `.env` 仍会作为 fallback 加载（首次 setup 仍可 cp .env.example .env），
+> 但 `~/.llm-wiki/.env` 里的同名变量优先级更高。
 
 ## 典型 day-to-day 工作流
 

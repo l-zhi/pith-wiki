@@ -4,7 +4,17 @@ import path from 'node:path';
 import { z } from 'zod';
 import dotenv from 'dotenv';
 
+// `.env` 加载顺序：项目根的 .env 先（fallback / 首次 setup 仍走传统约定），
+// 然后 ~/.llm-wiki/.env 以 `override: true` 覆盖——用户自己的 home .env 是
+// 权威源，跨 workspace 共用。两个都不存在时 dotenv 静默 no-op。
+//
+// 设计意图：避免每个项目根都需要复制一份 .env；让 DEEPSEEK_API_KEY 这类
+// 跨工作区不变的密钥只放一份在 ~/.llm-wiki/.env。
 dotenv.config();
+dotenv.config({
+  path: path.join(os.homedir(), '.llm-wiki', '.env'),
+  override: true,
+});
 
 const ConfigSchema = z.object({
   apiKey: z.string().default(''),

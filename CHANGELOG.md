@@ -7,6 +7,15 @@
 
 ### Changed
 
+- **`.env` 默认从 `~/.llm-wiki/.env` 读取（覆盖项目根 `.env`）。** dotenv
+  加载顺序：先项目根 `.env`（fallback / 首次 setup 仍走传统约定），再
+  `~/.llm-wiki/.env` with `override: true`。两个都不存在时静默 no-op。
+  - 设计意图：避免每个项目都要复制 `.env`；`DEEPSEEK_API_KEY` 这类跨
+    workspace 不变的密钥只放一份在 home。
+  - 升级路径：`mv ./.env ~/.llm-wiki/.env && chmod 600 ~/.llm-wiki/.env`。
+    保留项目 .env 也行，但 home 里同名变量优先生效。
+  - README 安装步骤同步更新成 `cp .env.example ~/.llm-wiki/.env`。
+
 - **`wikiRoot` 默认值挪到 `~/.llm-wiki/wiki-data`。** 旧默认是
   `<workspaceRoot>/wiki-data/`——容易被无意提交进项目仓库，且多个 workspace
   无法共享同一份 wiki。新默认让所有 llm-wiki 本地数据（wiki / config /
