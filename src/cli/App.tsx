@@ -11,9 +11,11 @@ import { ToolApproval, ApprovalRequest } from './ToolApproval.js';
 import { TokenMeter } from './TokenMeter.js';
 import { appendHistory, loadHistory } from './history.js';
 import { QueueIndicator, type QueueWorkerStatus } from './QueueIndicator.js';
+import { SLASH_COMMANDS } from './slashCommands.js';
 import { TranscriptLogger, deriveTranscriptPath } from './transcript.js';
 import { QueueLockedError, QueueStore } from '../wiki/queue/store.js';
 import { runQueue } from '../wiki/queue/runner.js';
+import { runWatcher } from '../wiki/queue/watcher.js';
 import { LibraryService } from '../wiki/library.js';
 import { HydrationService } from '../wiki/hydration.js';
 
@@ -30,7 +32,7 @@ export function App({ config, client }: Props) {
       role: 'system',
       text:
         `llm-wiki ready. model=${config.model} root=${config.workspaceRoot}\n` +
-        `Type /help for commands. Ctrl+C cancels in-flight; press twice to exit.` +
+        `Type "/" for command suggestions (Tab completes). Ctrl+C cancels in-flight; press twice to exit.` +
         (config.transcriptEnabled
           ? `\ntranscript on (use /transcript to see path)`
           : '\ntranscript off'),
@@ -53,6 +55,14 @@ export function App({ config, client }: Props) {
   // 锁被另一个进程占着（用户开了 `queue run`）时降级为只读状态展示。
   const [queueWorkerStatus, setQueueWorkerStatus] = useState<QueueWorkerStatus>(() => ({
     mode: config.queueAutoStart ? 'self' : 'off',
+  }));
+  // watcher 状态：仅展示给 QueueIndicator 用。watcher 自身不取队列锁，
+  // 失败也只影响监听这一条线，不阻塞队列消费，因此用独立状态字段。
+  const [watchStatus, setWatchStatus] = useState<{
+    targets: number;
+    error?: string;
+  }>(() => ({
+    targets: config.watchAutoStart ? config.watchDirs.length : 0,
   }));
   useEffect(() => {
     if (!config.queueAutoStart) return;
@@ -91,6 +101,29 @@ export function App({ config, client }: Props) {
       setQueueWorkerStatus({ mode: 'error', error: err.message });
     });
 
+    // watcher：仅当 watchAutoStart 且 watchDirs 非空时起。失败不影响 worker。
+    let watcherPromise: Promise<void> | null = null;
+    if (config.watchAutoStart && config.watchDirs.length > 0) {
+      const safety = {
+        workspaceRoot: config.workspaceRoot,
+        wikiRoot: config.wikiRoot,
+        maxPayloadBytes: config.maxToolPayloadBytes,
+        readOnly: config.readOnly,
+        additionalReadPaths: config.additionalReadPaths,
+      };
+      watcherPromise = runWatcher({
+        store,
+        targets: config.watchDirs,
+        safety,
+        signal: ac.signal,
+        // REPL 内 watcher 不打控制台 log（会污染对话视图）。事件可在 state.json 的
+        // events 环里看到（kind='enqueued' msg='watcher:add/change/initial-scan'）。
+        log: () => {},
+      }).catch((err: Error) => {
+        setWatchStatus((prev) => ({ ...prev, error: err.message }));
+      });
+    }
+
     return () => {
       ac.abort();
       // 释放锁：worker 的 finally 也会清，但同步释放更稳——React unmount 之后
@@ -100,8 +133,9 @@ export function App({ config, client }: Props) {
       } catch {
         // 锁已被 worker finally 释放也无妨，吞掉。
       }
-      // 异步 worker 后续可能再 mutate state.json 一次（写最终态），无害。
+      // 异步 worker / watcher 后续可能再写一次 state.json（最终态、close），无害。
       void workerPromise;
+      void watcherPromise;
     };
   }, [config, client]);
 
@@ -242,10 +276,17 @@ export function App({ config, client }: Props) {
 
   const handleSlashCommand = (cmd: string) => {
     if (cmd === '/help') {
+      const lines = SLASH_COMMANDS.map((c) => {
+        const aliasNote = c.aliases?.length ? ` (alias: ${c.aliases.join(', ')})` : '';
+        const argNote = c.takesArg ? ' [arg]' : '';
+        return `  ${c.name}${argNote}  —  ${c.description}${aliasNote}`;
+      });
       append({
         role: 'system',
         text:
-          'Slash commands: /help · /clear · /reset · /transcript · /digest [collection] · /exit\n' +
+          'Slash commands:\n' +
+          lines.join('\n') +
+          `\n\nType "/" to see live suggestions; press Tab to complete.\n` +
           `Up/Down arrows browse the last ${HISTORY_LIMIT} commands.\n` +
           'Tools: read_file, write_file, list_dir, wiki_ingest, wiki_get, wiki_query, wiki_queue_add, wiki_queue_status',
       });
@@ -338,6 +379,7 @@ export function App({ config, client }: Props) {
         <QueueIndicator
           statePath={config.queueStatePath}
           workerStatus={queueWorkerStatus}
+          watchStatus={watchStatus}
         />
         <InputBox
           disabled={inFlight || approval !== null}

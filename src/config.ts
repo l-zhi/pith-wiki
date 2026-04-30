@@ -47,6 +47,37 @@ const ConfigSchema = z.object({
    */
   queueAutoStart: z.boolean(),
   /**
+   * 监听目录配置：每个条目对应一棵被 watcher 实时跟踪的源目录。
+   * 默认为空 → 不监听。配了路径 + watchAutoStart=true → REPL 启动时自动起 watcher。
+   *
+   * 字段语义（详见 src/wiki/queue/watcher.ts 的注释）：
+   *   - path: 源目录绝对路径（支持 `~/`）。绝不能与 wikiRoot 重叠，避免自写循环。
+   *   - collection: 固定 collection 名（与 collectionFromSubdir 二选一）。
+   *   - collectionFromSubdir: true 时按一级子目录名做 collection。
+   *   - fallbackCollection: 文件直接在 watch root 下、或子目录名非法时的兜底。
+   *   - subdirAlias: 子目录名 → collection 名的可选映射（改名工具，中文目录可不填）。
+   *   - initialScan: 启动时把目录里已有 .md 全部入队（已 ingest 过的会被 dedup 跳过）。
+   *   - ignore: 用户额外的 micromatch glob，并入 DEFAULT_IGNORED 一起忽略。
+   */
+  watchDirs: z
+    .array(
+      z.object({
+        path: z.string().min(1),
+        collection: z.string().optional(),
+        collectionFromSubdir: z.boolean().default(false),
+        fallbackCollection: z.string().optional(),
+        subdirAlias: z.record(z.string(), z.string()).default({}),
+        initialScan: z.boolean().default(false),
+        ignore: z.array(z.string()).default([]),
+      }),
+    )
+    .default([]),
+  /**
+   * REPL 启动时是否同时起 watcher（前提是 watchDirs 非空）。
+   * 关掉的方式：CLI `--no-auto-watch`，或 ~/.llm-wiki/config.json 里写 false。
+   */
+  watchAutoStart: z.boolean(),
+  /**
    * REPL 每次问答自动写入 markdown transcript 的目录。
    * 默认 `<wikiRoot>/output/transcripts/`：和数字化的 wiki 条目同根，但用子目录
    * 屏蔽 LibraryService 的 collection 扫描（scanAll 只读 `<wikiRoot>/<collection>/*.md`
@@ -78,6 +109,16 @@ export interface ConfigOverrides {
   queueConcurrency?: number;
   queueMaxAttempts?: number;
   queueAutoStart?: boolean;
+  watchDirs?: Array<{
+    path: string;
+    collection?: string;
+    collectionFromSubdir?: boolean;
+    fallbackCollection?: string;
+    subdirAlias?: Record<string, string>;
+    initialScan?: boolean;
+    ignore?: string[];
+  }>;
+  watchAutoStart?: boolean;
   outputDir?: string;
   transcriptEnabled?: boolean;
   digestCollection?: string;
@@ -90,6 +131,7 @@ const DEFAULTS = {
   queueConcurrency: 2,
   queueMaxAttempts: 3,
   queueAutoStart: true,
+  watchAutoStart: true,
   transcriptEnabled: true,
   digestCollection: 'output',
 };
@@ -223,6 +265,12 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       overrides.queueMaxAttempts ?? file.queueMaxAttempts ?? DEFAULTS.queueMaxAttempts,
     queueAutoStart:
       overrides.queueAutoStart ?? file.queueAutoStart ?? DEFAULTS.queueAutoStart,
+    // watchDirs：CLI overrides > 配置文件 > []。环境变量先不引入（结构太复杂，
+    // 不像单条路径列表那么自然）；CLI 也只在 `llm-wiki watch` 命令里用 flag 覆盖。
+    // 路径里的 ~/ 在 schema parse 之后再展开（loadConfig 末尾统一处理）。
+    watchDirs: overrides.watchDirs ?? file.watchDirs ?? [],
+    watchAutoStart:
+      overrides.watchAutoStart ?? file.watchAutoStart ?? DEFAULTS.watchAutoStart,
     // 默认放在 <wikiRoot>/output/transcripts/：raw transcripts 和 digest 条目共享 wiki 树根，
     // 但 transcripts 落在子目录里，不会被 LibraryService 当成 collection 来扫
     outputDir: path.resolve(
@@ -238,7 +286,14 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
       overrides.digestCollection ?? file.digestCollection ?? DEFAULTS.digestCollection,
   };
 
-  return ConfigSchema.parse(merged);
+  const parsed = ConfigSchema.parse(merged);
+  // schema 校验后统一对 watchDirs 的 path 做 ~/ 展开 + 绝对化。放在这里而不是 schema
+  // transform 里，是为了让 ZodError 报错时显示用户原写的路径，便于排查。
+  parsed.watchDirs = parsed.watchDirs.map((wd) => ({
+    ...wd,
+    path: path.resolve(expandHome(wd.path)),
+  }));
+  return parsed;
 }
 
 export function ensureWikiRoot(config: Config): void {

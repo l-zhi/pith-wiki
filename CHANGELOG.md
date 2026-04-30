@@ -5,6 +5,70 @@
 
 ## [Unreleased]
 
+### Added
+
+- **REPL slash 命令实时提示 + Tab 补全。** 在输入框打 `/` 会立即弹出全部 slash
+  命令的清单（`/help` / `/clear` / `/reset` / `/transcript` / `/digest` / `/exit`），
+  按命令前缀实时过滤；Tab 触发补全（1 个匹配 → 完整补全；多匹配 → 最长公共前缀，
+  fish/zsh 风格）。`takesArg` 命令（如 `/digest`）补全后自动追加空格提示填参数。
+  - 单一注册表 `src/cli/slashCommands.ts`：`/help` 文本、欢迎语、提示框、Tab 补全
+    都从这里读，避免命令名在多处漂移。
+  - 历史浏览（↑/↓）逻辑保留不变；Tab 仅在 `/` 开头且有匹配时拦截，其他情况下交回
+    给 ink-text-input。
+  - 新增 `tests/slash-commands.test.ts`（15 用例）覆盖 `filterCommands` /
+    `completeOnTab` 的所有边界（无匹配、唯一匹配、多匹配、参数区不补全、别名前缀）。
+
+- **目录监听 watcher：自动把笔记变动入队。** 配置 `watchDirs` 后，REPL 启动会
+  起一个 chokidar 监听器，对源目录里 `.md` 文件的 add/change 事件自动 `enqueue`
+  到持久化队列；worker 拣起来后 hydrate → `library.put` → 索引自动新鲜。
+  - **使用最简形式**：在 `~/.llm-wiki/config.json` 里加：
+
+    ```jsonc
+    {
+      "watchDirs": [
+        {
+          "path": "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/荔枝知识库/荔枝知识库",
+          "collectionFromSubdir": true,
+          "fallbackCollection": "lizhi",
+          "initialScan": true
+        }
+      ]
+    }
+    ```
+
+    再 `pnpm dev`，REPL 顶部出现 `watch N` 标记，从此往 vault 加 `工作/笔记.md`
+    会自动落进 `<wikiRoot>/工作/<id>.md`。
+  - **collection 解析**：
+    - 固定模式 `collection: "tech"` — 整棵树统一进 `tech`
+    - 一级子目录模式 `collectionFromSubdir: true` — `工作/笔记.md` → `工作`，
+      `tech/foo.md` → `tech`，深层子目录始终取一级；中文/英文目录名直接用，
+      `subdirAlias` 是可选改名工具（如把 `工作` 映射成 `work`）
+    - 直接挂在 watch root 下的文件 → `fallbackCollection`
+  - **沙箱**：watch 路径必须落在 `workspaceRoot ∪ wikiRoot ∪ additionalReadPaths`
+    之内（沿用 `LLM_WIKI_READ_PATHS` 同款校验），且**绝不允许是 wikiRoot 子树**——
+    否则 `library.put` 写完会触发 watcher，形成自写循环；启动期硬校验，失败 fail-fast。
+  - **默认 ignored**：`.obsidian/`、`.git/`、`.DS_Store`、`.icloud`（任意层级）+
+    `wiki/` / `outputs/` / `node_modules/`（任意层级）。Obsidian vault 里的
+    plugin/workspace 配置不会污染队列。
+  - **awaitWriteFinish** 自动合并编辑器多次保存事件（500ms 稳定窗口）；外加 1s
+    内存 cooldown 兜底防抖。
+  - **change 事件 → force=true**：watcher 检测到已 ingest 文件变动时，把队列里
+    对应 job reset 为 `pending` + `force=true` + `attempts=0`，让 worker 必跑一次
+    重 hydrate。`processJob` 的 `isOverwriteOfSelf` 路径保证同一文件覆盖原 entry，
+    不会产生 `-2` 后缀。
+  - **CLI 命令 `llm-wiki watch`**：独立前台进程，只 enqueue 不取队列锁，可与
+    REPL / `queue run` 并行：
+    ```bash
+    # 临时配一条
+    llm-wiki watch --dir ~/notes/inbox --collection reading --initial-scan
+    # 或读 config.watchDirs
+    llm-wiki watch
+    ```
+  - **REPL 启动开关**：默认开（`watchAutoStart: true`）；`pnpm dev --no-auto-watch`
+    或 `~/.llm-wiki/config.json` 里 `"watchAutoStart": false` 关掉。
+  - 新增 chokidar 依赖；新增 `src/wiki/queue/watcher.ts`、`tests/watcher.test.ts`
+    （32 用例覆盖纯函数、enqueue 状态机、initialScan 批量、真 fs 集成）。
+
 ### Changed
 
 - **`.env` 默认从 `~/.llm-wiki/.env` 读取（覆盖项目根 `.env`）。** dotenv

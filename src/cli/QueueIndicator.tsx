@@ -12,9 +12,21 @@ export interface QueueWorkerStatus {
   externalPid?: number;
 }
 
+/**
+ * 简化的 watcher 状态：只展示当前监听的 target 数量 + 是否报错。
+ * watcher 不取锁、不影响队列消费，所以不需要复杂状态机。
+ */
+export interface WatchStatusSummary {
+  /** 当前活跃 target 数量；0 = 未起 watcher（含未配置 / autoWatch=off）。 */
+  targets: number;
+  error?: string;
+}
+
 interface Props {
   statePath: string;
   workerStatus: QueueWorkerStatus;
+  /** 可选 watcher 状态。CLI 模式下可不传。 */
+  watchStatus?: WatchStatusSummary;
   /** 多久 poll 一次状态。默认 2s，UI 刷新成本可忽略。 */
   pollMs?: number;
 }
@@ -23,7 +35,7 @@ interface Props {
  * REPL 底部一行的队列状态指示器。
  * 自己 poll state.json，与 worker 解耦——即使 worker 起在另一个终端也能正常显示。
  */
-export function QueueIndicator({ statePath, workerStatus, pollMs = 2000 }: Props) {
+export function QueueIndicator({ statePath, workerStatus, watchStatus, pollMs = 2000 }: Props) {
   const [state, setState] = useState<QueueState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -106,6 +118,17 @@ export function QueueIndicator({ statePath, workerStatus, pollMs = 2000 }: Props
       </Text>
       {workerStatus.mode === 'error' && workerStatus.error ? (
         <Text color="red"> — {workerStatus.error}</Text>
+      ) : null}
+      {watchStatus && watchStatus.targets > 0 ? (
+        <Text color="gray">
+          {' · '}
+          <Text color={watchStatus.error ? 'red' : 'magenta'}>
+            watch {watchStatus.targets}
+          </Text>
+          {watchStatus.error ? (
+            <Text color="red"> err: {watchStatus.error}</Text>
+          ) : null}
+        </Text>
       ) : null}
     </Box>
   );

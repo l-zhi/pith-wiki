@@ -12,7 +12,7 @@ import { ContextAssembler } from '../wiki/assembler.js';
 import { runBatch } from '../wiki/batch.js';
 import { resolveSafePath, SafetyError } from '../tools/safety.js';
 import { Source } from '../wiki/types.js';
-import { buildQueueCommands } from './queueCommands.js';
+import { buildQueueCommands, buildWatchCommand } from './queueCommands.js';
 
 interface BuildArgs {
   configFor: (overrides?: Partial<Config>) => Config;
@@ -238,6 +238,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
     });
 
   buildQueueCommands(program, args);
+  buildWatchCommand(program, args);
 }
 
 /**

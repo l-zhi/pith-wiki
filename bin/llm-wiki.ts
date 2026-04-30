@@ -69,16 +69,21 @@ program
     'Do not auto-start the queue worker in this REPL session.',
   )
   .option(
+    '--no-auto-watch',
+    'Do not auto-start directory watchers in this REPL session (config.watchDirs).',
+  )
+  .option(
     '--no-transcript',
     'Do not write a markdown transcript of this session to outputDir.',
   )
   .action(async (chatOpts) => {
     let config: Config;
     try {
-      // commander 把 --no-auto-queue / --no-transcript 解析为 autoQueue=false / transcript=false。
-      // 仅在显式给出时覆盖配置；不传时保持 configFor 默认。
+      // commander 把 --no-auto-queue / --no-auto-watch / --no-transcript 解析为
+      // autoQueue=false / autoWatch=false / transcript=false。仅在显式给出时覆盖。
       const overrides: Partial<Config> = {};
       if (chatOpts.autoQueue === false) overrides.queueAutoStart = false;
+      if (chatOpts.autoWatch === false) overrides.watchAutoStart = false;
       if (chatOpts.transcript === false) overrides.transcriptEnabled = false;
       config = configFor(overrides);
       requireApiKey(config);

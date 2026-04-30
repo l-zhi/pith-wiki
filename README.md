@@ -118,6 +118,61 @@ REPL 里也有同名工具：`wiki_queue_add`、`wiki_queue_status`，用自然�
 
 worker 的并存模型见下文 [多终端协作](#多终端协作)。
 
+### 目录监听 watcher（自动入队）
+
+不想每次手动 `queue add`？配 `watchDirs` 让 chokidar 监听一棵笔记目录，
+add/change 自动入队，worker 自动消化。在 `~/.llm-wiki/config.json` 里：
+
+```jsonc
+{
+  "watchDirs": [
+    {
+      "path": "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/荔枝知识库/荔枝知识库",
+      "collectionFromSubdir": true,
+      "fallbackCollection": "lizhi",
+      "initialScan": true
+    }
+  ]
+}
+```
+
+启动 `llm-wiki`，REPL 底部会显示 `watch N`；从此往 vault 加 `工作/笔记.md`
+就自动落进 `<wikiRoot>/工作/<id>.md`。
+
+要点：
+
+- **collection 解析**：`collectionFromSubdir: true` 时一级子目录名 = collection，
+  中文/英文目录名直接用（`工作/`、`tech/` 都行），深层子目录始终归到一级；
+  直接挂在 watch root 下的孤儿文件 → `fallbackCollection`。
+- **改名**：想把中文目录映射成英文 collection（URL 友好）就用 `subdirAlias`：
+  ```jsonc
+  { "subdirAlias": { "工作": "work", "读书": "reading" } }
+  ```
+- **沙箱**：watch 路径必须落在 `workspaceRoot ∪ wikiRoot ∪ additionalReadPaths`
+  之内，且**不能与 wikiRoot 重叠**（否则 wiki 写入会触发 watcher 自我循环；启动
+  期 fail-fast）。如果 vault 在 home 之外，把它加进 `LLM_WIKI_READ_PATHS`。
+- **自动 ignored**：`.obsidian/`、`.git/`、`.DS_Store`、`.icloud`、任意层级的
+  `wiki/` / `outputs/` / `node_modules/`。Obsidian vault 的 plugin 数据不会污染队列。
+- **change 事件**：检测到已 ingest 文件变动 → 自动 reset 队列里的对应 job 为
+  `force=true`，worker 重跑覆盖原 entry（同 id，无 `-2` 后缀）。
+- **`--no-auto-watch`** 临时关掉，或写到 `~/.llm-wiki/config.json` 里 `"watchAutoStart": false`。
+
+CLI 独立运行：
+
+```bash
+# 临时配一条 watcher（不进 config）
+llm-wiki watch --dir ~/notes/inbox --collection reading --initial-scan
+
+# 用 collectionFromSubdir
+llm-wiki watch --dir ~/.../vault --collection-from-subdir --fallback-collection misc
+
+# 读 config.watchDirs（前台运行；Ctrl-C 关闭）
+llm-wiki watch
+```
+
+watcher 自身**不取队列锁**——可以和 REPL（自动起的 worker）/ `queue run` 并行；
+它只 `enqueue`，不跑 hydrate。
+
 ### 检索（不需要 API key）
 
 ```bash
@@ -350,6 +405,8 @@ compressionRatio: 0.12
 | `queueConcurrency` | _（无 env）_ | `2` |
 | `queueMaxAttempts` | _（无 env）_ | `3` |
 | `queueAutoStart` | _（无 env）_ | `true`（CLI `--no-auto-queue` 关） |
+| `watchDirs` | _（无 env）_ | `[]`（详见 [目录监听 watcher](#目录监听-watcher自动入队)） |
+| `watchAutoStart` | _（无 env）_ | `true`（CLI `--no-auto-watch` 关） |
 | `outputDir` | _（无 env）_ | `<wikiRoot>/output/transcripts` |
 | `transcriptEnabled` | _（无 env）_ | `true`（CLI `--no-transcript` 关） |
 | `digestCollection` | _（无 env）_ | `output`（`/digest` 默认落地的 collection） |

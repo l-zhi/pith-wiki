@@ -18,6 +18,7 @@ import {
 } from '../wiki/queue/state.js';
 import { QueueLockedError, QueueStore } from '../wiki/queue/store.js';
 import { runQueue } from '../wiki/queue/runner.js';
+import { runWatcher, type WatchTargetConfig } from '../wiki/queue/watcher.js';
 import { resolveSafePath, SafetyError } from '../tools/safety.js';
 import { enumerateBatchFiles } from './subcommands.js';
 
@@ -350,6 +351,103 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
       }
       if (reset === 0 && !opts.allDead && ids.length === 0) {
         console.error(chalk.gray('Nothing to retry. Pass <id...> or --all-dead.'));
+      }
+    });
+}
+
+/**
+ * 注册 `watch` 顶层命令：监听一个或多个源目录，把 .md 变动入队。
+ *
+ * 与 `queue run` 解耦——watcher 进程只 enqueue，不取队列锁，可与 REPL / `queue run`
+ * 并行。两种用法：
+ *   1. `llm-wiki watch --dir <p> --collection <c>`：CLI flag 临时配一条
+ *   2. `llm-wiki watch`：读 config.watchDirs（推荐多 target 场景）
+ */
+export function buildWatchCommand(program: Command, args: BuildArgs): void {
+  program
+    .command('watch')
+    .description('Watch directories for .md changes and auto-enqueue into the queue.')
+    .option('--dir <path>', 'Source directory to watch (overrides config.watchDirs).')
+    .option('--collection <name>', 'Fixed collection (use with --dir).')
+    .option(
+      '--collection-from-subdir',
+      'Use first-level subdir name as collection (use with --dir).',
+    )
+    .option('--fallback-collection <name>', 'Fallback collection when subdir name is unsuitable.')
+    .option('--initial-scan', 'Enqueue all existing .md under --dir at startup.')
+    .action(async (opts) => {
+      const config = args.configFor();
+      ensureWikiRoot(config);
+      ensureQueueDirs(config);
+
+      const targets: WatchTargetConfig[] = (() => {
+        if (opts.dir) {
+          if (!opts.collection && !opts.collectionFromSubdir) {
+            console.error(
+              chalk.red(
+                'Error: --dir requires either --collection or --collection-from-subdir',
+              ),
+            );
+            process.exitCode = 1;
+            return [];
+          }
+          return [
+            {
+              path: opts.dir,
+              collection: opts.collection,
+              collectionFromSubdir: !!opts.collectionFromSubdir,
+              fallbackCollection: opts.fallbackCollection,
+              initialScan: !!opts.initialScan,
+            },
+          ];
+        }
+        return config.watchDirs;
+      })();
+
+      if (targets.length === 0) {
+        console.error(
+          chalk.yellow(
+            'No watch targets. Pass --dir <path> ... or set config.watchDirs.',
+          ),
+        );
+        process.exitCode = 1;
+        return;
+      }
+
+      const store = new QueueStore(config.queueStatePath);
+      const safety = {
+        workspaceRoot: config.workspaceRoot,
+        wikiRoot: config.wikiRoot,
+        maxPayloadBytes: config.maxToolPayloadBytes,
+        readOnly: config.readOnly,
+        additionalReadPaths: config.additionalReadPaths,
+      };
+
+      const ac = new AbortController();
+      const onSignal = (sig: string) => () => {
+        console.error(chalk.yellow(`\nreceived ${sig}, closing watchers...`));
+        ac.abort();
+      };
+      const sigInt = onSignal('SIGINT');
+      const sigTerm = onSignal('SIGTERM');
+      process.on('SIGINT', sigInt);
+      process.on('SIGTERM', sigTerm);
+
+      try {
+        await runWatcher({
+          store,
+          targets,
+          safety,
+          signal: ac.signal,
+          log: (line) => console.log(line),
+        });
+        console.log(chalk.gray('watcher stopped.'));
+      } catch (err) {
+        console.error(chalk.red(`watcher error: ${(err as Error).message}`));
+        process.exitCode = 1;
+      } finally {
+        process.off('SIGINT', sigInt);
+        process.off('SIGTERM', sigTerm);
       }
     });
 }
