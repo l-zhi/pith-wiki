@@ -266,6 +266,12 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
         );
         if (summary.dead > 0) process.exitCode = 1;
       } finally {
+        // 把还在 5s 防抖窗口里没刷盘的索引同步落地，下次启动可直接从 index.json 起。
+        try {
+          library.flushIndex();
+        } catch {
+          // best-effort
+        }
         process.off('SIGINT', sigInt);
         process.off('SIGTERM', sigTerm);
         release?.();

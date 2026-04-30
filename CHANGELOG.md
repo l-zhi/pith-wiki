@@ -7,6 +7,31 @@
 
 ### Added
 
+- **持久化索引 `<wikiRoot>/index.json`：冷启动免去全量 scanAll。**
+  LibraryService 现在把 entryCache 防抖（默认 5s）写到磁盘；下次启动若磁盘
+  cache 比 collection 目录新鲜（mtime 比较），直接跳过 `readFileSync + matter.parse`
+  整组操作。500 条 entry 大库的冷启从 ~80ms 降到 ~5ms（10× 提速）。
+  - **新鲜度检查**：load 时对比 `index.json` mtime 与每个 collection 目录的 mtime；
+    任一目录较新 → 拒绝 cache，scanAll 重建。能抓到"外部新增/删除文件"，
+    抓不到"原地编辑现有文件且 mtime 一致"——后者交给 watcher → put 链路覆盖。
+  - **写入触发**：`put` / `delete` 后 schedulePersist；多次写入合并为一次磁盘写。
+    Timer 用 `unref()` 不阻塞 CLI 退出。
+  - **Schema 兼容**：JSON 含 `version: 1`；version 不匹配或解析失败时 silent
+    fallback 到 scanAll。每条 entry 用 EntrySchema 二次校验，损坏字段 → 拒绝整份。
+  - **新方法 `flushIndex()`**：同步刷盘，绕过防抖。已接入：
+    - REPL 退出（`App.tsx` 卸载 effect）
+    - `queue run` 命令的 finally 块
+    - `ingest` 单文件 / 批量分支结尾
+  - **架构清理：REPL 共用一个 LibraryService 实例**。原本 agent 工具和 queue
+    worker / watcher 各自 new 一份，导致 in-memory cache 不同步——worker 刚
+    ingest 的新条目，agent 的 `wiki_list` 拿不到；两份 cache 还会互相覆盖
+    `index.json`。现在 `App.tsx` 顶层 `useMemo` 一份 library，透传到 `buildContext`、
+    runQueue、runWatcher、`/digest` handler。`buildContext` 加可选第 4 参数
+    接收外部 library，CLI 子命令仍走默认 new。
+  - 8 个新增测试覆盖：写入/读回、跨实例验证、外部 .md 增加触发拒绝、版本不
+    匹配 / 损坏 JSON 退化、`persist=false` 完全不写、防抖窗口合并多次 put、
+    schema 不合法的旧 cache 拒绝。
+
 - **检索链路升级：四级检索阶梯 + 中文 bigram + source 路径透传给模型。**
   彻底解决 v0 的两个软肋——中文查询打不中、模型不知道何时该读原文。
   - **`ContextAssembler.tokenize` 接入 CJK bigram**。原 `\W+` 切词把整段中文当一

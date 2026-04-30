@@ -125,6 +125,8 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
         }
         // 全失败或 0 匹配（已上面挡掉）→ exit 1；至少 1 个成功 → exit 0
         if (summary.ok === 0) process.exitCode = 1;
+        // 批量 ingest 之后强制刷盘：N 条 put 都进了 cache，让下次启动免去 scanAll
+        library.flushIndex();
         return;
       }
 
@@ -170,6 +172,8 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
         chalk.gray('compression:'),
         saved.compressionRatio ? saved.compressionRatio.toFixed(3) : 'n/a',
       );
+      // 一次性 CLI 退出前把 5s 防抖里的索引刷掉，让下一条命令直接命中磁盘 cache
+      library.flushIndex();
     });
 
   program

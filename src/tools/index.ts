@@ -37,13 +37,23 @@ export function buildContext(
   config: Config,
   client: OpenAI,
   requestApproval: ToolContext['requestApproval'],
+  /**
+   * 可选传入一个已经构造好的 LibraryService。
+   *
+   * 默认（不传）会自己 new 一个，用于 CLI 子命令这种"一次调用 → 退出"的场景。
+   * REPL 会传入它自己持有的实例，这样 agent 工具的 library 和队列 worker /
+   * watcher 的 library 共用同一份 in-memory cache，避免：
+   *   - 两个 cache 互不感知（worker put → agent 的 wiki_list 拿不到新条目）
+   *   - 两份 index.json 写入互相覆盖
+   */
+  library?: LibraryService,
 ): ToolContext {
-  const library = new LibraryService(config.wikiRoot);
-  const assembler = new ContextAssembler(library);
-  const hydrator = new HydrationService(client, config.model, library);
+  const lib = library ?? new LibraryService(config.wikiRoot);
+  const assembler = new ContextAssembler(lib);
+  const hydrator = new HydrationService(client, config.model, lib);
   return {
     config,
-    library,
+    library: lib,
     assembler,
     hydrator,
     approvedWritePaths: new Set(),

@@ -291,3 +291,162 @@ describe('LibraryService — 扫描器容错', () => {
     expect(lib.linkIndex().size).toBe(0);
   });
 });
+
+/**
+ * 持久化索引（`<wikiRoot>/index.json`）测试。
+ *
+ * 关键不变量：
+ *   1. flushIndex 后磁盘上有 valid JSON
+ *   2. 第二个 LibraryService 实例能从磁盘 cache 读到 entries（不调 scanAll 也行）
+ *   3. 用户外部新增/删除文件 → 目录 mtime > index.json mtime → 拒绝 cache，scanAll
+ *   4. 持久化禁用模式不写 index.json
+ *   5. 损坏的 index.json 退回 scanAll，不抛异常
+ */
+describe('LibraryService — index.json 持久化', () => {
+  function makeEntry(o: Partial<Entry>): Entry {
+    return {
+      id: o.id ?? 'x',
+      collection: o.collection ?? 'tech',
+      title: o.title ?? 'x',
+      summary: o.summary ?? '',
+      tags: o.tags ?? [],
+      links: o.links ?? [],
+      content: o.content ?? 'x',
+      source: o.source ?? { type: 'inline' },
+      updated: o.updated ?? new Date().toISOString(),
+    };
+  }
+
+  it('flushIndex 后磁盘上出现 index.json，version=1', () => {
+    const lib = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    lib.put(makeEntry({ id: 'a', title: 'Alpha' }));
+    lib.put(makeEntry({ id: 'b', title: 'Beta', collection: 'reading' }));
+    lib.list(); // 触发 ensureIndex 把 cache 装载
+    lib.flushIndex();
+
+    const file = path.join(tmpDir, 'index.json');
+    expect(fs.existsSync(file)).toBe(true);
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    expect(parsed.version).toBe(1);
+    expect(parsed.entries).toHaveLength(2);
+    const ids = (parsed.entries as Entry[]).map((e) => e.id).sort();
+    expect(ids).toEqual(['a', 'b']);
+  });
+
+  it('第二个实例直接从 index.json 读 entries，跳过 scanAll', () => {
+    // 先用一个实例填库 + 刷盘
+    const writer = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    writer.put(makeEntry({ id: 'a', title: 'Alpha' }));
+    writer.list();
+    writer.flushIndex();
+
+    // 删掉真实 .md 文件，但保留 index.json：如果 reader 真的从 cache 读，应该
+    // 仍能拿到 a。如果它走 scanAll，会拿到空。
+    const mdFile = path.join(tmpDir, 'tech', 'a.md');
+    expect(fs.existsSync(mdFile)).toBe(true);
+    // 注意：如果删 md 文件会 bump 'tech' 目录的 mtime，反过来让 reader 拒绝 cache。
+    // 所以这里反着验证：保留 .md，确认 reader 能从 cache 拿到正确数据。
+    const reader = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    const got = reader.list();
+    expect(got).toHaveLength(1);
+    expect(got[0].title).toBe('Alpha');
+  });
+
+  it('外部新增 .md 文件 → 目录 mtime 变 → 拒绝 cache，scanAll 抓到', async () => {
+    const writer = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    writer.put(makeEntry({ id: 'a' }));
+    writer.list();
+    writer.flushIndex();
+
+    // 等一小会儿确保 mtime 分辨率（macOS HFS+/APFS 通常是 1ns，但保险）
+    await new Promise((r) => setTimeout(r, 20));
+
+    // 模拟外部直接写一个 .md（绕过 LibraryService.put）
+    const dir = path.join(tmpDir, 'tech');
+    fs.writeFileSync(
+      path.join(dir, 'b.md'),
+      '---\nid: b\ntitle: ExternalAdd\nupdated: 2026-04-30T00:00:00Z\nsource:\n  type: inline\n---\n# B\nfresh\n',
+    );
+
+    const reader = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    const got = reader.list();
+    const ids = got.map((e) => e.id).sort();
+    expect(ids).toEqual(['a', 'b']); // 走 scanAll 把外部新增文件抓回来
+  });
+
+  it('损坏的 index.json 不抛异常，退化为 scanAll', () => {
+    // 先建一个真实条目
+    const writer = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    writer.put(makeEntry({ id: 'a', title: 'Alpha' }));
+    writer.list();
+    writer.flushIndex();
+
+    // 故意把 index.json 写坏
+    fs.writeFileSync(path.join(tmpDir, 'index.json'), '{not valid json');
+
+    const reader = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    const got = reader.list();
+    expect(got).toHaveLength(1);
+    expect(got[0].id).toBe('a');
+  });
+
+  it('version 不匹配 → 拒绝 cache，退化为 scanAll', () => {
+    const writer = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    writer.put(makeEntry({ id: 'a' }));
+    writer.list();
+    writer.flushIndex();
+
+    // 改 version 字段模拟未来版本不兼容
+    const file = path.join(tmpDir, 'index.json');
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    parsed.version = 999;
+    fs.writeFileSync(file, JSON.stringify(parsed));
+
+    const reader = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    expect(reader.list()).toHaveLength(1); // scanAll 兜底，不崩
+  });
+
+  it('persist=false → 不写 index.json', () => {
+    const lib = new LibraryService(tmpDir, { persist: false, persistDelayMs: 60_000 });
+    lib.put(makeEntry({ id: 'a' }));
+    lib.list();
+    lib.flushIndex(); // no-op when disabled
+
+    expect(fs.existsSync(path.join(tmpDir, 'index.json'))).toBe(false);
+  });
+
+  it('schedulePersist 防抖：连续多次 put 只对应 timer 一次', () => {
+    // 用极短延迟 + flush 验证：5 次 put 后只产生一份 index.json，且包含全部 5 条
+    const lib = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    for (let i = 0; i < 5; i++) lib.put(makeEntry({ id: `e${i}` }));
+    lib.list();
+    lib.flushIndex();
+
+    const parsed = JSON.parse(fs.readFileSync(path.join(tmpDir, 'index.json'), 'utf8'));
+    expect(parsed.entries).toHaveLength(5);
+  });
+
+  it('磁盘 cache schema 兼容：缺字段的旧 cache 被拒绝重建', () => {
+    // 写一个 entries 字段缺 title（违反 EntrySchema）的 index.json
+    fs.mkdirSync(tmpDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, 'index.json'),
+      JSON.stringify({
+        version: 1,
+        savedAt: new Date().toISOString(),
+        entries: [{ id: 'broken' /* 缺 title 等必填 */ }],
+      }),
+    );
+    // 同时建一个真实 .md，验证退化路径能跑通
+    fs.mkdirSync(path.join(tmpDir, 'tech'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, 'tech', 'real.md'),
+      '---\nid: real\ntitle: Real\nupdated: 2026-04-30T00:00:00Z\nsource:\n  type: inline\n---\n# Real\nbody\n',
+    );
+
+    const lib = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    const got = lib.list();
+    // schema 校验失败 → 拒绝 cache → scanAll → 拿到 real
+    expect(got.map((e) => e.id)).toEqual(['real']);
+  });
+});

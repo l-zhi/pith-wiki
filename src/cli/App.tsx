@@ -64,6 +64,14 @@ export function App({ config, client }: Props) {
   }>(() => ({
     targets: config.watchAutoStart ? config.watchDirs.length : 0,
   }));
+
+  // 整个 REPL session 共用一份 LibraryService。
+  // 关键不变量：agent 的工具（wiki_query / wiki_list / wiki_get / wiki_read_source /
+  // /digest 的 hydrator）和后台 queue worker / watcher 都通过同一个 library 写读，
+  // in-memory cache 天然同步。worker 刚 ingest 的新条目，下一秒 wiki_list 就能看到；
+  // index.json 也只有一个 owner 在写，不会两份 cache 互相覆盖。
+  const library = useMemo(() => new LibraryService(config.wikiRoot), [config.wikiRoot]);
+
   useEffect(() => {
     if (!config.queueAutoStart) return;
     ensureQueueDirs(config);
@@ -81,7 +89,6 @@ export function App({ config, client }: Props) {
     }
 
     const ac = new AbortController();
-    const library = new LibraryService(config.wikiRoot);
     const hydrator = new HydrationService(client, config.model, library);
 
     const workerPromise = runQueue({
@@ -133,11 +140,18 @@ export function App({ config, client }: Props) {
       } catch {
         // 锁已被 worker finally 释放也无妨，吞掉。
       }
+      // 把 5s 防抖窗口里没写盘的索引同步落地，让下次启动直接命中磁盘 cache。
+      // best-effort：失败也不阻塞退出。
+      try {
+        library.flushIndex();
+      } catch {
+        // ignore
+      }
       // 异步 worker / watcher 后续可能再写一次 state.json（最终态、close），无害。
       void workerPromise;
       void watcherPromise;
     };
-  }, [config, client]);
+  }, [config, client, library]);
 
   const requestApproval = useMemo(
     () =>
@@ -179,9 +193,10 @@ export function App({ config, client }: Props) {
   }, [config]);
 
   const agent = useMemo(() => {
-    const ctx = buildContext(config, client, requestApproval);
+    // 共用的 library 透传进 toolCtx；wiki_* 工具就和 worker / watcher 看到同一份索引。
+    const ctx = buildContext(config, client, requestApproval, library);
     return new Agent(client, config.model, ctx);
-  }, [config, client, requestApproval]);
+  }, [config, client, requestApproval, library]);
 
   const append = (msg: Omit<DisplayMessage, 'id'>) =>
     setMessages((prev) => [...prev, { ...msg, id: nextId() }]);
@@ -339,9 +354,8 @@ export function App({ config, client }: Props) {
     setInFlight(true);
     try {
       ensureWikiRoot(config);
-      // 复用同一个 Library/Hydrator —— agent 内部 toolCtx 没暴露出来，这里
-      // 重建一份成本可忽略；落库后 LibraryService 缓存自动 invalidate
-      const library = new LibraryService(config.wikiRoot);
+      // 复用 session 共享的 library —— 写入立即被 agent 后续的 wiki_query/list 看到，
+      // 也共用同一份 index.json 的写入节流，不会和 worker 互相覆盖。
       const hydrator = new HydrationService(client, config.model, library);
       const entry = await hydrator.hydrate({
         rawContent: snapshot,
@@ -367,8 +381,15 @@ export function App({ config, client }: Props) {
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
+      // 兜底刷盘：即使关掉了 auto-queue（上面的 effect 不跑），用户依然可能通过
+      // /digest 或 wiki_ingest 工具往 library 写过东西。退出前同步落 index.json。
+      try {
+        library.flushIndex();
+      } catch {
+        // best-effort
+      }
     };
-  }, []);
+  }, [library]);
 
   return (
     <Box flexDirection="column">
