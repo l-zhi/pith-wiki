@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { QueueStore } from '../wiki/queue/store.js';
-import { formatStatusJson } from '../cli/queueCommands.js';
+import { formatStatusJson } from '../wiki/queue/state.js';
 import { ensureQueueDirs } from '../config.js';
 import type { ToolDef } from './index.js';
 

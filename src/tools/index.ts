@@ -115,8 +115,14 @@ function zodToJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
   return {};
 }
 
-export function toolsForOpenAI() {
-  return ALL_TOOLS.map((t) => ({
+/**
+ * 把工具列表转成 OpenAI Chat Completions API 期待的 tool 描述结构。
+ *
+ * 不传参数 → 使用内置 ALL_TOOLS。Agent 在合并 `extraTools` 时显式传入
+ * 合并后的列表，让宿主追加的工具一起被喂给 LLM。
+ */
+export function toolsForOpenAI(tools: AnyToolDef[] = ALL_TOOLS) {
+  return tools.map((t) => ({
     type: 'function' as const,
     function: {
       name: t.name,

@@ -4,7 +4,7 @@ import { render } from 'ink';
 import { Command } from 'commander';
 import chalk from 'chalk';
 import {
-  loadConfig,
+  loadConfigFromEnv,
   ensureWikiRoot,
   ensureHistoryDir,
   requireApiKey,
@@ -50,9 +50,9 @@ program
 
 const configFor = (extra: Partial<Config> = {}): Config => {
   const opts = program.opts<GlobalOpts>();
-  // --read-path 至少一次时覆盖 env / 配置文件；为空数组时让 loadConfig 走更低优先级源。
+  // --read-path 至少一次时覆盖 env / 配置文件；为空数组时让 loadConfigFromEnv 走更低优先级源。
   const readPathOverride = opts.readPath && opts.readPath.length > 0 ? opts.readPath : undefined;
-  const config = loadConfig({
+  const config = loadConfigFromEnv({
     readOnly: opts.readOnly,
     model: opts.model,
     wikiRoot: opts.root,

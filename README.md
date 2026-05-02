@@ -7,6 +7,11 @@
 > 把它捞回来。用 LLM 把原文 _脱水（hydrate）_ 成高密度的 Markdown 词条，
 > 检索时靠关键词 + 链接遍历，简单直接，肉眼可读。
 
+## 两种用法
+
+- **作为 CLI**：交互式 REPL + 子命令（`llm-wiki`、`llm-wiki ingest` 等）。见下方 [安装](#安装) 与 [使用](#使用)。
+- **作为 npm 库嵌入到桌面应用**：在 Electron / VS Code 插件 / 后端服务里直接 `import { LibraryService, Agent, defineConfig } from 'llm-wiki'`。见 [作为 npm 库嵌入](#作为-npm-库嵌入)。
+
 ## 安装
 
 ```bash
@@ -569,3 +574,143 @@ npm run typecheck    # 仅类型检查
 **明确放到 v1+**：embedding 与向量库、BM25、HTTP REST 接口、并发 tool_calls、
 `/save` `/load` 会话、写入前 diff 预览、多轮消息压缩、持久化链接索引、
 `[[concept-id]]` 自动建链补全、队列后台 daemon 模式。
+
+## 作为 npm 库嵌入
+
+llm-wiki 同时是一个可被宿主应用（Electron 桌面 app、VS Code 插件、Node 后端等）
+直接 `import` 的库。核心三层服务 `LibraryService` / `HydrationService` /
+`ContextAssembler` 与 `Agent` 都是 framework-agnostic 的，没有 UI 依赖。
+
+### 安装
+
+```bash
+npm install llm-wiki
+```
+
+### Subpath 导出表
+
+按需 import，让现代打包器 tree-shake 出未使用的代码：
+
+| 路径 | 典型导出 | 用途 |
+|---|---|---|
+| `llm-wiki` | 全部公共 API | 主入口，最便捷 |
+| `llm-wiki/wiki` | `LibraryService`, `HydrationService`, `ContextAssembler`, `Entry`, `runBatch` | 只要存储 + 检索 + 脱水 |
+| `llm-wiki/agent` | `Agent`, `createClient`, `defaultSystemPrompt`, `AgentOptions` | 只要 LLM agent loop |
+| `llm-wiki/tools` | `buildContext`, `ALL_TOOLS`, `TOOL_REGISTRY`, `ToolContext`, `ToolDef` | 注册自定义工具 / 拼装 ToolContext |
+| `llm-wiki/config` | `defineConfig`, `loadConfigFromEnv`, `Config` | 配置工厂 |
+
+### 不带 LLM 的最小用法（纯 Markdown 知识库）
+
+不需要 API key、不联网，只用本地存储和检索：
+
+```ts
+import { LibraryService, ContextAssembler } from 'llm-wiki/wiki';
+
+const lib = new LibraryService('/path/to/wiki');
+lib.put({
+  id: 'react-hooks',
+  collection: 'tech',
+  title: 'React Hooks',
+  summary: 'useState/useEffect 等 Hook 的本质与陷阱',
+  tags: ['react', 'frontend'],
+  body: '...',
+});
+
+const assembler = new ContextAssembler(lib);
+const { context, references } = assembler.query('react hook 闭包陷阱');
+console.log(context);     // 关键词打分 + 1-hop 链接扩展后的 Markdown 摘要
+console.log(references);  // 引用到的 entry 列表（带源路径）
+```
+
+### 完整嵌入：Electron 主进程接入 LLM agent
+
+```ts
+import { app, dialog } from 'electron';
+import {
+  defineConfig,
+  createClient,
+  LibraryService,
+  buildContext,
+  Agent,
+  type ApprovalAnswer,
+} from 'llm-wiki';
+
+// 1. 显式构造 config（纯函数，不读 .env、不污染宿主 env）
+const config = defineConfig({
+  apiKey: process.env.DEEPSEEK_API_KEY!,
+  baseURL: 'https://api.deepseek.com',
+  model: 'deepseek-chat',
+  wikiRoot: `${app.getPath('userData')}/wiki`,
+  workspaceRoot: app.getPath('userData'),
+});
+
+const client = createClient(config);
+const library = new LibraryService(config.wikiRoot);
+
+// 2. 写入审批回调：弹宿主自己的对话框
+const requestApproval = async (
+  filePath: string,
+  preview: string,
+): Promise<ApprovalAnswer> => {
+  const { response } = await dialog.showMessageBox({
+    type: 'question',
+    message: `Allow LLM write to ${filePath}?`,
+    detail: preview.slice(0, 500),
+    buttons: ['Allow once', 'Allow always (this session)', 'Deny'],
+    defaultId: 0,
+    cancelId: 2,
+  });
+  return (['yes', 'always', 'no'] as const)[response];
+};
+
+const ctx = buildContext(config, client, requestApproval, library);
+
+// 3. 创建 Agent（可选自定义 systemPrompt / 追加自有工具 / 调整 maxSteps）
+const agent = new Agent(client, config.model, ctx, {
+  systemPrompt: 'You are an assistant inside MyDesktopApp...',
+  // extraTools: [/* 宿主自己的 ToolDef */],
+  // maxSteps: 20,
+});
+
+// 4. 跑一轮对话；AbortController 支持用户中断；事件可用于 UI 流式渲染
+const abort = new AbortController();
+const reply = await agent.send('给我整理 Notion 里关于 RAG 的资料', {
+  signal: abort.signal,
+  events: {
+    onToolCall: (call) => mainWindow.webContents.send('tool-call', call),
+    onToolResult: (r) => mainWindow.webContents.send('tool-result', r),
+    onUsage: (u) => mainWindow.webContents.send('usage', u),
+  },
+});
+```
+
+### 注册宿主自己的工具
+
+```ts
+import { z } from 'zod';
+import type { ToolDef } from 'llm-wiki/tools';
+
+const sendNotificationTool: ToolDef<typeof params> = {
+  name: 'send_notification',
+  description: 'Show a desktop notification to the user.',
+  parameters: z.object({
+    title: z.string(),
+    body: z.string(),
+  }),
+  handler: async (args) => {
+    new Notification(args.title, { body: args.body });
+    return { ok: true };
+  },
+};
+
+const agent = new Agent(client, model, ctx, {
+  extraTools: [sendNotificationTool],
+});
+```
+
+### 与 CLI 模式的关系
+
+CLI 入口 (`bin/llm-wiki.js`) 内部就是这套库 + 一层 Ink/React UI 包装。所有
+公共 API 与 CLI 共享同一份实现，无双轨维护。库消费者通过 `defineConfig`
+拿到的 `Config` 对象与 CLI 通过 `loadConfigFromEnv()` 拿到的是同一个 zod
+schema 校验出的同一个类型。

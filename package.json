@@ -1,7 +1,7 @@
 {
   "name": "llm-wiki",
-  "version": "0.1.0",
-  "description": "Karpathy-style LLM wiki CLI: chat with DeepSeek, read/write files, hydrate raw text into a Markdown knowledge base.",
+  "version": "0.2.0-beta.0",
+  "description": "Karpathy-style LLM wiki: a CLI plus an embeddable library (LibraryService, Agent, ContextAssembler) for chatting with an LLM-driven Markdown knowledge base.",
   "type": "module",
   "license": "MIT",
   "author": "l-zhi",
@@ -21,8 +21,37 @@
     "knowledge-base",
     "markdown",
     "ink",
-    "claude-code"
+    "claude-code",
+    "library",
+    "embeddable",
+    "electron"
   ],
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./wiki": {
+      "types": "./dist/src/wiki/index.d.ts",
+      "import": "./dist/src/wiki/index.js"
+    },
+    "./agent": {
+      "types": "./dist/src/llm/index.d.ts",
+      "import": "./dist/src/llm/index.js"
+    },
+    "./tools": {
+      "types": "./dist/src/tools/index.d.ts",
+      "import": "./dist/src/tools/index.js"
+    },
+    "./config": {
+      "types": "./dist/src/config.d.ts",
+      "import": "./dist/src/config.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
   "bin": {
     "llm-wiki": "./dist/bin/llm-wiki.js"
   },
@@ -34,13 +63,17 @@
   "engines": {
     "node": ">=20"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "tsx bin/llm-wiki.ts",
-    "build": "tsc -p tsconfig.json && chmod +x dist/bin/llm-wiki.js",
+    "build": "tsc -p tsconfig.lib.json && tsc -p tsconfig.cli.json && chmod +x dist/bin/llm-wiki.js",
     "start": "node dist/bin/llm-wiki.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "node scripts/check-no-cli-leak.mjs"
   },
   "dependencies": {
     "chalk": "^5.3.0",

@@ -4,17 +4,28 @@ import path from 'node:path';
 import { z } from 'zod';
 import dotenv from 'dotenv';
 
-// `.env` 加载顺序：项目根的 .env 先（fallback / 首次 setup 仍走传统约定），
-// 然后 ~/.llm-wiki/.env 以 `override: true` 覆盖——用户自己的 home .env 是
-// 权威源，跨 workspace 共用。两个都不存在时 dotenv 静默 no-op。
-//
-// 设计意图：避免每个项目根都需要复制一份 .env；让 DEEPSEEK_API_KEY 这类
-// 跨工作区不变的密钥只放一份在 ~/.llm-wiki/.env。
-dotenv.config();
-dotenv.config({
-  path: path.join(os.homedir(), '.llm-wiki', '.env'),
-  override: true,
-});
+/**
+ * 懒加载 `.env`，仅 CLI 入口（`loadConfigFromEnv`）会调用。
+ *
+ * 加载顺序：项目根 `.env` → `~/.llm-wiki/.env`（override: true，权威源）。
+ * 设计意图：避免每个项目根都需要复制一份 .env；让 DEEPSEEK_API_KEY 这类
+ * 跨工作区不变的密钥只放一份在 ~/.llm-wiki/.env。
+ *
+ * 模块加载时不再自动跑 dotenv —— 库消费者 `import { defineConfig } from 'llm-wiki/config'`
+ * 不会污染宿主进程的 env。
+ *
+ * 幂等：第二次调用 no-op，避免覆盖测试或调用方在第一次 load 后手工改的 env。
+ */
+let dotenvLoaded = false;
+function loadDotenvOnce(): void {
+  if (dotenvLoaded) return;
+  dotenvLoaded = true;
+  dotenv.config();
+  dotenv.config({
+    path: path.join(os.homedir(), '.llm-wiki', '.env'),
+    override: true,
+  });
+}
 
 /**
  * 多 provider 配置：每个条目对应一个 OpenAI-compatible endpoint。
@@ -243,7 +254,14 @@ export function parseReadPathsFromEnv(raw: string | undefined): string[] | undef
   return cleaned.length ? cleaned : undefined;
 }
 
-export function loadConfig(overrides: ConfigOverrides = {}): Config {
+/**
+ * CLI 入口的配置加载：读 `.env`、`~/.llm-wiki/config.json`、env 变量，
+ * 再叠加显式 overrides，zod 校验后返回。
+ *
+ * 仅 CLI 用——库消费者请用 `defineConfig`，那是纯函数，无副作用。
+ */
+export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
+  loadDotenvOnce();
   const file = loadFileConfig();
   const cwd = process.cwd();
   const workspaceRoot =
@@ -339,6 +357,96 @@ export function loadConfig(overrides: ConfigOverrides = {}): Config {
   }));
   // 应用 active provider：把对应 entry 的 apiKey/baseURL/model 覆盖到顶层，
   // 让现有调用方（agent / hydrator）继续读 config.apiKey 等字段不需要改。
+  return applyActiveProvider(parsed);
+}
+
+/**
+ * @deprecated 改用 `loadConfigFromEnv`。本别名只为旧调用方兼容保留，将在
+ * v0.3 移除。语义没变。
+ */
+export const loadConfig = loadConfigFromEnv;
+
+/**
+ * 库（嵌入）模式的配置工厂。**纯函数**：不读 `.env`、不读 `~/.llm-wiki/config.json`、
+ * 不读 `process.env`、不写文件系统。只把传入的 input 与默认值合并、做 zod 校验。
+ *
+ * 与 `loadConfigFromEnv` 的关键差别：
+ *   - 必填：`apiKey`、`baseURL`、`model`、`wikiRoot`
+ *   - `workspaceRoot` 缺省 = `wikiRoot`
+ *   - 队列 / history / output 等路径默认派生自 `wikiRoot`，**不**落到 `~/.llm-wiki/`
+ *     —— 嵌入应用的数据应集中在它自己规划的目录里
+ *   - 不应用 dotenv，宿主进程的 env 不会被污染
+ *
+ * 示例：
+ *   const config = defineConfig({
+ *     apiKey: 'sk-...',
+ *     baseURL: 'https://api.deepseek.com',
+ *     model: 'deepseek-chat',
+ *     wikiRoot: '/path/to/wiki',
+ *   });
+ */
+export interface DefineConfigInput {
+  apiKey: string;
+  baseURL: string;
+  model: string;
+  wikiRoot: string;
+  workspaceRoot?: string;
+  providers?: Record<string, ProviderConfig>;
+  activeProvider?: string;
+  readOnly?: boolean;
+  maxToolPayloadBytes?: number;
+  additionalReadPaths?: string[];
+  historyFile?: string;
+  queueStatePath?: string;
+  queueLogDir?: string;
+  queueConcurrency?: number;
+  queueMaxAttempts?: number;
+  queueAutoStart?: boolean;
+  watchDirs?: ConfigOverrides['watchDirs'];
+  watchAutoStart?: boolean;
+  outputDir?: string;
+  transcriptEnabled?: boolean;
+  digestCollection?: string;
+}
+
+export function defineConfig(input: DefineConfigInput): Config {
+  const wikiRoot = path.resolve(expandHome(input.wikiRoot));
+  const workspaceRoot = path.resolve(expandHome(input.workspaceRoot ?? wikiRoot));
+  const queueDir = path.join(wikiRoot, '.queue');
+  const merged = {
+    apiKey: input.apiKey,
+    baseURL: input.baseURL,
+    model: input.model,
+    workspaceRoot,
+    wikiRoot,
+    readOnly: input.readOnly ?? false,
+    maxToolPayloadBytes: input.maxToolPayloadBytes ?? DEFAULTS.maxToolPayloadBytes,
+    historyFile: path.resolve(expandHome(input.historyFile ?? path.join(wikiRoot, '.history'))),
+    additionalReadPaths: (input.additionalReadPaths ?? []).map((p) =>
+      path.resolve(expandHome(p)),
+    ),
+    queueStatePath: path.resolve(
+      expandHome(input.queueStatePath ?? path.join(queueDir, 'state.json')),
+    ),
+    queueLogDir: path.resolve(expandHome(input.queueLogDir ?? path.join(queueDir, 'logs'))),
+    queueConcurrency: input.queueConcurrency ?? DEFAULTS.queueConcurrency,
+    queueMaxAttempts: input.queueMaxAttempts ?? DEFAULTS.queueMaxAttempts,
+    queueAutoStart: input.queueAutoStart ?? DEFAULTS.queueAutoStart,
+    watchDirs: input.watchDirs ?? [],
+    watchAutoStart: input.watchAutoStart ?? DEFAULTS.watchAutoStart,
+    outputDir: path.resolve(
+      expandHome(input.outputDir ?? path.join(wikiRoot, 'output', 'transcripts')),
+    ),
+    transcriptEnabled: input.transcriptEnabled ?? DEFAULTS.transcriptEnabled,
+    digestCollection: input.digestCollection ?? DEFAULTS.digestCollection,
+    providers: input.providers ?? {},
+    activeProvider: input.activeProvider,
+  };
+  const parsed = ConfigSchema.parse(merged);
+  parsed.watchDirs = parsed.watchDirs.map((wd) => ({
+    ...wd,
+    path: path.resolve(expandHome(wd.path)),
+  }));
   return applyActiveProvider(parsed);
 }
 

@@ -124,3 +124,28 @@ export function writeStateAtomic(filePath: string, state: QueueState): void {
   fs.writeFileSync(tmp, json, 'utf8');
   fs.renameSync(tmp, filePath);
 }
+
+export function countByStatus(
+  state: QueueState,
+): Record<'pending' | 'running' | 'completed' | 'dead', number> {
+  const counts = { pending: 0, running: 0, completed: 0, dead: 0 };
+  for (const j of Object.values(state.jobs)) counts[j.status] += 1;
+  return counts;
+}
+
+export interface StatusJson {
+  counts: ReturnType<typeof countByStatus>;
+  running: QueueJob[];
+  dead: QueueJob[];
+  recentEvents: QueueState['events'];
+  statePath?: string;
+}
+
+export function formatStatusJson(state: QueueState): StatusJson {
+  return {
+    counts: countByStatus(state),
+    running: Object.values(state.jobs).filter((j) => j.status === 'running'),
+    dead: Object.values(state.jobs).filter((j) => j.status === 'dead'),
+    recentEvents: state.events.slice(-10),
+  };
+}

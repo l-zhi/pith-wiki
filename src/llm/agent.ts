@@ -5,9 +5,15 @@ import type {
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
 } from 'openai/resources/chat/completions';
-import { TOOL_REGISTRY, ToolContext, toolsForOpenAI } from '../tools/index.js';
+import { ALL_TOOLS, ToolContext, toolsForOpenAI, type AnyToolDef } from '../tools/index.js';
 
-const SYSTEM_PROMPT = `You are llm-wiki, a CLI assistant that helps the user manage a Karpathy-style Markdown knowledge base.
+/**
+ * 中性默认 system prompt——同时适用于 CLI 和嵌入用例。
+ *
+ * CLI 在 App.tsx 里追加一段 "你正运行在终端里" 的小后缀；嵌入应用按需
+ * 通过 `AgentOptions.systemPrompt` 完整替换。
+ */
+export const defaultSystemPrompt = `You are llm-wiki, an assistant that helps the user manage a Karpathy-style Markdown knowledge base.
 
 Available tools:
   File (sandboxed): read_file, write_file, list_dir
@@ -41,6 +47,15 @@ Be concise; output Markdown. Cite which entries informed your answer when releva
 When the user shares new material worth saving, suggest wiki_ingest (one-shot)
 or wiki_queue_add (bulk / async).`;
 
+export interface AgentOptions {
+  /** 完整替换默认 system prompt。默认 `defaultSystemPrompt`。 */
+  systemPrompt?: string;
+  /** tool loop 最大轮数。默认 12。 */
+  maxSteps?: number;
+  /** 宿主追加的工具——会被并入内置 10 个工具一起喂给 OpenAI 和 dispatch 表。 */
+  extraTools?: AnyToolDef[];
+}
+
 export interface UsageDelta {
   inputTokens: number;
   outputTokens: number;
@@ -59,17 +74,30 @@ export interface RunOptions {
 }
 
 export class Agent {
-  private messages: ChatCompletionMessageParam[] = [{ role: 'system', content: SYSTEM_PROMPT }];
+  private messages: ChatCompletionMessageParam[];
   private queue = new PQueue({ concurrency: 1 });
+  private readonly systemPrompt: string;
+  private readonly maxSteps: number;
+  private readonly toolRegistry: Map<string, AnyToolDef>;
+  private readonly toolsPayload: ReturnType<typeof toolsForOpenAI>;
 
   constructor(
     private readonly client: OpenAI,
     private readonly model: string,
     private readonly toolCtx: ToolContext,
-  ) {}
+    options: AgentOptions = {},
+  ) {
+    this.systemPrompt = options.systemPrompt ?? defaultSystemPrompt;
+    this.maxSteps = options.maxSteps ?? 12;
+    this.messages = [{ role: 'system', content: this.systemPrompt }];
+
+    const tools: AnyToolDef[] = [...ALL_TOOLS, ...(options.extraTools ?? [])];
+    this.toolRegistry = new Map(tools.map((t) => [t.name, t]));
+    this.toolsPayload = toolsForOpenAI(tools);
+  }
 
   reset(): void {
-    this.messages = [{ role: 'system', content: SYSTEM_PROMPT }];
+    this.messages = [{ role: 'system', content: this.systemPrompt }];
   }
 
   /**
@@ -125,11 +153,11 @@ export class Agent {
   async send(userMessage: string, opts: RunOptions = {}): Promise<string> {
     this.messages.push({ role: 'user', content: userMessage });
     const events = opts.events ?? {};
-    const tools = toolsForOpenAI();
+    const tools = this.toolsPayload;
 
     let finalText = '';
     let safety = 0;
-    while (safety++ < 12) {
+    while (safety++ < this.maxSteps) {
       let completion: ChatCompletion;
       try {
         completion = await this.client.chat.completions.create(
@@ -185,7 +213,7 @@ export class Agent {
     call: ChatCompletionMessageToolCall,
     events: AgentEvents,
   ): Promise<void> {
-    const tool = TOOL_REGISTRY.get(call.function.name);
+    const tool = this.toolRegistry.get(call.function.name);
     if (!tool) {
       this.messages.push({
         role: 'tool',
