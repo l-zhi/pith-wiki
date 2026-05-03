@@ -34,6 +34,12 @@ export const QueueJobSchema = z.object({
   finalEntryId: z.string().optional(),
   /** ISO 时间戳：在此之前不允许被 worker 拉起。退避闸门。 */
   nextEarliestRunAt: z.string().optional(),
+  /**
+   * 强制使用的 converter 名（绕过扩展名解析）。
+   * 用户在 enqueue 时如果传了 --converter 就写入这里；watcher 总是不写，
+   * 让 worker 按 ConverterRegistry 默认规则解析。
+   */
+  converter: z.string().optional(),
 });
 export type QueueJob = z.infer<typeof QueueJobSchema>;
 
@@ -46,6 +52,8 @@ export const QueueEventKindSchema = z.enum([
   'reset',
   'cancelled',
   'skipped',
+  /** 转换器进度（pdf-parse 之类长任务），msg 是 JSON.stringify(ConvertProgress)。 */
+  'progress',
 ]);
 export type QueueEventKind = z.infer<typeof QueueEventKindSchema>;
 

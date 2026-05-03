@@ -72,17 +72,27 @@ REPL 启动 flag：
 ### 同步 ingest
 
 ```bash
-# 单文件脱水入库
+# 单文件脱水入库（按扩展名自动选转换器：.md/.txt/.pdf/.docx/.html）
 llm-wiki ingest --collection tech --file ./paper.md
-# 或从 stdin：cat paper.md | llm-wiki ingest --collection tech
+llm-wiki ingest --collection tech --file ./paper.pdf      # 走 pdf-parse
+llm-wiki ingest --collection tech --file ./report.docx    # 走 mammoth
+# 或从 stdin（不进转换器，直接当 markdown 喂 hydrator）：
+cat paper.md | llm-wiki ingest --collection tech
 
 # 批量入库：glob 模式（fast-glob 语法）
 llm-wiki ingest --collection tech --batch 'papers/**/*.md'
 
-# 批量入库：递归整个目录的 .md 文件
+# 批量入库：递归整个目录（任何已注册扩展名都能被批量解析）
 llm-wiki ingest --collection tech --dir ./papers/
 # 默认并发 3、自动 429 退避、源路径已入库会跳过；--force 强制重脱水覆盖
 llm-wiki ingest --collection tech --dir ./papers/ --force --concurrency 5
+
+# 强指定转换器（绕过扩展名）；--no-cache 跳过 .cache/converters/ 调试用
+llm-wiki ingest --collection tech --file ./readme.unknown --converter markdown-passthrough
+llm-wiki ingest --collection tech --file ./paper.pdf --no-cache
+
+# 列出当前 build 注册的所有转换器（包括 host 自定义）
+llm-wiki converters
 ```
 
 ### 持久化队列（异步，可中断、可查进度、异常重试）
@@ -683,6 +693,84 @@ const reply = await agent.send('给我整理 Notion 里关于 RAG 的资料', {
   },
 });
 ```
+
+### 支持的文件类型与转换器
+
+llm-wiki 用一个 **ConverterRegistry** 把"文件字节 → markdown / 纯文本"这步可插拔化：
+不同扩展名走不同转换器，结果按 sha256 落盘缓存（`<wikiRoot>/.cache/converters/`），
+重跑同文件直接命中。
+
+| 扩展名 | 转换器 name | 实现 |
+|---|---|---|
+| `.md`, `.markdown` | `markdown-passthrough` | utf8 解码（默认 priority=0） |
+| `.txt`, `.text` | `text-passthrough` | utf8 解码 |
+| `.pdf` | `pdf-parse` | [pdf-parse v2](https://www.npmjs.com/package/pdf-parse) 抽取每页文字 |
+| `.docx` | `docx-mammoth` | [mammoth](https://www.npmjs.com/package/mammoth) `convertToMarkdown` |
+| `.html`, `.htm` | `html-turndown` | [turndown](https://www.npmjs.com/package/turndown) HTML→Markdown |
+
+CLI 用法：
+
+```bash
+llm-wiki converters                         # 列表
+llm-wiki ingest --file foo.pdf --collection x   # 自动按扩展名走 pdf-parse
+llm-wiki ingest --file foo.unknown --collection x --converter text-passthrough  # 强指定
+llm-wiki ingest --file foo.pdf --collection x --no-cache   # 跳过缓存（debug 用）
+```
+
+### 注册自定义转换器
+
+宿主可以在 `defineConfig` / `buildContext` 时注入自己的转换器（默认 priority=100，
+覆盖同扩展名的内置实现）：
+
+```ts
+import {
+  buildContext,
+  type Converter,
+} from 'llm-wiki';
+
+// 例 1：给 .md 加一个"先剥 Notion 导出冗余"的预处理转换器
+const notionMarkdownClean: Converter = {
+  name: 'markdown-notion-clean',
+  version: '1',
+  extensions: ['.md'],
+  priority: 100,
+  async convert({ bytes }) {
+    const raw = bytes.toString('utf8');
+    const cleaned = raw
+      .replace(/^---[\s\S]*?---\n/, '')           // 去除 frontmatter
+      .replace(/^# [a-f0-9]{32} \[/gm, '# [');    // 去除 Notion ID 前缀
+    return { content: cleaned };
+  },
+};
+
+// 例 2：扫描 PDF + 自家 OCR
+const pdfOcr: Converter = {
+  name: 'pdf-ocr',
+  version: '1',
+  extensions: ['.pdf'],
+  priority: 50,                  // 高于内置 pdf-parse 的 0
+  async convert({ filePath, bytes }, { signal, onProgress }) {
+    const text = await myOcrService.recognize(bytes, { signal, onProgress });
+    return { content: text };
+  },
+};
+
+const ctx = buildContext(config, client, requestApproval, library, {
+  converters: [notionMarkdownClean, pdfOcr],
+});
+```
+
+转换器接口要点（详见 `llm-wiki/wiki` 子路径下的 `Converter` 类型）：
+
+- `convert({ filePath, bytes }, { signal, onProgress })` → `{ content, meta? }`
+- `signal` 是 AbortSignal —— 用户取消（CLI Ctrl+C / Electron 关页）会触发，转换器要尽快退出
+- `onProgress({ phase, cur, total })` 把进度桥到队列 events，宿主 UI 可订阅 `state.json`
+  看到"pdf-parse: rendering page 5/12"之类
+- 缓存 key 包含 `name + version`：升级实现时递增 `version` 让旧缓存自然失效
+
+慢转换器（OCR / 网络抓取）已经天然受队列保护——失败按 `queueMaxAttempts` 退避重试，
+AbortSignal 整链贯通，不阻塞 REPL。但若是"重试也无意义"的失败（空输出 / 未知 converter），
+processJob 会标 `permanent`，runner 直接 dead 掉而不消耗重试预算。
 
 ### 注册宿主自己的工具
 

@@ -139,6 +139,11 @@ const ConfigSchema = z.object({
    * 默认 `output` —— 跟 transcripts 共享同一个 wiki 子目录，但层级是 collection（被索引）。
    */
   digestCollection: z.string().min(1),
+  /**
+   * 是否把转换器输出（PDF→md 之类）写入 `<wikiRoot>/.cache/converters/`。
+   * 默认 true：避免重复解析。CLI `--no-cache` / 库 `defineConfig({cacheConverted:false})` 可关。
+   */
+  cacheConverted: z.boolean(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -172,6 +177,7 @@ export interface ConfigOverrides {
   outputDir?: string;
   transcriptEnabled?: boolean;
   digestCollection?: string;
+  cacheConverted?: boolean;
 }
 
 const DEFAULTS = {
@@ -184,6 +190,7 @@ const DEFAULTS = {
   watchAutoStart: true,
   transcriptEnabled: true,
   digestCollection: 'output',
+  cacheConverted: true,
 };
 
 function loadFileConfig(): Partial<Config> {
@@ -341,6 +348,8 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
       overrides.transcriptEnabled ?? file.transcriptEnabled ?? DEFAULTS.transcriptEnabled,
     digestCollection:
       overrides.digestCollection ?? file.digestCollection ?? DEFAULTS.digestCollection,
+    cacheConverted:
+      overrides.cacheConverted ?? file.cacheConverted ?? DEFAULTS.cacheConverted,
     // multi-provider：providers 表来自 file（不接受 env，结构复杂），activeProvider
     // 走 CLI > env > file。Zod 校验之后再 overlay 到顶层 apiKey/baseURL/model。
     providers: overrides.providers ?? file.providers ?? {},
@@ -407,6 +416,14 @@ export interface DefineConfigInput {
   outputDir?: string;
   transcriptEnabled?: boolean;
   digestCollection?: string;
+  cacheConverted?: boolean;
+  /**
+   * 宿主注入的转换器（默认 priority=100，自然覆盖内置）。
+   *
+   * 注意：这个字段不进 zod schema（Converter 是包含函数的接口），仅在
+   * `buildConverterRegistry()` 里读出来。Config 上不持有，避免把 zod 校验弄复杂。
+   */
+  converters?: import('./wiki/converters/types.js').Converter[];
 }
 
 export function defineConfig(input: DefineConfigInput): Config {
@@ -439,6 +456,7 @@ export function defineConfig(input: DefineConfigInput): Config {
     ),
     transcriptEnabled: input.transcriptEnabled ?? DEFAULTS.transcriptEnabled,
     digestCollection: input.digestCollection ?? DEFAULTS.digestCollection,
+    cacheConverted: input.cacheConverted ?? DEFAULTS.cacheConverted,
     providers: input.providers ?? {},
     activeProvider: input.activeProvider,
   };

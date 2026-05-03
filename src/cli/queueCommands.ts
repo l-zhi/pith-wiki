@@ -20,6 +20,7 @@ import {
 } from '../wiki/queue/state.js';
 import { QueueLockedError, QueueStore } from '../wiki/queue/store.js';
 import { runQueue } from '../wiki/queue/runner.js';
+import { buildConverterPipeline } from '../wiki/converters/index.js';
 import { runWatcher, type WatchTargetConfig } from '../wiki/queue/watcher.js';
 import { resolveSafePath, SafetyError } from '../tools/safety.js';
 import { enumerateBatchFiles } from './subcommands.js';
@@ -250,11 +251,17 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
 
       const concurrency = Math.max(1, opts.concurrency || config.queueConcurrency);
 
+      const { registry: queueConvRegistry, cache: queueConvCache } = buildConverterPipeline({
+        wikiRoot: config.wikiRoot,
+        cacheConverted: config.cacheConverted,
+      });
       try {
         const summary = await runQueue({
           store,
           hydrator,
           library,
+          converterRegistry: queueConvRegistry,
+          cache: queueConvCache,
           concurrency,
           maxAttempts: config.queueMaxAttempts,
           backoffMs: [5_000, 30_000, 120_000],
@@ -441,12 +448,17 @@ export function buildWatchCommand(program: Command, args: BuildArgs): void {
       process.on('SIGINT', sigInt);
       process.on('SIGTERM', sigTerm);
 
+      const { registry: watchConvRegistry } = buildConverterPipeline({
+        wikiRoot: config.wikiRoot,
+        cacheConverted: config.cacheConverted,
+      });
       try {
         await runWatcher({
           store,
           targets,
           safety,
           signal: ac.signal,
+          extensions: watchConvRegistry.extensions(),
           log: (line) => console.log(line),
         });
         console.log(chalk.gray('watcher stopped.'));

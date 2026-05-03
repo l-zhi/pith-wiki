@@ -1,12 +1,32 @@
 import path from 'node:path';
+import fs from 'node:fs';
 import type { HydrationService } from '../hydration.js';
 import type { LibraryService } from '../library.js';
 import type { Entry } from '../types.js';
+import { ConverterRegistry } from '../converters/registry.js';
+import type { ConverterCache, CacheKey } from '../converters/cache.js';
+import { cacheKey, cacheKeyString, NullConverterCache } from '../converters/cache.js';
+import { EmptyConversionError, type ConvertProgress } from '../converters/types.js';
+import { defaultConverters } from '../converters/index.js';
+
+let _defaultRegistrySingleton: ConverterRegistry | null = null;
+/**
+ * 缺省共享的转换器注册表（用于 ProcessJobCtx.converterRegistry 不显式传时）。
+ * 懒构造 + 单例：避免每次 processJob 调用都重新注册一遍内置。
+ */
+function defaultRegistry(): ConverterRegistry {
+  if (_defaultRegistrySingleton) return _defaultRegistrySingleton;
+  const r = new ConverterRegistry();
+  for (const c of defaultConverters()) r.register(c);
+  _defaultRegistrySingleton = r;
+  return r;
+}
 
 /**
  * 单文件 ingest 的核心处理：
  *   - 去重（基于 source.value 绝对路径）
- *   - 读文件 → hydrate（含 429 指数退避，单次 attempt 内）
+ *   - 读字节 → 转换器（按扩展名 / 强指定）→ 命中 sha256 缓存就直接复用
+ *   - hydrate（含 429 指数退避，单次 attempt 内）
  *   - id 冲突避让（claimUniqueId 自动加 -2 / -3 后缀）
  *   - LibraryService.put 落盘
  *
@@ -28,6 +48,15 @@ export interface FileResult {
    * 注意：这是单次 processJob 调用内的 attempt 数，与队列级 attempts 不同。
    */
   attempts: number;
+  /** 走过的 converter 名字（命中缓存也会填）；纯失败时可能为空。 */
+  convertedBy?: string;
+  /** 该次 processJob 是否命中转换器缓存。 */
+  cacheHit?: boolean;
+  /**
+   * 这次失败应该被永久标记吗？processJob 在 EmptyConversion / 缺缓存的转换器
+   * 等"重试也无意义"的情况下设 true，调用方（runner）据此把 job 直接打 dead。
+   */
+  permanent?: boolean;
 }
 
 export interface ProcessJobCtx {
@@ -41,6 +70,22 @@ export interface ProcessJobCtx {
   existingPaths: Set<string>;
   /** id 命名空间；冲突时自动追加 -2 / -3 后缀，并把最终 id 写回。 */
   claimedIds: Set<string>;
+  /**
+   * 转换器注册表。可选——缺省走内置默认（markdown / text / pdf / docx / html）。
+   * REPL / 库消费者一般会传一份共享的实例（方便宿主注册自定义转换器）。
+   */
+  converterRegistry?: ConverterRegistry;
+  /**
+   * 转换器结果缓存。可选，缺省走 NullConverterCache（每次都重跑转换）。
+   * 库消费者在 buildContext 时根据 config.cacheConverted 决定塞 FS 还是 Null。
+   */
+  cache?: ConverterCache;
+  /** 强指定转换器名（绕过 ConverterRegistry 的扩展名解析）。 */
+  converter?: string;
+  /** 长转换器进度回调，runner 桥到 queue events。 */
+  onConvertProgress?(p: ConvertProgress): void;
+  /** 用户取消（Ctrl+C / Electron 关页）。 */
+  signal?: AbortSignal;
 }
 
 /**
@@ -61,12 +106,16 @@ export function claimUniqueId(base: string, claimedIds: Set<string>): string {
 }
 
 /**
- * 处理单个文件：去重 → hydrate（带 429 重试）→ 解决 id 冲突 → 落盘。
+ * 处理单个文件：去重 → convert（可缓存）→ hydrate（带 429 重试）→ 解决 id 冲突 → 落盘。
  *
  * 重试 + 冲突避让的关键不变量：
  *   - attempts 永远反映真实尝试次数（含 429 重试），即使最终失败
  *   - --force 重新入库时，如果 hydrator 返回的 id 与"该文件之前对应的旧 entry id"相同，
  *     视为合法覆盖（不走 -2 避让）；否则按通用避让规则处理
+ *
+ * permanent 失败标识：转换器空输出（EmptyConversionError）和 UnknownConverterError
+ * 不应该被退避重试——它们的根因是配置 / 内容问题，重跑结果不会变。runner 会据此
+ * 直接打 dead 状态。
  */
 export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<FileResult> {
   // 同源路径之前对应的 entry（可能不存在）。
@@ -85,16 +134,72 @@ export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<F
     };
   }
 
-  // 读文件
-  let raw: string;
+  // 读字节
+  let bytes: Buffer;
   try {
-    raw = await readFileUtf8(absFile);
+    bytes = await fs.promises.readFile(absFile);
   } catch (err) {
     return {
       file: absFile,
       status: 'failed',
       reason: `read error: ${(err as Error).message}`,
       attempts: 0,
+    };
+  }
+
+  // 解析转换器
+  let converter;
+  const registry = ctx.converterRegistry ?? defaultRegistry();
+  try {
+    converter = registry.resolve(absFile, { force: ctx.converter });
+  } catch (err) {
+    return {
+      file: absFile,
+      status: 'failed',
+      reason: `converter resolution failed: ${(err as Error).message}`,
+      attempts: 0,
+      permanent: true,
+    };
+  }
+
+  // 转换：先查缓存，miss 再调 convert()
+  const cache = ctx.cache ?? new NullConverterCache();
+  const key: CacheKey = cacheKey(bytes, converter.name, converter.version);
+  let convOut: { content: string; meta?: Record<string, unknown> };
+  let cacheHit = false;
+  try {
+    const cached = await cache.get(key);
+    if (cached) {
+      convOut = { content: cached.content, meta: cached.meta };
+      cacheHit = true;
+    } else {
+      const result = await converter.convert(
+        { filePath: absFile, bytes },
+        { signal: ctx.signal, onProgress: ctx.onConvertProgress },
+      );
+      // 真空（length=0）或纯空白：抛 EmptyConversionError 让 runner 直接打 dead，
+      // 不浪费 LLM 配额（典型场景：扫描 PDF 没 OCR、损坏文件解析失败）。
+      // 只挡硬空——故意不挡"很短"，让用户拥有 ingest tiny markdown 的自由。
+      if (!result.content || result.content.trim().length === 0) {
+        throw new EmptyConversionError(
+          `${converter.name} produced empty output for ${path.basename(absFile)}`,
+        );
+      }
+      convOut = result;
+      // 不阻塞主路径：缓存写失败不算转换失败
+      await cache.put(key, { content: result.content, meta: result.meta }).catch(() => undefined);
+    }
+  } catch (err) {
+    const isEmpty = err instanceof EmptyConversionError;
+    return {
+      file: absFile,
+      status: 'failed',
+      reason: isEmpty
+        ? (err as Error).message
+        : `convert (${converter.name}) failed: ${(err as Error).message}`,
+      attempts: 0,
+      convertedBy: converter.name,
+      permanent: isEmpty,
     };
   }
 
@@ -107,9 +212,9 @@ export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<F
     attempts = attempt;
     try {
       entry = await ctx.hydrator.hydrate({
-        rawContent: raw,
+        rawContent: convOut.content,
         collectionId: ctx.collection,
-        source: { type: 'file', value: absFile },
+        source: { type: 'file', value: absFile, convertedBy: converter.name },
         linkCandidates: ctx.existingEntries,
         filenameHint: filename,
       });
@@ -124,7 +229,14 @@ export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<F
       const reason = status
         ? `hydration failed (status ${status}): ${(err as Error).message}`
         : `hydration failed: ${(err as Error).message}`;
-      return { file: absFile, status: 'failed', reason, attempts };
+      return {
+        file: absFile,
+        status: 'failed',
+        reason,
+        attempts,
+        convertedBy: converter.name,
+        cacheHit,
+      };
     }
   }
   if (!entry) {
@@ -150,6 +262,8 @@ export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<F
       status: 'failed',
       reason: `library.put failed: ${(err as Error).message}`,
       attempts,
+      convertedBy: converter.name,
+      cacheHit,
     };
   }
 
@@ -158,12 +272,9 @@ export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<F
     status: 'ok',
     id: finalId,
     attempts,
+    convertedBy: converter.name,
+    cacheHit,
   };
-}
-
-async function readFileUtf8(file: string): Promise<string> {
-  const fs = await import('node:fs/promises');
-  return fs.readFile(file, 'utf8');
 }
 
 export function formatResultLine(n: number, total: number, r: FileResult): string {
@@ -171,12 +282,20 @@ export function formatResultLine(n: number, total: number, r: FileResult): strin
   const counter = `[${n}/${total}]`;
   const retryNote =
     r.attempts > 1 ? `, ${r.attempts - 1} retr${r.attempts > 2 ? 'ies' : 'y'}` : '';
+  const cacheNote = r.cacheHit ? ' (cache hit)' : '';
   switch (r.status) {
     case 'ok':
-      return `${counter} ${file} ✓ ingested as ${r.id}${retryNote}`;
+      return `${counter} ${file} ✓ ingested as ${r.id}${cacheNote}${retryNote}`;
     case 'skipped':
       return `${counter} ${file} ⊘ skipped (${r.reason ?? 'duplicate'})`;
-    case 'failed':
-      return `${counter} ${file} ✗ failed: ${r.reason ?? 'unknown'}${retryNote}`;
+    case 'failed': {
+      const permTag = r.permanent ? ' [permanent]' : '';
+      return `${counter} ${file} ✗ failed: ${r.reason ?? 'unknown'}${permTag}${retryNote}`;
+    }
   }
+}
+
+/** 用记忆 cacheKey 字符串便于日志/调试。 */
+export function describeCacheKey(bytes: Buffer, converterName: string, version?: string): string {
+  return cacheKeyString(cacheKey(bytes, converterName, version));
 }

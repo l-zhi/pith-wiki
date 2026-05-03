@@ -54,6 +54,11 @@ export interface RunWatcherOptions {
   log?: (line: string) => void;
   /** 1s 防抖窗口（重复事件去重）。测试可调短。 */
   cooldownMs?: number;
+  /**
+   * 监听的文件扩展名列表（小写、含点，如 '.md' / '.pdf'）。
+   * 默认 `['.md']` 兼容旧行为；调用方一般传 `converterRegistry.extensions()`。
+   */
+  extensions?: string[];
 }
 
 /**
@@ -257,8 +262,10 @@ export function enqueueFromWatch(
 export async function initialScanEnqueue(
   store: QueueStore,
   target: ResolvedWatchTarget,
+  extensions: string[] = ['.md'],
 ): Promise<number> {
-  const files = await fastGlob('**/*.md', {
+  const glob = extensionsToGlob(extensions);
+  const files = await fastGlob(glob, {
     cwd: target.path,
     absolute: true,
     onlyFiles: true,
@@ -308,8 +315,18 @@ interface RunningWatcher {
  *   4. 等 signal.aborted → 关所有 watcher → 退出
  */
 export async function runWatcher(opts: RunWatcherOptions): Promise<void> {
-  const { store, targets, safety, signal, log = () => {}, cooldownMs = 1000 } = opts;
+  const {
+    store,
+    targets,
+    safety,
+    signal,
+    log = () => {},
+    cooldownMs = 1000,
+    extensions = ['.md'],
+  } = opts;
   if (targets.length === 0) return;
+  // 规范化：小写 + 含点
+  const exts = extensions.map((e) => (e.startsWith('.') ? e : `.${e}`).toLowerCase());
 
   const resolved: ResolvedWatchTarget[] = [];
   for (const t of targets) {
@@ -330,7 +347,7 @@ export async function runWatcher(opts: RunWatcherOptions): Promise<void> {
 
   for (const target of resolved) {
     if (target.initialScan) {
-      const n = await initialScanEnqueue(store, target);
+      const n = await initialScanEnqueue(store, target, exts);
       log(`[watch] initial-scan ${target.path} → enqueued ${n} new file(s)`);
     }
 
@@ -358,7 +375,8 @@ export async function runWatcher(opts: RunWatcherOptions): Promise<void> {
 
     function dispatch(kind: 'add' | 'change', file: string): void {
       const abs = path.resolve(file);
-      if (!abs.endsWith('.md')) return;
+      const ext = path.extname(abs).toLowerCase();
+      if (!exts.includes(ext)) return;
       if (isDefaultIgnored(abs)) return;
       // 兜底：再次确认不在 wikiRoot 之内（即使配置正确，也防止 symlink/realpath 漂移）
       const realWiki = (() => {
@@ -404,6 +422,21 @@ export async function runWatcher(opts: RunWatcherOptions): Promise<void> {
 
   // 关所有 watcher
   await Promise.all(running.map((r) => r.watcher.close()));
+}
+
+/**
+ * 把扩展名列表（'.md', '.pdf'...）拼成 fast-glob 用的"选 N 选 1"模式。
+ *  - 0 个 → 没意义，退化为 `**\/*.md` 兜底（不应该出现）
+ *  - 1 个 → `**\/*.md`
+ *  - N 个 → `**\/*.{md,pdf,docx}`
+ */
+export function extensionsToGlob(exts: string[]): string {
+  const cleaned = Array.from(
+    new Set(exts.map((e) => (e.startsWith('.') ? e.slice(1) : e).toLowerCase()).filter(Boolean)),
+  );
+  if (cleaned.length === 0) return '**/*.md';
+  if (cleaned.length === 1) return `**/*.${cleaned[0]}`;
+  return `**/*.{${cleaned.join(',')}}`;
 }
 
 /**

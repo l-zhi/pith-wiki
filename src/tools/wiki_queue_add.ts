@@ -19,6 +19,12 @@ const params = z.object({
     .boolean()
     .default(false)
     .describe('If true, re-enqueue already-completed files (resets attempts).'),
+  converter: z
+    .string()
+    .optional()
+    .describe(
+      'Force a specific converter name (e.g. "pdf-parse"). Bypasses extension-based resolution. Run wiki_query with /converters or check llm-wiki converters for registered names.',
+    ),
 });
 
 export const wikiQueueAddTool: ToolDef<typeof params> = {
@@ -62,6 +68,16 @@ export const wikiQueueAddTool: ToolDef<typeof params> = {
     ensureQueueDirs(ctx.config);
     const store = new QueueStore(ctx.config.queueStatePath);
 
+    // 如果用户显式给了 converter 名，先校验它存在于 ToolContext 注册表里——
+    // 让错误尽早暴露，而不是等 worker 起来再 dead 掉所有 job。
+    if (args.converter && !ctx.converterRegistry.has(args.converter)) {
+      return {
+        ok: false,
+        error: `unknown converter "${args.converter}"`,
+        registered: ctx.converterRegistry.names(),
+      };
+    }
+
     let added = 0;
     let reset = 0;
     let skipped = 0;
@@ -79,6 +95,7 @@ export const wikiQueueAddTool: ToolDef<typeof params> = {
             status: 'pending',
             attempts: 0,
             enqueuedAt: new Date().toISOString(),
+            converter: args.converter,
           };
           s.jobs[id] = job;
           pushEvent(s, { ts: job.enqueuedAt, jobId: id, kind: 'enqueued' });
@@ -95,6 +112,7 @@ export const wikiQueueAddTool: ToolDef<typeof params> = {
           existing.finalEntryId = undefined;
           existing.nextEarliestRunAt = undefined;
           existing.force = true;
+          if (args.converter) existing.converter = args.converter;
           pushEvent(s, {
             ts: new Date().toISOString(),
             jobId: id,

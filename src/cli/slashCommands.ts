@@ -36,6 +36,10 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: 'Show or switch active LLM provider (use without arg to list configured ones).',
     takesArg: true,
   },
+  {
+    name: '/converters',
+    description: 'List registered file → text converters (with extensions and priorities).',
+  },
   { name: '/exit', description: 'Exit the REPL.', aliases: ['/quit'] },
 ];
 

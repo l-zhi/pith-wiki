@@ -3,6 +3,12 @@ import { z } from 'zod';
 export const SourceSchema = z.object({
   type: z.enum(['url', 'file', 'inline', 'unknown']),
   value: z.string().optional(),
+  /**
+   * 转换器名（来自 ConverterRegistry）。
+   * 当 source.type='file' 且文件经历过 converter pipeline 时填入；
+   * 老 entry 没这字段照样 parse。
+   */
+  convertedBy: z.string().optional(),
 });
 
 export const EntrySchema = z.object({

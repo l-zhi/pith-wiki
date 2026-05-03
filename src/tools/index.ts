@@ -4,6 +4,12 @@ import type { Config } from '../config.js';
 import { LibraryService } from '../wiki/library.js';
 import { ContextAssembler } from '../wiki/assembler.js';
 import { HydrationService } from '../wiki/hydration.js';
+import {
+  buildConverterPipeline,
+  type Converter,
+  type ConverterRegistry,
+  type ConverterCache,
+} from '../wiki/converters/index.js';
 import { readFileTool } from './read_file.js';
 import { writeFileTool } from './write_file.js';
 import { listDirTool } from './list_dir.js';
@@ -24,6 +30,10 @@ export interface ToolContext {
   hydrator: HydrationService;
   approvedWritePaths: Set<string>;
   requestApproval: (path: string, preview: string) => Promise<ApprovalAnswer>;
+  /** 转换器注册表。批量 ingest / 队列 worker / wiki_ingest 工具都从这里取。 */
+  converterRegistry: ConverterRegistry;
+  /** 转换结果缓存（按 cacheConverted 决定是 FS 还是 Null 实现）。 */
+  converterCache: ConverterCache;
 }
 
 export interface ToolDef<P extends z.ZodTypeAny = z.ZodTypeAny> {
@@ -31,6 +41,18 @@ export interface ToolDef<P extends z.ZodTypeAny = z.ZodTypeAny> {
   description: string;
   parameters: P;
   handler: (args: z.infer<P>, ctx: ToolContext) => Promise<unknown>;
+}
+
+export interface BuildContextExtras {
+  /** 宿主注入的额外转换器（priority 默认 100，自然覆盖内置）。 */
+  converters?: Converter[];
+  /**
+   * 已经建好的 registry + cache。如果提供就直接用（用于 REPL/CLI 多处复用同
+   * 一份），否则 buildContext 内部会按 config.cacheConverted + extras.converters
+   * 现建一份。
+   */
+  converterRegistry?: ConverterRegistry;
+  converterCache?: ConverterCache;
 }
 
 export function buildContext(
@@ -47,10 +69,25 @@ export function buildContext(
    *   - 两份 index.json 写入互相覆盖
    */
   library?: LibraryService,
+  extras: BuildContextExtras = {},
 ): ToolContext {
   const lib = library ?? new LibraryService(config.wikiRoot);
   const assembler = new ContextAssembler(lib);
   const hydrator = new HydrationService(client, config.model, lib);
+  let registry: ConverterRegistry;
+  let cache: ConverterCache;
+  if (extras.converterRegistry && extras.converterCache) {
+    registry = extras.converterRegistry;
+    cache = extras.converterCache;
+  } else {
+    const built = buildConverterPipeline({
+      wikiRoot: config.wikiRoot,
+      cacheConverted: config.cacheConverted,
+      extras: extras.converters,
+    });
+    registry = extras.converterRegistry ?? built.registry;
+    cache = extras.converterCache ?? built.cache;
+  }
   return {
     config,
     library: lib,
@@ -58,6 +95,8 @@ export function buildContext(
     hydrator,
     approvedWritePaths: new Set(),
     requestApproval,
+    converterRegistry: registry,
+    converterCache: cache,
   };
 }
 

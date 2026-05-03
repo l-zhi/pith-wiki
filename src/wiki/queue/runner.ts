@@ -2,6 +2,8 @@ import PQueue from 'p-queue';
 import type { HydrationService } from '../hydration.js';
 import type { LibraryService } from '../library.js';
 import type { Entry } from '../types.js';
+import type { ConverterRegistry } from '../converters/registry.js';
+import type { ConverterCache } from '../converters/cache.js';
 import { processJob, resolveSourcePath, formatResultLine } from './processJob.js';
 import {
   pushEvent,
@@ -34,6 +36,13 @@ export interface RunQueueOptions {
   store: QueueStore;
   hydrator: HydrationService;
   library: LibraryService;
+  /**
+   * 转换器注册表。可选——缺省由 processJob 用内置默认转换器单例兜底。
+   * REPL / 库消费者一般会传一份共享的实例。
+   */
+  converterRegistry?: ConverterRegistry;
+  /** 转换结果缓存。可选；缺省走 processJob 内的 NullConverterCache。 */
+  cache?: ConverterCache;
   /** p-queue 并发数。 */
   concurrency: number;
   /** 队列级最大尝试次数。第 N 次失败后归档为 dead。 */
@@ -171,6 +180,21 @@ export async function runQueue(opts: RunQueueOptions): Promise<RunQueueSummary> 
         existingEntries: snap.entries,
         existingPaths: snap.existingPaths,
         claimedIds: snap.claimedIds,
+        converterRegistry: opts.converterRegistry,
+        cache: opts.cache,
+        converter: job.converter,
+        signal: opts.signal,
+        // 把转换器进度桥进 queue events，UI 可订阅 store 流看到 pdf 第几页之类
+        onConvertProgress: (p) => {
+          store.mutate((s) => {
+            pushEvent(s, {
+              ts: new Date().toISOString(),
+              jobId: job.id,
+              kind: 'progress',
+              msg: JSON.stringify(p),
+            });
+          });
+        },
       });
     } catch (err) {
       // processJob 内部已经 try/catch；走到这里说明是真未预期错误。归类为 failed。
@@ -236,21 +260,24 @@ export async function runQueue(opts: RunQueueOptions): Promise<RunQueueSummary> 
       opts.log(formatResultLine(completed, totalAtMoment(stateAfter), result));
       return;
     }
-    // failed 分支：attempts++、判断是否达到 max
-    logger.error(`failed reason=${result.reason}`);
+    // failed 分支：attempts++、判断是否达到 max。
+    // permanent 标记（EmptyConversion / UnknownConverter 等"重试也无意义"）→ 直接 dead，
+    // 不消耗用户重试预算。
+    logger.error(`failed reason=${result.reason}${result.permanent ? ' [permanent]' : ''}`);
     const stateAfter = store.mutate((s) => {
       const cur = s.jobs[job.id];
       if (!cur) return;
       cur.attempts += 1;
       cur.lastError = result.reason;
       cur.completedAt = undefined;
-      if (cur.attempts >= opts.maxAttempts) {
+      const goDead = result.permanent || cur.attempts >= opts.maxAttempts;
+      if (goDead) {
         cur.status = 'dead';
         pushEvent(s, {
           ts: new Date().toISOString(),
           jobId: job.id,
           kind: 'dead',
-          msg: result.reason,
+          msg: result.permanent ? `[permanent] ${result.reason}` : result.reason,
         });
       } else {
         const idx = Math.min(cur.attempts - 1, opts.backoffMs.length - 1);

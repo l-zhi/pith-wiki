@@ -19,7 +19,8 @@ describe('filterCommands', () => {
 
   it('按前缀过滤', () => {
     expect(filterCommands('/d').map((c) => c.name)).toEqual(['/digest']);
-    expect(filterCommands('/c').map((c) => c.name)).toEqual(['/clear']);
+    // /clear + /converters 都以 /c 开头
+    expect(filterCommands('/c').map((c) => c.name)).toEqual(['/clear', '/converters']);
     expect(filterCommands('/r').map((c) => c.name)).toEqual(['/reset']);
   });
 
@@ -58,8 +59,9 @@ describe('completeOnTab', () => {
   });
 
   it('1 个匹配（无 takesArg）→ 完整补全', () => {
-    const matches = filterCommands('/c');
-    expect(completeOnTab('/c', matches)).toBe('/clear');
+    // /cl 只匹配 /clear（/converters 不以 /cl 开头）
+    const matches = filterCommands('/cl');
+    expect(completeOnTab('/cl', matches)).toBe('/clear');
   });
 
   it('1 个匹配（takesArg）→ 补全后追加空格', () => {

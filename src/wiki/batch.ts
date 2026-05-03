@@ -2,6 +2,8 @@ import PQueue from 'p-queue';
 import type { HydrationService } from './hydration.js';
 import type { LibraryService } from './library.js';
 import type { Entry } from './types.js';
+import type { ConverterRegistry } from './converters/registry.js';
+import type { ConverterCache } from './converters/cache.js';
 import {
   processJob,
   resolveSourcePath,
@@ -36,6 +38,15 @@ export interface BatchOptions {
   concurrency: number;
   hydrator: HydrationService;
   library: LibraryService;
+  /**
+   * 转换器注册表。可选——缺省由 processJob 用内置默认转换器单例兜底。
+   * 想用自定义/host 注入的转换器时传一份。
+   */
+  converterRegistry?: ConverterRegistry;
+  /** 转换结果缓存。可选；默认 NullConverterCache（不缓存）。 */
+  cache?: ConverterCache;
+  /** 强指定转换器名（适用于整批文件强走同一个转换器，比如 --converter）。 */
+  converter?: string;
   /** 单行日志回调；调用方决定怎么输出（chalk / 普通 console.log / 测试 spy）。 */
   log: (line: string) => void;
 }
@@ -75,6 +86,9 @@ export async function runBatch(opts: BatchOptions): Promise<BatchSummary> {
         existingEntries,
         existingPaths,
         claimedIds,
+        converterRegistry: opts.converterRegistry,
+        cache: opts.cache,
+        converter: opts.converter,
       });
       completed += 1;
       results.push(result);

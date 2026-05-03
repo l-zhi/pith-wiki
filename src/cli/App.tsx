@@ -21,9 +21,11 @@ import { SLASH_COMMANDS } from './slashCommands.js';
 import { TranscriptLogger, deriveTranscriptPath } from './transcript.js';
 import { QueueLockedError, QueueStore } from '../wiki/queue/store.js';
 import { runQueue } from '../wiki/queue/runner.js';
+import { buildConverterPipeline } from '../wiki/converters/index.js';
 import { runWatcher } from '../wiki/queue/watcher.js';
 import { LibraryService } from '../wiki/library.js';
 import { HydrationService } from '../wiki/hydration.js';
+import { formatConvertersTable } from './converterFormat.js';
 
 interface Props {
   /**
@@ -108,6 +110,14 @@ export function App({ config: initialConfig }: Props) {
   // index.json 也只有一个 owner 在写，不会两份 cache 互相覆盖。
   const library = useMemo(() => new LibraryService(config.wikiRoot), [config.wikiRoot]);
 
+  // 转换器注册表 + 结果缓存：整个 REPL session 共用一份。
+  // worker / watcher / agent 工具上下文都拿同一份；watcher 据此动态生成 chokidar glob，
+  // /converters slash 据此打表。
+  const converters = useMemo(
+    () => buildConverterPipeline({ wikiRoot: config.wikiRoot, cacheConverted: config.cacheConverted }),
+    [config.wikiRoot, config.cacheConverted],
+  );
+
   useEffect(() => {
     if (!config.queueAutoStart) return;
     ensureQueueDirs(config);
@@ -131,6 +141,8 @@ export function App({ config: initialConfig }: Props) {
       store,
       hydrator,
       library,
+      converterRegistry: converters.registry,
+      cache: converters.cache,
       concurrency: config.queueConcurrency,
       maxAttempts: config.queueMaxAttempts,
       backoffMs: [5_000, 30_000, 120_000],
@@ -159,6 +171,7 @@ export function App({ config: initialConfig }: Props) {
         targets: config.watchDirs,
         safety,
         signal: ac.signal,
+        extensions: converters.registry.extensions(),
         // REPL 内 watcher 不打控制台 log（会污染对话视图）。事件可在 state.json 的
         // events 环里看到（kind='enqueued' msg='watcher:add/change/initial-scan'）。
         log: () => {},
@@ -229,10 +242,14 @@ export function App({ config: initialConfig }: Props) {
   }, [config]);
 
   const agent = useMemo(() => {
-    // 共用的 library 透传进 toolCtx；wiki_* 工具就和 worker / watcher 看到同一份索引。
-    const ctx = buildContext(config, client, requestApproval, library);
+    // 共用的 library + converter pipeline 透传进 toolCtx；wiki_* 工具和 worker /
+    // watcher 看到同一份索引、同一份转换器注册表。
+    const ctx = buildContext(config, client, requestApproval, library, {
+      converterRegistry: converters.registry,
+      converterCache: converters.cache,
+    });
     return new Agent(client, config.model, ctx);
-  }, [config, client, requestApproval, library]);
+  }, [config, client, requestApproval, library, converters]);
 
   const append = (msg: Omit<DisplayMessage, 'id'>) =>
     setMessages((prev) => [...prev, { ...msg, id: nextId() }]);
@@ -359,6 +376,8 @@ export function App({ config: initialConfig }: Props) {
     } else if (cmd === '/provider' || cmd.startsWith('/provider ')) {
       const arg = cmd === '/provider' ? '' : cmd.slice('/provider '.length).trim();
       handleProvider(arg);
+    } else if (cmd === '/converters') {
+      append({ role: 'system', text: formatConvertersTable(converters.registry) });
     } else if (cmd === '/exit' || cmd === '/quit') {
       exit();
     } else {

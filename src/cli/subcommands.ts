@@ -10,6 +10,8 @@ import { LibraryService } from '../wiki/library.js';
 import { HydrationService } from '../wiki/hydration.js';
 import { ContextAssembler } from '../wiki/assembler.js';
 import { runBatch } from '../wiki/batch.js';
+import { buildConverterPipeline } from '../wiki/converters/index.js';
+import { formatConvertersTable } from './converterFormat.js';
 import { resolveSafePath, SafetyError } from '../tools/safety.js';
 import { Source } from '../wiki/types.js';
 import { buildQueueCommands, buildWatchCommand } from './queueCommands.js';
@@ -35,6 +37,11 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
       3,
     )
     .option('--force', 'Re-hydrate files that are already ingested (batch mode only).')
+    .option(
+      '--converter <name>',
+      'Force a specific converter (bypass extension-based resolution).',
+    )
+    .option('--no-cache', 'Skip the converter result cache (always re-run conversion).')
     .action(async (opts) => {
       const config = args.configFor();
       requireApiKey(config);
@@ -50,6 +57,12 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
       const client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
       const library = new LibraryService(config.wikiRoot);
       const hydrator = new HydrationService(client, config.model, library);
+      // 注意：commander `--no-cache` 会把 opts.cache 解析成 false（默认 true）。
+      const cacheConverted = opts.cache !== false && config.cacheConverted;
+      const { registry: convRegistry, cache: convCache } = buildConverterPipeline({
+        wikiRoot: config.wikiRoot,
+        cacheConverted,
+      });
 
       // 公共读沙箱选项：复用 read_file/list_dir 的同款校验，让 ingest 文件路径
       // 必须落在 workspaceRoot ∪ wikiRoot ∪ additionalReadPaths 之内。
@@ -111,6 +124,9 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
           concurrency: Math.max(1, opts.concurrency || 3),
           hydrator,
           library,
+          converterRegistry: convRegistry,
+          cache: convCache,
+          converter: opts.converter,
           log: (line) => console.log(line),
         });
         console.log(chalk.gray('─'.repeat(40)));
@@ -130,8 +146,8 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
         return;
       }
 
-      // 单文件分支（与 v0.1 完全兼容）：--file 或 stdin。
-      // --file 要走读沙箱校验；stdin 因为没路径就跳过（用户主动喂内容）。
+      // 单文件分支：--file 通过转换器流水线（PDF/docx/html 等都走得通），
+      // stdin 仍按 inline 文本走 hydrator（没有路径无法选转换器）。
       if (opts.file) {
         const absFile = path.resolve(opts.file);
         try {
@@ -149,13 +165,45 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
           }
           throw err;
         }
+        // 复用 runBatch 的转换器 + hydration 流水线，单文件场景就是 files=[absFile]、
+        // concurrency=1。dedup 行为也保持一致（已 ingest 过 → skipped）。
+        const summary = await runBatch({
+          files: [absFile],
+          collection: opts.collection,
+          force: !!opts.force,
+          concurrency: 1,
+          hydrator,
+          library,
+          converterRegistry: convRegistry,
+          cache: convCache,
+          converter: opts.converter,
+          log: (line) => console.log(line),
+        });
+        if (summary.failed > 0) {
+          for (const r of summary.results.filter((x) => x.status === 'failed')) {
+            console.log(chalk.red(`  ${r.reason}`));
+          }
+          process.exitCode = 1;
+        }
+        if (summary.ok > 0) {
+          const saved = library.get(summary.results.find((r) => r.status === 'ok')!.id!, opts.collection);
+          if (saved) {
+            console.log(chalk.gray('title:'), saved.title);
+            console.log(chalk.gray('summary:'), saved.summary);
+            console.log(chalk.gray('tags:'), saved.tags.join(', '));
+            console.log(chalk.gray('links:'), saved.links.join(', '));
+            console.log(
+              chalk.gray('compression:'),
+              saved.compressionRatio ? saved.compressionRatio.toFixed(3) : 'n/a',
+            );
+          }
+        }
+        library.flushIndex();
+        return;
       }
-      const raw = await readRaw(opts.file);
-      const source: Source = opts.url
-        ? { type: 'url', value: opts.url }
-        : opts.file
-          ? { type: 'file', value: path.resolve(opts.file) }
-          : { type: 'inline' };
+      // stdin 分支：纯文本 / markdown 直接喂 hydrator（没有文件路径，转换器不参与）。
+      const raw = await readRaw(undefined);
+      const source: Source = opts.url ? { type: 'url', value: opts.url } : { type: 'inline' };
       const entry = await hydrator.hydrate({
         rawContent: raw,
         collectionId: opts.collection,
@@ -172,7 +220,6 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
         chalk.gray('compression:'),
         saved.compressionRatio ? saved.compressionRatio.toFixed(3) : 'n/a',
       );
-      // 一次性 CLI 退出前把 5s 防抖里的索引刷掉，让下一条命令直接命中磁盘 cache
       library.flushIndex();
     });
 
@@ -239,6 +286,18 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
       console.log(chalk.gray('referenced:'), result.referencedEntries.join(', '));
       console.log();
       console.log(result.context);
+    });
+
+  program
+    .command('converters')
+    .description('List file → text converters registered in this build.')
+    .action(() => {
+      const config = args.configFor();
+      const { registry } = buildConverterPipeline({
+        wikiRoot: config.wikiRoot,
+        cacheConverted: config.cacheConverted,
+      });
+      console.log(formatConvertersTable(registry));
     });
 
   buildQueueCommands(program, args);

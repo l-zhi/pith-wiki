@@ -41,6 +41,23 @@ describe('llm-wiki public exports', () => {
     expect(typeof m.EntrySchema.parse).toBe('function');
     expect(typeof m.SourceSchema.parse).toBe('function');
     expect(typeof m.HydrationOutputSchema.parse).toBe('function');
+    // converter 子系统
+    expect(typeof m.ConverterRegistry).toBe('function');
+    expect(typeof m.defaultConverters).toBe('function');
+    expect(typeof m.buildConverterPipeline).toBe('function');
+    expect(typeof m.FileSystemConverterCache).toBe('function');
+    expect(typeof m.NullConverterCache).toBe('function');
+    expect(typeof m.cacheKey).toBe('function');
+    expect(typeof m.sha256).toBe('function');
+    expect(typeof m.EmptyConversionError).toBe('function');
+    expect(typeof m.UnknownConverterError).toBe('function');
+    expect(typeof m.NoConverterError).toBe('function');
+    // 内置转换器
+    expect(m.markdownPassthrough.name).toBe('markdown-passthrough');
+    expect(m.pdfParseConverter.name).toBe('pdf-parse');
+    expect(m.docxMammothConverter.name).toBe('docx-mammoth');
+    expect(m.htmlTurndownConverter.name).toBe('html-turndown');
+    expect(m.textPassthrough.name).toBe('text-passthrough');
   });
 
   it('llm-wiki/agent subpath', async () => {
