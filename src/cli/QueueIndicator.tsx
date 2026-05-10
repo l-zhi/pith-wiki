@@ -82,54 +82,79 @@ export function QueueIndicator({ statePath, workerStatus, watchStatus, pollMs = 
   };
   for (const j of Object.values(state.jobs)) counts[j.status] += 1;
 
-  const modeLabel = (() => {
+  // mode 列：值文本 + 显示色。列宽自适应（mode 文本长度参差，统一打成 column flex）
+  const modeCell = (() => {
     switch (workerStatus.mode) {
       case 'self':
-        return <Text color="green">worker</Text>;
+        return { value: 'self', color: 'green' as const };
       case 'external':
-        return (
-          <Text color="cyan">
-            external worker
-            {workerStatus.externalPid ? ` (pid=${workerStatus.externalPid})` : ''}
-          </Text>
-        );
+        return {
+          value: `external${workerStatus.externalPid ? ` (pid=${workerStatus.externalPid})` : ''}`,
+          color: 'cyan' as const,
+        };
       case 'off':
-        return <Text color="gray">auto-queue off</Text>;
+        return { value: 'off', color: 'gray' as const };
       case 'error':
-        return <Text color="red">worker error</Text>;
+        return { value: 'error', color: 'red' as const };
     }
   })();
 
+  // 数值列零值用 dim 色，让有意义的数字突出，不再"全是数字看不清重点"
+  const numCell = (n: number, color: 'cyan' | 'yellow' | 'green' | 'red' | 'magenta') =>
+    n === 0
+      ? { value: '0', color: 'gray' as const }
+      : { value: String(n), color };
+
+  // 6 列固定顺序，标题/值同列号 → 用相同 minWidth 自然对齐
+  const cols: Array<{
+    header: string;
+    value: string;
+    color: 'gray' | 'cyan' | 'yellow' | 'green' | 'red' | 'magenta';
+    width: number;
+  }> = [
+    { header: 'mode', ...modeCell, width: Math.max(6, modeCell.value.length) },
+    { header: 'pending', ...numCell(counts.pending, 'cyan'), width: 8 },
+    { header: 'running', ...numCell(counts.running, 'yellow'), width: 8 },
+    { header: 'done', ...numCell(counts.completed, 'green'), width: 6 },
+    { header: 'dead', ...numCell(counts.dead, 'red'), width: 5 },
+    {
+      header: 'watch',
+      value: watchStatus ? String(watchStatus.targets) : '0',
+      color: watchStatus?.error
+        ? 'red'
+        : !watchStatus || watchStatus.targets === 0
+          ? 'gray'
+          : 'magenta',
+      width: 6,
+    },
+  ];
+
   return (
-    <Box>
-      <Text color="gray">queue: </Text>
-      {modeLabel}
-      <Text color="gray">
-        {' · '}
-        <Text color="cyan">{counts.pending}</Text> pending ·{' '}
-        <Text color="yellow">{counts.running}</Text> running ·{' '}
-        <Text color="green">{counts.completed}</Text> done
-        {counts.dead > 0 ? (
-          <>
-            {' · '}
-            <Text color="red">{counts.dead}</Text> dead
-          </>
+    <Box flexDirection="column">
+      {/* 标题行 */}
+      <Box>
+        <Text color="gray">queue  </Text>
+        {cols.map((c, i) => (
+          <Box key={`h-${i}`} width={c.width} marginRight={1}>
+            <Text dimColor>{c.header}</Text>
+          </Box>
+        ))}
+      </Box>
+      {/* 数值行 */}
+      <Box>
+        <Text color="gray">       </Text>
+        {cols.map((c, i) => (
+          <Box key={`v-${i}`} width={c.width} marginRight={1}>
+            <Text color={c.color}>{c.value}</Text>
+          </Box>
+        ))}
+        {workerStatus.mode === 'error' && workerStatus.error ? (
+          <Text color="red"> — {workerStatus.error}</Text>
         ) : null}
-      </Text>
-      {workerStatus.mode === 'error' && workerStatus.error ? (
-        <Text color="red"> — {workerStatus.error}</Text>
-      ) : null}
-      {watchStatus && watchStatus.targets > 0 ? (
-        <Text color="gray">
-          {' · '}
-          <Text color={watchStatus.error ? 'red' : 'magenta'}>
-            watch {watchStatus.targets}
-          </Text>
-          {watchStatus.error ? (
-            <Text color="red"> err: {watchStatus.error}</Text>
-          ) : null}
-        </Text>
-      ) : null}
+        {watchStatus?.error ? (
+          <Text color="red"> watch err: {watchStatus.error}</Text>
+        ) : null}
+      </Box>
     </Box>
   );
 }

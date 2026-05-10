@@ -7,6 +7,12 @@ export interface DisplayMessage {
   role: 'user' | 'assistant' | 'system' | 'tool' | 'error';
   text: string;
   meta?: string;
+  /**
+   * 富内容：如果给了，正文区渲染这个 React 节点替代 `text`。
+   * 用于需要列对齐 / 表格 / 自定义颜色块的场景（dashboard、转换器表等）。
+   * `text` 仍要传——做日志 / transcript fallback 用。
+   */
+  node?: React.ReactNode;
 }
 
 interface Props {
@@ -33,7 +39,7 @@ export function ChatView({ messages, inFlight }: Props) {
               {labelFor(m.role)}
               {m.meta ? <Text color="gray"> {m.meta}</Text> : null}
             </Text>
-            <Text>{m.text}</Text>
+            {m.node ? m.node : <Text>{m.text}</Text>}
           </Box>
         )}
       </Static>

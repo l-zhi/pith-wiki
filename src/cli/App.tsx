@@ -26,6 +26,8 @@ import { runWatcher } from '../wiki/queue/watcher.js';
 import { LibraryService } from '../wiki/library.js';
 import { HydrationService } from '../wiki/hydration.js';
 import { formatConvertersTable } from './converterFormat.js';
+import { collectDashboardData, formatDashboard } from './dashboardData.js';
+import { Dashboard } from './Dashboard.js';
 
 interface Props {
   /**
@@ -117,6 +119,39 @@ export function App({ config: initialConfig }: Props) {
     () => buildConverterPipeline({ wikiRoot: config.wikiRoot, cacheConverted: config.cacheConverted }),
     [config.wikiRoot, config.cacheConverted],
   );
+
+  // 启动 dashboard：扫 wikiRoot 各 collection 的 .md 数 + 每个 watchDir 的可识别文件数，
+  // 作为一条 system 消息追加到对话顶部。异步加载，不阻塞 REPL 启动。
+  // /provider 切换会改 config，但不影响 wikiRoot/watchDirs，dashboard 不必重跑——
+  // 故依赖只取真正影响输出的字段。
+  useEffect(() => {
+    let alive = true;
+    collectDashboardData(config, converters.registry)
+      .then((data) => {
+        if (!alive) return;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId(),
+            role: 'system',
+            // text 留 plain 版本做日志/transcript 兜底；node 走 Ink 真表格
+            text: formatDashboard(data),
+            node: <Dashboard data={data} />,
+          },
+        ]);
+      })
+      .catch((err: Error) => {
+        if (!alive) return;
+        setMessages((prev) => [
+          ...prev,
+          { id: nextId(), role: 'error', text: `dashboard scan failed: ${err.message}` },
+        ]);
+      });
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.wikiRoot, config.watchDirs, converters]);
 
   useEffect(() => {
     if (!config.queueAutoStart) return;

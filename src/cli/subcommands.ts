@@ -12,6 +12,7 @@ import { ContextAssembler } from '../wiki/assembler.js';
 import { runBatch } from '../wiki/batch.js';
 import { buildConverterPipeline } from '../wiki/converters/index.js';
 import { formatConvertersTable } from './converterFormat.js';
+import { collectDashboardData, formatDashboard } from './dashboardData.js';
 import { resolveSafePath, SafetyError } from '../tools/safety.js';
 import { Source } from '../wiki/types.js';
 import { buildQueueCommands, buildWatchCommand } from './queueCommands.js';
@@ -298,6 +299,19 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
         cacheConverted: config.cacheConverted,
       });
       console.log(formatConvertersTable(registry));
+    });
+
+  program
+    .command('status')
+    .description('Show wiki collections + watch directories at a glance.')
+    .action(async () => {
+      const config = args.configFor();
+      const { registry } = buildConverterPipeline({
+        wikiRoot: config.wikiRoot,
+        cacheConverted: config.cacheConverted,
+      });
+      const data = await collectDashboardData(config, registry);
+      console.log(formatDashboard(data));
     });
 
   buildQueueCommands(program, args);
