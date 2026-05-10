@@ -189,11 +189,26 @@ export class Agent {
       const msg = choice.message;
       const toolCalls = msg.tool_calls ?? [];
 
+      // thinking-mode 模型的回传协议：上一轮如果产生了"思考过程"，下一轮请求里
+      // 这条 assistant 消息必须把它原样带回，否则 provider 直接 400。
+      //   - reasoning_content: DeepSeek（v4-pro / r1 系列）扩展字段
+      //   - thinking: Anthropic Claude 4 extended thinking（OpenAI-compatible
+      //     代理透传时也用这个名字；不同 proxy 实现可能略有差异，best-effort）
+      // 这两个字段都不在 OpenAI SDK 的 ChatCompletionMessage 类型里——但 SDK
+      // 用 JSON.stringify 直传 messages，多塞的字段会原样进 request body。
+      // 对 non-thinking 模型（deepseek-chat / glm / qwen 等）字段就是 undefined，
+      // 不会带出去，零副作用。
+      const m = msg as unknown as Record<string, unknown>;
+      const extras: Record<string, unknown> = {};
+      if (typeof m.reasoning_content === 'string') extras.reasoning_content = m.reasoning_content;
+      if (m.thinking !== undefined) extras.thinking = m.thinking;
+
       this.messages.push({
         role: 'assistant',
         content: msg.content ?? '',
         ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
-      });
+        ...extras,
+      } as ChatCompletionMessageParam);
 
       if (toolCalls.length === 0) {
         finalText = msg.content ?? '';
