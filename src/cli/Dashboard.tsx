@@ -1,209 +1,432 @@
 import React from 'react';
 import { Box, Text } from 'ink';
+import Spinner from 'ink-spinner';
 import os from 'node:os';
 import path from 'node:path';
 import type { DashboardData, CollectionRow, WatchRow } from './dashboardData.js';
+import { progressBar, visualWidth } from './dashboardData.js';
 
 /**
- * REPL 启动 dashboard 的 Ink 表格渲染。
+ * REPL 启动 dashboard 的 Ink 渲染。
  *
- * 用 Ink Box 的 flex 引擎按列布局：
- *   - 每个 cell 是 `<Box width={N}>`，自带终端列宽对齐（CJK 自动算 2 列）
- *   - 数字列用 `justifyContent="flex-end"` 右对齐，避免 padStart 在 CJK 下错位
- *   - 长路径用 `<Text wrap="truncate-middle">` 中段省略，不破坏行布局
+ * 三段：
+ *   1. TopBanner —— `● ready` + provider/model/root pill
+ *   2. WatchLines —— 每个 watchDir 一行（路径 + 文件数 + collection 描述），尾部一行 exts
+ *   3. UnifiedTable —— 按 collection 聚合的 8 列表格，含 ASCII 进度条 + watch 指示符 + 总计行
  *
- * 文本版（formatDashboard）保留给 CLI `llm-wiki status`（一次性 stdout 不需要 flex）。
+ * 颜色口径对齐 design palette：
+ *   green=done/ready · cyan=watch/system · amber=running/exts · pink/red=dead · purple=brand
+ *
+ * 用 Ink Box 的 flex 引擎按列布局：CJK 自动算 2 列；数字列 justifyContent="flex-end"。
+ * 纯文本兜底（formatDashboard）见 dashboardData.ts，给 CLI `llm-wiki status` 和 transcript 用。
  */
+
+/** 进程级队列 worker 状态，只在 REPL 模式下传入；CLI 子命令 `status` 不传 → 不渲染该 pill。 */
+export interface WorkerInfo {
+  mode: 'self' | 'external' | 'off' | 'error';
+  externalPid?: number;
+  error?: string;
+}
+
 interface Props {
   data: DashboardData;
+  worker?: WorkerInfo;
 }
 
-export function Dashboard({ data }: Props) {
+// design palette → ink color name（ink 走 truecolor 时用 hex，否则 16 色 fallback）
+const C = {
+  green: '#34d399',
+  cyan: '#67e8f9',
+  amber: '#fbbf24',
+  pink: '#f472b6',
+  purple: '#a78bfa',
+} as const;
+
+const NUM_COL_W = 8;
+const WATCH_COL_W = 7;
+
+export function Dashboard({ data, worker }: Props) {
   return (
     <Box flexDirection="column">
-      <WikiSection wikiRoot={data.wikiRoot} rows={data.collections} />
+      <TopBanner
+        ready={data.ready}
+        provider={data.provider}
+        model={data.model}
+        wikiRoot={data.wikiRoot}
+        worker={worker}
+      />
       <Box marginTop={1}>
-        <WatchSection rows={data.watchDirs} extensions={data.registeredExtensions} />
+        <WatchLines rows={data.watchDirs} extensions={data.registeredExtensions} />
+      </Box>
+      <Box marginTop={1}>
+        <UnifiedTable rows={data.collections} />
       </Box>
     </Box>
   );
 }
 
-function WikiSection({ wikiRoot, rows }: { wikiRoot: string; rows: CollectionRow[] }) {
-  // 列宽：collection 名足够容纳"collection"标题 + 实际最长的 entry 名（CJK 按 2 算）
-  const nameW = Math.max(
-    visualWidth('collection') + 2,
-    ...rows.map((r) => visualWidth(r.name) + 2),
-    18,
-  );
-  const numW = 8;
-  const total = rows.reduce((s, r) => s + r.count, 0);
+/* ───────────────────────── Top banner ───────────────────────── */
 
+function TopBanner({
+  ready,
+  provider,
+  model,
+  wikiRoot,
+  worker,
+}: {
+  ready: boolean;
+  provider: string;
+  model: string;
+  wikiRoot: string;
+  worker?: WorkerInfo;
+}) {
   return (
     <Box flexDirection="column">
-      {/* 标题 */}
-      <Box>
-        <Text>📚 Wiki  </Text>
-        <Text color="cyan">{shortPath(wikiRoot)}</Text>
-      </Box>
-      {/* 表头 */}
-      <Cells>
-        <Cell width={nameW}>
-          <Text dimColor>collection</Text>
-        </Cell>
-        <Cell width={numW} alignEnd>
-          <Text dimColor>entries</Text>
-        </Cell>
-      </Cells>
-      {rows.length === 0 ? (
-        <Box marginLeft={2}>
-          <Text dimColor>(no collections yet)</Text>
+      <Box flexDirection="row" flexWrap="wrap">
+        <Box marginRight={3}>
+          <Text color={ready ? C.green : C.pink}>● {ready ? 'ready' : 'not ready'}</Text>
         </Box>
-      ) : (
-        <>
-          {rows.map((r) => (
-            <Cells key={r.name}>
-              <Cell width={nameW}>
-                <Text wrap="truncate-end">{r.name}</Text>
-              </Cell>
-              <Cell width={numW} alignEnd>
-                <Text>{r.count}</Text>
-              </Cell>
-            </Cells>
-          ))}
-          <Cells>
-            <Cell width={nameW}>
-              <Text bold dimColor>
-                total
-              </Text>
-            </Cell>
-            <Cell width={numW} alignEnd>
-              <Text bold>{total}</Text>
-            </Cell>
-          </Cells>
-        </>
-      )}
+        <Pill k="model" v={model} />
+        <Pill k="provider" v={provider} />
+        {worker ? <ModePill worker={worker} /> : null}
+        <Pill k="root" v={shortPath(wikiRoot)} />
+      </Box>
+      {worker?.mode === 'error' && worker.error ? (
+        <Box>
+          <Text color={C.pink}>worker error: {worker.error}</Text>
+        </Box>
+      ) : null}
     </Box>
   );
 }
 
-function WatchSection({ rows, extensions }: { rows: WatchRow[]; extensions: string[] }) {
+function ModePill({ worker }: { worker: WorkerInfo }) {
+  // mode = worker 进程所有权状态，与 ready/provider 同一层级（顶部 banner）
+  const { value, color } = (() => {
+    switch (worker.mode) {
+      case 'self':
+        return { value: 'self', color: C.green };
+      case 'external':
+        return {
+          value: worker.externalPid ? `external pid=${worker.externalPid}` : 'external',
+          color: C.cyan,
+        };
+      case 'off':
+        return { value: 'off', color: undefined };
+      case 'error':
+        return { value: 'error', color: C.pink };
+    }
+  })();
+  return (
+    <Box marginRight={3}>
+      <Text dimColor>queue </Text>
+      <Text color={color} dimColor={!color}>
+        {value}
+      </Text>
+    </Box>
+  );
+}
+
+function Pill({ k, v }: { k: string; v: string }) {
+  return (
+    <Box marginRight={3}>
+      <Text dimColor>{k} </Text>
+      <Text>{v}</Text>
+    </Box>
+  );
+}
+
+/* ───────────────────────── Watch lines ───────────────────────── */
+
+function WatchLines({ rows, extensions }: { rows: WatchRow[]; extensions: string[] }) {
   if (rows.length === 0) {
     return (
       <Box flexDirection="column">
-        <Text>👁  No watch directories configured</Text>
-        <Text dimColor>
-          {'   '}Add one to ~/.llm-wiki/config.json → watchDirs[]
-        </Text>
+        <Box>
+          <Text dimColor bold>
+            WATCH
+          </Text>
+          <Text dimColor>  (no watch dirs configured)</Text>
+        </Box>
+        <Text dimColor>       add one to ~/.llm-wiki/config.json → watchDirs[]</Text>
       </Box>
     );
   }
-  // 列宽：collection 名够长（CJK 计宽）；path 用 flexGrow 吃剩余空间，长了中段省略
-  const collW = Math.max(
-    visualWidth('collection') + 2,
-    ...rows.map((r) => visualWidth(r.collection) + 2),
-    18,
-  );
-  const numW = 7;
-
   return (
     <Box flexDirection="column">
-      <Box>
-        <Text>👁  Watching {rows.length} dir(s)  </Text>
-        <Text dimColor>exts: {extensions.join(' ')}</Text>
-      </Box>
-      <Cells>
-        <Cell flexGrow={1}>
-          <Text dimColor>path</Text>
-        </Cell>
-        <Cell width={collW}>
-          <Text dimColor>collection</Text>
-        </Cell>
-        <Cell width={numW} alignEnd>
-          <Text dimColor>files</Text>
-        </Cell>
-      </Cells>
-      {rows.map((r, i) => (
+      {rows.map((w, i) => (
         <Box key={i} flexDirection="column">
-          <Cells>
-            <Cell flexGrow={1}>
-              <Text wrap="truncate-middle">{shortPath(r.path)}</Text>
-            </Cell>
-            <Cell width={collW}>
-              <Text>{r.collection}</Text>
-            </Cell>
-            <Cell width={numW} alignEnd>
-              <Text>{r.count}</Text>
-            </Cell>
-          </Cells>
-          {r.error ? (
-            <Box marginLeft={3}>
-              <Text color="red">⚠ {r.error}</Text>
+          <Box>
+            <Box width={7}>
+              {i === 0 ? (
+                <Text dimColor bold>
+                  WATCH
+                </Text>
+              ) : (
+                <Text> </Text>
+              )}
+            </Box>
+            <Text color={C.cyan}>● </Text>
+            <Text wrap="truncate-middle">{shortPath(w.path)}</Text>
+            <Text dimColor>
+              {'  · '}
+              {w.count} files · {w.collection}
+            </Text>
+          </Box>
+          {w.error ? (
+            <Box marginLeft={9}>
+              <Text color={C.pink}>⚠ {w.error}</Text>
             </Box>
           ) : null}
         </Box>
       ))}
+      <Box>
+        <Box width={7}>
+          <Text> </Text>
+        </Box>
+        <Text dimColor>exts </Text>
+        {extensions.map((ext, i) => (
+          <Text key={ext} color={C.amber}>
+            {ext}
+            {i < extensions.length - 1 ? ' ' : ''}
+          </Text>
+        ))}
+      </Box>
     </Box>
   );
 }
 
-/* ───── 小组件：表格行 / 表格 cell ───── */
+/* ───────────────────────── Unified table ───────────────────────── */
 
-function Cells({ children }: { children: React.ReactNode }) {
+function UnifiedTable({ rows }: { rows: CollectionRow[] }) {
+  const nameW = Math.max(
+    visualWidth('collection') + 2,
+    ...rows.map((r) => visualWidth(r.name) + 2),
+    14,
+  );
+
+  if (rows.length === 0) {
+    return (
+      <Box flexDirection="column">
+        <Header nameW={nameW} />
+        <Box marginLeft={2}>
+          <Text dimColor>(no collections yet — ingest something or wait for watcher)</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  const total = rows.reduce(
+    (acc, r) => ({
+      files: acc.files + r.files,
+      pending: acc.pending + r.pending,
+      running: acc.running + r.running,
+      done: acc.done + r.done,
+      dead: acc.dead + r.dead,
+    }),
+    { files: 0, pending: 0, running: 0, done: 0, dead: 0 },
+  );
+  const watching = rows.filter((r) => r.watch).length;
+
+  // 估算 rule 宽度（与列宽之和对齐；fallback 80）
+  const ruleW = Math.min(
+    100,
+    nameW + NUM_COL_W * 5 + WATCH_COL_W + 14 /*progress*/ + 8 /*updated*/ + 8,
+  );
+
   return (
-    <Box flexDirection="row" marginLeft={2}>
-      {children}
+    <Box flexDirection="column">
+      <Header nameW={nameW} />
+      {rows.map((r) => (
+        <Row key={r.name} row={r} nameW={nameW} />
+      ))}
+      <Box>
+        <Text dimColor>{'─'.repeat(ruleW)}</Text>
+      </Box>
+      <TotalRow nameW={nameW} total={total} watching={watching} rowCount={rows.length} />
     </Box>
   );
 }
+
+function Header({ nameW }: { nameW: number }) {
+  return (
+    <Box>
+      <Cell width={nameW}>
+        <Text dimColor>collection</Text>
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        <Text dimColor>files</Text>
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        <Text dimColor>pending</Text>
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        <Text dimColor>running</Text>
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        <Text dimColor>done</Text>
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        <Text dimColor>dead</Text>
+      </Cell>
+      <Cell width={WATCH_COL_W} center>
+        <Text dimColor>watch</Text>
+      </Cell>
+      <Cell flexGrow={1}>
+        <Text dimColor>progress</Text>
+      </Cell>
+    </Box>
+  );
+}
+
+function Row({ row, nameW }: { row: CollectionRow; nameW: number }) {
+  const bar = progressBar(row.done, row.files);
+  // 进度条着色：dead>0 整条 pink；running>0 amber；其余 green；空 collection 灰
+  const barColor =
+    row.files === 0
+      ? undefined
+      : row.dead > 0
+        ? C.pink
+        : row.running > 0
+          ? C.amber
+          : C.green;
+  const nameColor = row.danger ? C.pink : undefined;
+
+  return (
+    <Box>
+      <Cell width={nameW}>
+        <Text color={nameColor} wrap="truncate-end">
+          {row.name}
+        </Text>
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        {row.files ? <Text>{row.files}</Text> : <Text dimColor>—</Text>}
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        <NumOrDot n={row.pending} />
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        {row.running > 0 ? (
+          <Text color={C.amber}>
+            <Spinner type="dots" /> {row.running}
+          </Text>
+        ) : (
+          <Text dimColor>·</Text>
+        )}
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        {row.done > 0 ? <Text color={C.green}>{row.done}</Text> : <Text dimColor>·</Text>}
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        {row.dead > 0 ? <Text color={C.pink}>{row.dead}</Text> : <Text dimColor>·</Text>}
+      </Cell>
+      <Cell width={WATCH_COL_W} center>
+        {row.watch ? <Text color={C.cyan}>●</Text> : <Text dimColor>○</Text>}
+      </Cell>
+      <Cell flexGrow={1}>
+        <Text color={barColor}>{bar}</Text>
+        <Text dimColor>{'  ' + row.updated}</Text>
+      </Cell>
+    </Box>
+  );
+}
+
+function TotalRow({
+  nameW,
+  total,
+  watching,
+  rowCount,
+}: {
+  nameW: number;
+  total: { files: number; pending: number; running: number; done: number; dead: number };
+  watching: number;
+  rowCount: number;
+}) {
+  const bar = progressBar(total.done, total.files);
+  const pct = total.files ? `${Math.round((100 * total.done) / total.files)}%` : '—';
+  return (
+    <Box>
+      <Cell width={nameW}>
+        <Text dimColor>total</Text>
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        <Text bold>{total.files}</Text>
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        <NumOrDot n={total.pending} />
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        {total.running > 0 ? (
+          <Text color={C.amber} bold>
+            {total.running}
+          </Text>
+        ) : (
+          <Text dimColor>·</Text>
+        )}
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        {total.done > 0 ? (
+          <Text color={C.green} bold>
+            {total.done}
+          </Text>
+        ) : (
+          <Text dimColor>·</Text>
+        )}
+      </Cell>
+      <Cell width={NUM_COL_W} alignEnd>
+        {total.dead > 0 ? (
+          <Text color={C.pink} bold>
+            {total.dead}
+          </Text>
+        ) : (
+          <Text dimColor>·</Text>
+        )}
+      </Cell>
+      <Cell width={WATCH_COL_W} center>
+        <Text color={C.cyan}>{watching}</Text>
+        <Text dimColor>/{rowCount}</Text>
+      </Cell>
+      <Cell flexGrow={1}>
+        <Text color={C.green}>{bar}</Text>
+        <Text dimColor>{'  ' + pct}</Text>
+      </Cell>
+    </Box>
+  );
+}
+
+function NumOrDot({ n }: { n: number }) {
+  return n > 0 ? <Text>{n}</Text> : <Text dimColor>·</Text>;
+}
+
+/* ───────────────────────── 通用 Cell ───────────────────────── */
 
 interface CellProps {
   children: React.ReactNode;
   width?: number;
   flexGrow?: number;
   alignEnd?: boolean;
+  center?: boolean;
 }
 
-function Cell({ children, width, flexGrow, alignEnd }: CellProps) {
+function Cell({ children, width, flexGrow, alignEnd, center }: CellProps) {
   return (
     <Box
       width={width}
       flexGrow={flexGrow}
       flexShrink={0}
       marginRight={1}
-      justifyContent={alignEnd ? 'flex-end' : 'flex-start'}
+      justifyContent={alignEnd ? 'flex-end' : center ? 'center' : 'flex-start'}
     >
       {children}
     </Box>
   );
 }
 
-/* ───── 工具函数：home 缩写 + CJK 宽度 ───── */
+/* ───────────────────────── home 缩写 ───────────────────────── */
 
 function shortPath(abs: string): string {
   const home = os.homedir();
   if (abs === home) return '~';
   if (abs.startsWith(home + path.sep)) return '~' + abs.slice(home.length);
   return abs;
-}
-
-function visualWidth(s: string): number {
-  let w = 0;
-  for (const ch of s) {
-    const c = ch.codePointAt(0)!;
-    if (
-      c > 0x1100 &&
-      (c <= 0x115f ||
-        (c >= 0x2e80 && c <= 0x9fff) ||
-        (c >= 0xac00 && c <= 0xd7a3) ||
-        (c >= 0xf900 && c <= 0xfaff) ||
-        (c >= 0xff00 && c <= 0xff60) ||
-        (c >= 0xffe0 && c <= 0xffe6))
-    ) {
-      w += 2;
-    } else {
-      w += 1;
-    }
-  }
-  return w;
 }

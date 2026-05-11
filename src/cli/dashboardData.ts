@@ -4,28 +4,35 @@ import path from 'node:path';
 import fastGlob from 'fast-glob';
 import type { Config } from '../config.js';
 import type { ConverterRegistry } from '../wiki/converters/registry.js';
+import { readState, type JobStatus } from '../wiki/queue/state.js';
 
 /**
- * REPL 启动时打的 dashboard：
+ * REPL 启动时打的 dashboard。
  *
- *   📚 Wiki  ~/.llm-wiki/wiki-data
- *      collection   entries
- *      tech              42
- *      life              18
- *      total             60
+ * 设计要点：把"库存"和"在做什么"合并成一张按 collection 聚合的表：
+ *   - 一行 = 一个 collection
+ *   - files = pending + running + done + dead（队列各状态总和；空 collection 仍可展示）
+ *   - done = wiki dir 里的 .md 数 ∪ queue.completed（持久化的 .md 是真理；队列事件可能被环形截断）
+ *   - watch ●/○ = 该 collection 是否被任意 watchDir 跟踪
+ *   - updated = collection 目录的 mtime（相对时间）
  *
- *   👁  Watching 2 dir(s)  exts: .md .pdf .docx ...
- *      path                       collection    files
- *      ~/notes/记录片             记录片            156
- *      ~/notes/Clippings          from-subdir       342
- *
- * 让用户一眼看到：wiki 在哪、各 collection 多大、watcher 实际盯着哪些目录、
- * 每个目录里有多少可处理文件。watcher 没配 → 提示用户去 config.json 里加。
+ * 顶部 banner 显示 provider/model/ready，让用户一眼看到当前激活 provider 和 key 是否就绪。
+ * 底部 watch 区按行展示每个 watchDir，加上注册扩展名（amber 高亮）。
  */
+
+const QUEUE_STATUSES = ['pending', 'running', 'completed', 'dead'] as const;
+type QueueStatusCount = Record<(typeof QUEUE_STATUSES)[number], number>;
 
 export interface CollectionRow {
   name: string;
-  count: number;
+  files: number;
+  pending: number;
+  running: number;
+  done: number;
+  dead: number;
+  watch: boolean;
+  updated: string;
+  danger: boolean;
 }
 
 export interface WatchRow {
@@ -37,41 +44,106 @@ export interface WatchRow {
 
 export interface DashboardData {
   wikiRoot: string;
+  provider: string;
+  model: string;
+  ready: boolean;
   collections: CollectionRow[];
   watchDirs: WatchRow[];
   registeredExtensions: string[];
 }
 
+/* ───────────────────────── 收集层 ───────────────────────── */
+
 /**
- * 同步扫 wikiRoot 一层得到 collection 列表 + 每个 collection 的 .md 数量。
+ * 同步扫 wikiRoot 一层得到 collection 列表 + 每个 collection 的 .md 数量 + mtime。
  * 口径与 LibraryService.scanAll 一致：只看 `<wikiRoot>/<collection>/*.md` 一层。
  * 跳过 dotdir（.cache、.queue 等不是 collection）。
  */
-function scanWikiCollections(wikiRoot: string): CollectionRow[] {
-  if (!fs.existsSync(wikiRoot)) return [];
+function scanWikiCollections(wikiRoot: string): Map<string, { count: number; mtimeMs: number }> {
+  const out = new Map<string, { count: number; mtimeMs: number }>();
+  if (!fs.existsSync(wikiRoot)) return out;
   let dirents: fs.Dirent[];
   try {
     dirents = fs.readdirSync(wikiRoot, { withFileTypes: true });
   } catch {
-    return [];
+    return out;
   }
-  const out: CollectionRow[] = [];
   for (const entry of dirents) {
     if (!entry.isDirectory()) continue;
-    if (entry.name.startsWith('.')) continue; // .cache / .queue 不计
+    if (entry.name.startsWith('.')) continue;
     const dir = path.join(wikiRoot, entry.name);
     let count = 0;
+    let mtimeMs = 0;
     try {
       for (const f of fs.readdirSync(dir)) {
-        if (f.endsWith('.md')) count += 1;
+        if (!f.endsWith('.md')) continue;
+        count += 1;
+        try {
+          const st = fs.statSync(path.join(dir, f));
+          if (st.mtimeMs > mtimeMs) mtimeMs = st.mtimeMs;
+        } catch {
+          /* ignore single-file stat errors */
+        }
       }
     } catch {
       /* ignore */
     }
-    out.push({ name: entry.name, count });
+    out.set(entry.name, { count, mtimeMs });
   }
-  // 大的在前，方便一眼看见主力 collection
-  out.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  return out;
+}
+
+export type CollectionQueueCount = QueueStatusCount;
+
+/**
+ * 读队列 state.json，按 collection 聚合各状态数量。
+ * state 文件不存在或读不出 → 返回空 Map（dashboard 仍可只显示 wiki 库存）。
+ *
+ * 导出给 Dashboard 组件做 live polling 用（启动快照 + 2s 增量合并）。
+ */
+export function loadQueueCounts(queueStatePath: string): Map<string, QueueStatusCount> {
+  const out = new Map<string, QueueStatusCount>();
+  try {
+    if (!fs.existsSync(queueStatePath)) return out;
+    const state = readState(queueStatePath);
+    for (const job of Object.values(state.jobs)) {
+      const bucket =
+        out.get(job.collection) ?? { pending: 0, running: 0, completed: 0, dead: 0 };
+      bucket[job.status as JobStatus] += 1;
+      out.set(job.collection, bucket);
+    }
+  } catch {
+    /* 静默：dashboard 不能因为 state.json 坏掉就崩 */
+  }
+  return out;
+}
+
+/**
+ * 哪些 collection 正在被 watcher 跟踪。
+ * 三种来源：
+ *   - 显式 `wd.collection`
+ *   - `wd.fallbackCollection`
+ *   - `wd.collectionFromSubdir=true` 时，扫一层子目录名（每个目录就是一个候选 collection）
+ */
+function watchedCollections(config: Config): Set<string> {
+  const out = new Set<string>();
+  for (const wd of config.watchDirs) {
+    if (wd.collection) out.add(wd.collection);
+    if (wd.fallbackCollection) out.add(wd.fallbackCollection);
+    if (wd.collectionFromSubdir) {
+      try {
+        if (!fs.existsSync(wd.path)) continue;
+        for (const ent of fs.readdirSync(wd.path, { withFileTypes: true })) {
+          if (!ent.isDirectory()) continue;
+          if (ent.name.startsWith('.')) continue;
+          // subdirAlias 把源目录名映射成 collection 名
+          out.add(wd.subdirAlias[ent.name] ?? ent.name);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
   return out;
 }
 
@@ -90,15 +162,75 @@ function buildExtensionGlob(exts: string[]): string {
 }
 
 /**
- * 异步收集所有面板数据。watchDir 扫描走 fast-glob（与 watcher 同款）；
- * 与 watcher 黑名单口径同步：忽略 dotdir / node_modules / wiki / outputs / .icloud
- * + 用户自定义的 ignore globs。
+ * 从 baseURL 提取显示用的 provider 名（fallback）：去 scheme 取 host 第一段。
+ * 优先用 `activeProvider`（用户在 config 里命名的 key）。
  */
+function deriveProviderLabel(config: Config): string {
+  if (config.activeProvider) return config.activeProvider;
+  try {
+    const u = new URL(config.baseURL);
+    return u.hostname.replace(/^www\./, '').split('.')[0] || u.hostname;
+  } catch {
+    return '(unknown)';
+  }
+}
+
+/**
+ * mtime → 相对时间字符串，对齐设计稿："now" / "2m" / "3h" / "5d" / "—"。
+ * mtimeMs=0 视为没数据，返回 `—`。
+ */
+export function relativeTime(mtimeMs: number, nowMs = Date.now()): string {
+  if (!mtimeMs) return '—';
+  const diff = Math.max(0, nowMs - mtimeMs);
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return 'now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h`;
+  const day = Math.floor(hr / 24);
+  if (day < 365) return `${day}d`;
+  return '—';
+}
+
 export async function collectDashboardData(
   config: Config,
   registry: ConverterRegistry,
 ): Promise<DashboardData> {
-  const collections = scanWikiCollections(config.wikiRoot);
+  const wikiMap = scanWikiCollections(config.wikiRoot);
+  const queueMap = loadQueueCounts(config.queueStatePath);
+  const watchSet = watchedCollections(config);
+
+  // 行集合 = (wiki 目录) ∪ (queue 提到过的 collection)
+  // 设计稿里 `dead-letter` 这种"只存在于队列里"的虚拟 collection 也要出现。
+  const names = new Set<string>([...wikiMap.keys(), ...queueMap.keys()]);
+  const now = Date.now();
+  const rows: CollectionRow[] = [];
+  for (const name of names) {
+    const wiki = wikiMap.get(name) ?? { count: 0, mtimeMs: 0 };
+    const q = queueMap.get(name) ?? { pending: 0, running: 0, completed: 0, dead: 0 };
+    // done 取 max：wiki 目录是持久化真理，但 queue.completed 在环形 buffer 截断之前能反映"刚完成"
+    const done = Math.max(wiki.count, q.completed);
+    const files = q.pending + q.running + done + q.dead;
+    rows.push({
+      name,
+      files,
+      pending: q.pending,
+      running: q.running,
+      done,
+      dead: q.dead,
+      watch: watchSet.has(name),
+      updated: relativeTime(wiki.mtimeMs, now),
+      danger: q.dead > 0,
+    });
+  }
+  // 排序：先把异常（dead>0）顶上来；其次按 files 大→小；同 size 按 name
+  rows.sort((a, b) => {
+    if (a.danger !== b.danger) return a.danger ? -1 : 1;
+    if (b.files !== a.files) return b.files - a.files;
+    return a.name.localeCompare(b.name);
+  });
+
   const exts = registry.extensions();
   const glob = buildExtensionGlob(exts);
 
@@ -132,13 +264,18 @@ export async function collectDashboardData(
 
   return {
     wikiRoot: config.wikiRoot,
-    collections,
+    provider: deriveProviderLabel(config),
+    model: config.model,
+    ready: config.apiKey.length > 0,
+    collections: rows,
     watchDirs: watchRows,
     registeredExtensions: exts,
   };
 }
 
-/* ───────────────────────── 渲染 ───────────────────────── */
+/* ───────────────────────── 渲染：纯文本 ───────────────────────── */
+
+const PROGRESS_WIDTH = 14;
 
 /** home 目录前缀压成 `~`，其它原样。 */
 function shortPath(abs: string): string {
@@ -149,7 +286,7 @@ function shortPath(abs: string): string {
 }
 
 /** CJK 字符按 2 列计算视觉宽度，给 padEnd / padStart 对齐用。 */
-function visualWidth(s: string): number {
+export function visualWidth(s: string): number {
   let w = 0;
   for (const ch of s) {
     const c = ch.codePointAt(0)!;
@@ -178,64 +315,131 @@ function vpadStart(s: string, width: number): string {
   return ' '.repeat(Math.max(0, width - visualWidth(s))) + s;
 }
 
-/** 文本表格输出，给 ChatView 的 system 消息渲染用。 */
-export function formatDashboard(data: DashboardData): string {
+/** ASCII 进度条：固定 PROGRESS_WIDTH 宽，按 done/files 比例填充。 */
+export function progressBar(done: number, files: number, width = PROGRESS_WIDTH): string {
+  if (files <= 0) return '░'.repeat(width);
+  const fill = Math.min(width, Math.max(0, Math.round((width * done) / files)));
+  return '█'.repeat(fill) + '░'.repeat(width - fill);
+}
+
+/** "·" 表示该列为零，与设计稿一致（避免一片 0 的视觉噪声）。 */
+function num(n: number): string {
+  return n > 0 ? String(n) : '·';
+}
+
+/** 给纯文本 banner 用的 worker 状态摘要。 */
+export interface WorkerSummary {
+  mode: 'self' | 'external' | 'off' | 'error';
+  externalPid?: number;
+  error?: string;
+}
+
+/** 文本表格输出，给 CLI `llm-wiki status` + REPL transcript 兜底用。 */
+export function formatDashboard(data: DashboardData, worker?: WorkerSummary): string {
   const lines: string[] = [];
 
-  // Wiki 区块
-  lines.push(`📚 Wiki  ${shortPath(data.wikiRoot)}`);
-  if (data.collections.length === 0) {
-    lines.push('   (no collections yet)');
-  } else {
-    const nameW = Math.max(
-      10,
-      visualWidth('collection'),
-      ...data.collections.map((c) => visualWidth(c.name)),
-    );
-    const countW = Math.max(
-      7,
-      ...data.collections.map((c) => visualWidth(String(c.count))),
-    );
-    lines.push(`   ${vpad('collection', nameW)}  ${vpadStart('entries', countW)}`);
-    for (const c of data.collections) {
-      lines.push(`   ${vpad(c.name, nameW)}  ${vpadStart(String(c.count), countW)}`);
-    }
-    const total = data.collections.reduce((s, c) => s + c.count, 0);
-    lines.push(`   ${vpad('total', nameW)}  ${vpadStart(String(total), countW)}`);
+  // ── 顶部 banner：ready + provider/model/queue/root ──
+  const readyTag = data.ready ? '● ready' : '● not ready';
+  const parts = [
+    readyTag,
+    `model ${data.model}`,
+    `provider ${data.provider}`,
+  ];
+  if (worker) {
+    const v =
+      worker.mode === 'external' && worker.externalPid
+        ? `external pid=${worker.externalPid}`
+        : worker.mode;
+    parts.push(`queue ${v}`);
   }
-
+  parts.push(`root ${shortPath(data.wikiRoot)}`);
+  lines.push(parts.join('   '));
+  if (worker?.mode === 'error' && worker.error) {
+    lines.push(`worker error: ${worker.error}`);
+  }
   lines.push('');
 
-  // Watch 区块
+  // ── watch 区：每个 dir 一行，加 exts ──
   if (data.watchDirs.length === 0) {
     lines.push(
-      '👁  No watch directories configured. ' +
-        '(Add one to `~/.llm-wiki/config.json` → watchDirs[])',
+      'WATCH  (no watch dirs; add one to ~/.llm-wiki/config.json → watchDirs[])',
     );
   } else {
-    lines.push(
-      `👁  Watching ${data.watchDirs.length} dir(s)  exts: ${data.registeredExtensions.join(' ')}`,
-    );
-    const pathLabels = data.watchDirs.map((w) => shortPath(w.path));
-    const pathW = Math.max(visualWidth('path'), ...pathLabels.map(visualWidth));
-    const collW = Math.max(
-      visualWidth('collection'),
-      ...data.watchDirs.map((w) => visualWidth(w.collection)),
-    );
-    const countW = Math.max(
-      visualWidth('files'),
-      ...data.watchDirs.map((w) => visualWidth(String(w.count))),
-    );
-    lines.push(
-      `   ${vpad('path', pathW)}  ${vpad('collection', collW)}  ${vpadStart('files', countW)}`,
-    );
     for (let i = 0; i < data.watchDirs.length; i++) {
       const w = data.watchDirs[i];
+      const head = i === 0 ? 'WATCH  ' : '       ';
       const errSuffix = w.error ? `  ⚠ ${w.error}` : '';
       lines.push(
-        `   ${vpad(pathLabels[i], pathW)}  ${vpad(w.collection, collW)}  ${vpadStart(String(w.count), countW)}${errSuffix}`,
+        `${head}● ${shortPath(w.path)}  · ${w.count} files · ${w.collection}${errSuffix}`,
       );
     }
+    lines.push(`       exts ${data.registeredExtensions.join(' ')}`);
+  }
+  lines.push('');
+
+  // ── 统一表格 ──
+  const nameW = Math.max(
+    visualWidth('collection'),
+    ...data.collections.map((c) => visualWidth(c.name)),
+    10,
+  );
+  const numColW = 7; // pending/running/done/dead/files 用同一宽度，右对齐
+  const filesW = Math.max(numColW, ...data.collections.map((c) => visualWidth(String(c.files))));
+
+  const header =
+    `${vpad('collection', nameW)}  ` +
+    `${vpadStart('files', filesW)}  ` +
+    `${vpadStart('pending', numColW)}  ` +
+    `${vpadStart('running', numColW)}  ` +
+    `${vpadStart('done', numColW)}  ` +
+    `${vpadStart('dead', numColW)}  ` +
+    `watch  progress`;
+  lines.push(header);
+
+  if (data.collections.length === 0) {
+    lines.push('(no collections yet)');
+  } else {
+    for (const r of data.collections) {
+      const bar = progressBar(r.done, r.files);
+      lines.push(
+        `${vpad(r.name, nameW)}  ` +
+          `${vpadStart(String(r.files || '—'), filesW)}  ` +
+          `${vpadStart(num(r.pending), numColW)}  ` +
+          `${vpadStart(num(r.running), numColW)}  ` +
+          `${vpadStart(num(r.done), numColW)}  ` +
+          `${vpadStart(num(r.dead), numColW)}  ` +
+          `  ${r.watch ? '●' : '○'}   ` +
+          `${bar} ${r.updated}`,
+      );
+    }
+    // 总计行：dashed rule 上方
+    const total = data.collections.reduce(
+      (acc, r) => ({
+        files: acc.files + r.files,
+        pending: acc.pending + r.pending,
+        running: acc.running + r.running,
+        done: acc.done + r.done,
+        dead: acc.dead + r.dead,
+      }),
+      { files: 0, pending: 0, running: 0, done: 0, dead: 0 },
+    );
+    const watching = data.collections.filter((c) => c.watch).length;
+    const pct = total.files
+      ? `${Math.round((100 * total.done) / total.files)}%`
+      : '—';
+    const ruleW =
+      nameW + 2 + filesW + 2 + (numColW + 2) * 4 + 7 /* watch col */ + 2 + PROGRESS_WIDTH + 4;
+    lines.push('─'.repeat(ruleW));
+    lines.push(
+      `${vpad('total', nameW)}  ` +
+        `${vpadStart(String(total.files), filesW)}  ` +
+        `${vpadStart(num(total.pending), numColW)}  ` +
+        `${vpadStart(num(total.running), numColW)}  ` +
+        `${vpadStart(num(total.done), numColW)}  ` +
+        `${vpadStart(num(total.dead), numColW)}  ` +
+        ` ${watching}/${data.collections.length}  ` +
+        `${progressBar(total.done, total.files)} ${pct}`,
+    );
   }
 
   return lines.join('\n');

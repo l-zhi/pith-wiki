@@ -16,7 +16,7 @@ import { InputBox } from './InputBox.js';
 import { ToolApproval, ApprovalRequest } from './ToolApproval.js';
 import { TokenMeter } from './TokenMeter.js';
 import { appendHistory, loadHistory } from './history.js';
-import { QueueIndicator, type QueueWorkerStatus } from './QueueIndicator.js';
+import { StatusBar, type QueueWorkerStatus } from './StatusBar.js';
 import { SLASH_COMMANDS } from './slashCommands.js';
 import { TranscriptLogger, deriveTranscriptPath } from './transcript.js';
 import { QueueLockedError, QueueStore } from '../wiki/queue/store.js';
@@ -96,14 +96,6 @@ export function App({ config: initialConfig }: Props) {
   const [queueWorkerStatus, setQueueWorkerStatus] = useState<QueueWorkerStatus>(() => ({
     mode: config.queueAutoStart ? 'self' : 'off',
   }));
-  // watcher 状态：仅展示给 QueueIndicator 用。watcher 自身不取队列锁，
-  // 失败也只影响监听这一条线，不阻塞队列消费，因此用独立状态字段。
-  const [watchStatus, setWatchStatus] = useState<{
-    targets: number;
-    error?: string;
-  }>(() => ({
-    targets: config.watchAutoStart ? config.watchDirs.length : 0,
-  }));
 
   // 整个 REPL session 共用一份 LibraryService。
   // 关键不变量：agent 的工具（wiki_query / wiki_list / wiki_get / wiki_read_source /
@@ -129,14 +121,21 @@ export function App({ config: initialConfig }: Props) {
     collectDashboardData(config, converters.registry)
       .then((data) => {
         if (!alive) return;
+        // 把启动时的 worker 状态快照进 dashboard（mode pill）。后续若 worker 报错，
+        // 会通过 setQueueWorkerStatus 触发独立的 system 消息，不再依赖底部常驻指示器。
+        const workerSnap = {
+          mode: queueWorkerStatus.mode,
+          externalPid: queueWorkerStatus.externalPid,
+          error: queueWorkerStatus.error,
+        };
         setMessages((prev) => [
           ...prev,
           {
             id: nextId(),
             role: 'system',
             // text 留 plain 版本做日志/transcript 兜底；node 走 Ink 真表格
-            text: formatDashboard(data),
-            node: <Dashboard data={data} />,
+            text: formatDashboard(data, workerSnap),
+            node: <Dashboard data={data} worker={workerSnap} />,
           },
         ]);
       })
@@ -163,9 +162,22 @@ export function App({ config: initialConfig }: Props) {
     } catch (err) {
       if (err instanceof QueueLockedError) {
         setQueueWorkerStatus({ mode: 'external', externalPid: err.lockingPid });
-        return; // 不起 worker，但 QueueIndicator 仍会 poll 状态展示
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: nextId(),
+            role: 'system',
+            text: `queue: another process holds the lock (pid=${err.lockingPid}); running read-only`,
+          },
+        ]);
+        return;
       }
-      setQueueWorkerStatus({ mode: 'error', error: (err as Error).message });
+      const msg = (err as Error).message;
+      setQueueWorkerStatus({ mode: 'error', error: msg });
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId(), role: 'error', text: `queue lock failed: ${msg}` },
+      ]);
       return;
     }
 
@@ -183,12 +195,17 @@ export function App({ config: initialConfig }: Props) {
       backoffMs: [5_000, 30_000, 120_000],
       logDir: config.queueLogDir,
       signal: ac.signal,
-      // REPL 内 worker 不打控制台 log（会污染对话视图）；进度看底部 QueueIndicator
-      // 和 ~/.llm-wiki/queue/logs/<jobId>.log。
+      // REPL 内 worker 不打控制台 log（会污染对话视图）。进度查 state.json 的
+      // events 环 + ~/.llm-wiki/queue/logs/<jobId>.log；崩溃会通过下面的 .catch
+      // 走 system error message 显式提示用户。
       log: () => {},
       idleBehavior: 'wait',
     }).catch((err: Error) => {
       setQueueWorkerStatus({ mode: 'error', error: err.message });
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId(), role: 'error', text: `queue worker crashed: ${err.message}` },
+      ]);
     });
 
     // watcher：仅当 watchAutoStart 且 watchDirs 非空时起。失败不影响 worker。
@@ -211,7 +228,10 @@ export function App({ config: initialConfig }: Props) {
         // events 环里看到（kind='enqueued' msg='watcher:add/change/initial-scan'）。
         log: () => {},
       }).catch((err: Error) => {
-        setWatchStatus((prev) => ({ ...prev, error: err.message }));
+        setMessages((prev) => [
+          ...prev,
+          { id: nextId(), role: 'error', text: `watcher failed: ${err.message}` },
+        ]);
       });
     }
 
@@ -568,10 +588,11 @@ export function App({ config: initialConfig }: Props) {
       {approval ? <ToolApproval request={approval} /> : null}
       <Box flexDirection="column">
         <TokenMeter inputTokens={usage.inputTokens} outputTokens={usage.outputTokens} />
-        <QueueIndicator
+        <StatusBar
           statePath={config.queueStatePath}
-          workerStatus={queueWorkerStatus}
-          watchStatus={watchStatus}
+          worker={queueWorkerStatus}
+          watchedTargets={config.watchAutoStart ? config.watchDirs.length : 0}
+          totalWatchDirs={config.watchDirs.length}
         />
         <InputBox
           disabled={inFlight || approval !== null}
