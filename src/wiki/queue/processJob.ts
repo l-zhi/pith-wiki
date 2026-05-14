@@ -91,14 +91,9 @@ export interface ProcessJobCtx {
   /** 强指定转换器名（绕过 ConverterRegistry 的扩展名解析）。 */
   converter?: string;
   /**
-   * 推导 sidecar 相对路径的根。缺省时退化为 path.dirname(absFile)，sidecar 扁平
-   * 落在 `<wikiRoot>/<collection>/.cache/<basename>.md`。
-   * watcher 调用方应传 target.path；CLI subcommands 可以传 --source-root，或不传走扁平。
-   */
-  sourceRoot?: string;
-  /**
    * Entry 在 collection 内的相对子路径（POSIX 形式）。watcher 派生于源目录结构；
-   * 缺省 = entry 落 collection 根（旧 flat 行为）。
+   * 缺省 = entry 落 collection 根。该 subpath 同时决定 sidecar 位置：
+   * sidecar 永远在 `<wikiRoot>/<collection>/<subpath?>/.cache/<basename>.md`。
    */
   subpath?: string;
   /** 长转换器进度回调，runner 桥到 queue events。 */
@@ -222,7 +217,8 @@ export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<F
     };
   }
 
-  // sidecar：把转换后的 markdown 落地到 <wikiRoot>/<collection>/.cache/<rel>.md。
+  // sidecar：把转换后的 markdown 落地到 entry 旁边的 .cache/ 子目录。
+  //   <wikiRoot>/<collection>/<subpath?>/.cache/<basename>.md
   // 仅对非 passthrough 转换器写（passthrough 源就是 markdown / text，sidecar 是冗余 copy）。
   // 即使 cache 命中也写：sidecar 可能被用户手动删过，每次都覆盖一次保持磁盘状态一致。
   // 失败不阻塞主路径：sidecar 是衍生品，丢了 wiki_read_source 回退到 source.value 也能用。
@@ -232,7 +228,7 @@ export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<F
       cachePath = writeCacheSidecar({
         wikiRoot: ctx.library.getWikiRoot(),
         collection: ctx.collection,
-        sourceRoot: ctx.sourceRoot,
+        subpath: ctx.subpath,
         absFile,
         content: convOut.content,
       });

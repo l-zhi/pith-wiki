@@ -118,10 +118,10 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
         }
 
         console.log(chalk.gray(`Found ${allFiles.length} file(s).`));
-        // --dir 模式下，把目录当 sourceRoot 透传，让 sidecar 镜像目录结构落进
-        // <wikiRoot>/<collection>/.cache/<rel>.md；--batch <glob> 模式下没有
-        // 单一根目录，让 sidecar 走扁平 basename 默认。
-        const batchSourceRoot = opts.dir ? path.resolve(opts.dir) : undefined;
+        // --dir 模式：把目录作 batchRoot 透传，让每个文件相对它派生 subpath，
+        // entry 镜像源目录树落到 <wikiRoot>/<collection>/<subpath>/<id>.md；
+        // --batch <glob> 模式没有单一根目录，全落 collection 根。
+        const batchRoot = opts.dir ? path.resolve(opts.dir) : undefined;
         const summary = await runBatch({
           files: allFiles,
           collection: opts.collection,
@@ -132,7 +132,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
           converterRegistry: convRegistry,
           cache: convCache,
           converter: opts.converter,
-          sourceRoot: batchSourceRoot,
+          batchRoot,
           log: (line) => console.log(line),
         });
         console.log(chalk.gray('─'.repeat(40)));

@@ -41,14 +41,9 @@ export const QueueJobSchema = z.object({
    */
   converter: z.string().optional(),
   /**
-   * 推导 converter sidecar 相对路径的根目录。watcher 写入时填 target.path，
-   * 这样 sidecar 镜像 watch root 下的子路径；缺省时 processJob 退化为
-   * path.dirname(absFile)，sidecar 扁平落在 `<wikiRoot>/<collection>/.cache/`。
-   */
-  sourceRoot: z.string().optional(),
-  /**
    * Entry 在 collection 内的相对子路径（POSIX 形式）。watcher 派生于
-   * `<watch>/<collection>/<...>/<file>` 的中间段；缺省 = 落 collection 根（旧 flat 行为）。
+   * `<watch>/<collection>/<...>/<file>` 的中间段；缺省 = 落 collection 根。
+   * 也决定 sidecar 位置：`<wikiRoot>/<collection>/<subpath?>/.cache/<basename>.md`。
    */
   subpath: z.string().optional(),
 });

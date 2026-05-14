@@ -14,11 +14,11 @@ import {
 
 /**
  * 给一个文件计算它在 collection 内的 subpath（POSIX 形式）。
- * 单个 sourceRoot 下，subpath = 文件 dirname 相对 sourceRoot；落 sourceRoot 根 → undefined。
+ * 单个 batchRoot 下，subpath = 文件 dirname 相对 batchRoot；落根 → undefined。
  * 用于 CLI `--dir` 类批量入库：dir 当作 collection 物理根，子目录镜像为 subpath。
  */
-function deriveSubpathFromRoot(absFile: string, sourceRoot: string): string | undefined {
-  const rel = path.relative(sourceRoot, path.dirname(absFile));
+function deriveSubpathFromRoot(absFile: string, batchRoot: string): string | undefined {
+  const rel = path.relative(batchRoot, path.dirname(absFile));
   if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return undefined;
   const segs = rel.split(path.sep).filter((s) => s && !s.startsWith('.'));
   if (segs.length === 0) return undefined;
@@ -62,10 +62,10 @@ export interface BatchOptions {
   /** 强指定转换器名（适用于整批文件强走同一个转换器，比如 --converter）。 */
   converter?: string;
   /**
-   * 推导 converter sidecar 相对路径的根。常见做法：把 ingest --dir 的目录传进来。
-   * 缺省时 sidecar 扁平落在 `<wikiRoot>/<collection>/.cache/<basename>.md`。
+   * 派生 subpath 的批根目录。常见做法：把 ingest --dir 的目录传进来，
+   * 每个文件 dirname 相对它推出 subpath；缺省 = 所有 entry 落 collection 根。
    */
-  sourceRoot?: string;
+  batchRoot?: string;
   /** 单行日志回调；调用方决定怎么输出（chalk / 普通 console.log / 测试 spy）。 */
   log: (line: string) => void;
 }
@@ -97,9 +97,9 @@ export async function runBatch(opts: BatchOptions): Promise<BatchSummary> {
 
   for (const absFile of opts.files) {
     queue.add(async () => {
-      // sourceRoot 给定时同步派生 subpath：CLI --dir 下，dir 既是 sidecar 相对根，
-      // 也是 entry 在 collection 内的镜像根。两者复用同一 root 保持语义一致。
-      const subpath = opts.sourceRoot ? deriveSubpathFromRoot(absFile, opts.sourceRoot) : undefined;
+      // CLI --dir 下，每个文件相对 batchRoot 的 dirname 直接派生为 subpath
+      // → entry 落 <collection>/<subpath>/<id>.md，sidecar 落 .../.cache/<basename>.md
+      const subpath = opts.batchRoot ? deriveSubpathFromRoot(absFile, opts.batchRoot) : undefined;
       const result = await processJob(absFile, {
         collection: opts.collection,
         force: opts.force,
@@ -111,7 +111,6 @@ export async function runBatch(opts: BatchOptions): Promise<BatchSummary> {
         converterRegistry: opts.converterRegistry,
         cache: opts.cache,
         converter: opts.converter,
-        sourceRoot: opts.sourceRoot,
         subpath,
       });
       completed += 1;

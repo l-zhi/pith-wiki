@@ -183,7 +183,6 @@ export async function runQueue(opts: RunQueueOptions): Promise<RunQueueSummary> 
         converterRegistry: opts.converterRegistry,
         cache: opts.cache,
         converter: job.converter,
-        sourceRoot: job.sourceRoot,
         subpath: job.subpath,
         signal: opts.signal,
         // 把转换器进度桥进 queue events，UI 可订阅 store 流看到 pdf 第几页之类

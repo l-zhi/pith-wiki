@@ -157,29 +157,6 @@ export function deriveSubpath(target: ResolvedWatchTarget, absFile: string): str
 }
 
 /**
- * 给定 (target, absFile) 返回 sidecar 计算 rel 时用的 sourceRoot。
- *
- * - 固定 collection 模式：直接返回 target.path（rel = 文件相对 watch root 的全路径）。
- * - collectionFromSubdir 模式：吃掉物理第一级目录段——这段在 resolveCollectionForFile
- *   里已经被消费成 collection 名，再镜像进 .cache/ 就是重复（rel 第一段 == collection）。
- *   注意：用 path.relative 取到的是**物理**目录名，对 subdirAlias 也正确——
- *   即便 alias 把 `荔枝AI圈` 映射成 `lizhi-ai`，要 strip 的也是物理段 `荔枝AI圈`。
- * - subdir 模式但文件直接挂在 watch root 下（走 fallbackCollection）：没有可吃的子目录，
- *   返回 target.path。
- */
-export function effectiveSourceRoot(
-  target: ResolvedWatchTarget,
-  absFile: string,
-): string {
-  if (!target.collectionFromSubdir) return target.path;
-  const rel = path.relative(target.path, absFile);
-  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return target.path;
-  const segs = rel.split(path.sep);
-  if (segs.length <= 1) return target.path;
-  return path.join(target.path, segs[0]);
-}
-
-/**
  * 沙箱化 + 自写循环防御后，把 WatchTargetConfig 解析成 ResolvedWatchTarget。
  * 失败抛 Error，调用方负责打印（启动期 fail-fast）。
  */
@@ -256,7 +233,6 @@ export function enqueueFromWatch(
   absFile: string,
   collection: string,
   kind: 'add' | 'change',
-  sourceRoot?: string,
   subpath?: string,
 ): EnqueueResult {
   const force = kind === 'change';
@@ -273,7 +249,6 @@ export function enqueueFromWatch(
         status: 'pending',
         attempts: 0,
         enqueuedAt: new Date().toISOString(),
-        ...(sourceRoot ? { sourceRoot } : {}),
         ...(subpath ? { subpath } : {}),
       };
       s.jobs[id] = job;
@@ -301,9 +276,7 @@ export function enqueueFromWatch(
       existing.completedAt = undefined;
       existing.finalEntryId = undefined;
       existing.nextEarliestRunAt = undefined;
-      // 如果有新的 sourceRoot（target 可能改了），更新；缺省保留旧值（initial-scan 来的 add 没传 sourceRoot 就不要把旧的清掉）
-      if (sourceRoot) existing.sourceRoot = sourceRoot;
-      // subpath 同样：change 事件可能因为源文件被移动而改了子路径，得跟着更新
+      // subpath 同步：change 事件可能因为源文件被移动而改了子路径，得跟着更新
       if (subpath !== undefined) existing.subpath = subpath;
       else delete existing.subpath;
       pushEvent(s, {
@@ -361,7 +334,6 @@ export async function initialScanEnqueue(
         status: 'pending',
         attempts: 0,
         enqueuedAt: ts,
-        sourceRoot: effectiveSourceRoot(target, abs),
         ...(sub ? { subpath: sub } : {}),
       };
       pushEvent(s, { ts, jobId: id, kind: 'enqueued', msg: 'watcher:initial-scan' });
@@ -465,14 +437,7 @@ export async function runWatcher(opts: RunWatcherOptions): Promise<void> {
         log(`[watch] skip ${abs} (no collection — direct child of root with no fallback?)`);
         return;
       }
-      const result = enqueueFromWatch(
-        store,
-        abs,
-        collection,
-        kind,
-        effectiveSourceRoot(target, abs),
-        deriveSubpath(target, abs),
-      );
+      const result = enqueueFromWatch(store, abs, collection, kind, deriveSubpath(target, abs));
       if (result !== 'skipped') {
         log(`[watch] ${kind} ${abs} → ${collection} (${result})`);
       }

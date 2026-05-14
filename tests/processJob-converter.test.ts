@@ -219,10 +219,9 @@ describe('processJob + converter pipeline', () => {
     expect(convertCount).toBe(1); // 没增长
   });
 
-  it('非 passthrough 转换器 → 写 sidecar 到 <wikiRoot>/<collection>/.cache/<rel>.md 并 entry.source.cachePath 指向它', async () => {
-    const sourceRoot = path.join(tmpDir, 'inbox');
-    fs.mkdirSync(path.join(sourceRoot, 'sub'), { recursive: true });
-    const file = path.join(sourceRoot, 'sub/a.weird');
+  it('非 passthrough 转换器 + subpath：sidecar 落 <wikiRoot>/<collection>/<subpath>/.cache/<basename>.md', async () => {
+    const file = path.join(tmpDir, 'src', 'a.weird');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, 'raw bytes', 'utf8');
     const reg = new ConverterRegistry();
     const fake: Converter = {
@@ -233,8 +232,6 @@ describe('processJob + converter pipeline', () => {
       },
     };
     reg.register(fake);
-    // 内联 hydrator：默认那个用 path.basename(value, '.md') 派生 id，对非 .md
-    // 扩展名留下带点的 id（'a.weird'）会失败 EntrySchema 校验。这里手工产出合法 id。
     const calls: HydrateInput[] = [];
     const hydrator = {
       hydrate: async (input: HydrateInput): Promise<Entry> => {
@@ -261,44 +258,34 @@ describe('processJob + converter pipeline', () => {
       existingPaths: new Set(),
       claimedIds: new Set(),
       converterRegistry: reg,
-      sourceRoot,
+      subpath: 'sub',
     });
     expect(result.status).toBe('ok');
-    const expectedCache = path.join(tmpDir, 'tech', '.cache', 'sub/a.md');
-    // hydrate 看到的 source 含 cachePath
+    const expectedCache = path.join(tmpDir, 'tech', 'sub', '.cache', 'a.md');
     expect(calls[0].source.cachePath).toBe(expectedCache);
-    // sidecar 实际落盘了
     expect(fs.existsSync(expectedCache)).toBe(true);
     expect(fs.readFileSync(expectedCache, 'utf8')).toBe('# extracted\n\nraw bytes');
-    // 持久化后的 entry 也保留 cachePath
     const saved = library.get('paper-a');
     expect(saved?.source.cachePath).toBe(expectedCache);
     expect(saved?.source.value).toBe(file);
   });
 
-  it('watcher collectionFromSubdir 模式契约：sourceRoot = <watch>/<collection> 时 sidecar 不重复 collection 段', async () => {
-    // 模拟 watcher 在 subdir 模式下，effectiveSourceRoot 已经吃掉了第一段。
-    // 期望 sidecar 落在 <wikiRoot>/<collection>/.cache/<file>.md（一层），
-    // 而不是 <wikiRoot>/<collection>/.cache/<collection>/<file>.md（两层重复）。
-    const watchRoot = path.join(tmpDir, 'vault');
-    const collection = 'jizhayan'; // 模拟 '鸡眨眼' 的 ASCII 等价；id 派生用 ASCII 避免歧义
-    fs.mkdirSync(path.join(watchRoot, collection), { recursive: true });
-    const file = path.join(watchRoot, collection, 'crossing-millennia.weird');
-    fs.writeFileSync(file, 'raw', 'utf8');
+  it('subpath 缺省时 sidecar 落 <wikiRoot>/<collection>/.cache/<basename>.md', async () => {
+    const file = path.join(tmpDir, 'root.weird');
+    fs.writeFileSync(file, 'r', 'utf8');
     const reg = new ConverterRegistry();
-    const fake: Converter = {
-      name: 'fake-pdf',
+    reg.register({
+      name: 'fake',
       extensions: ['.weird'],
       async convert({ bytes }) {
-        return { content: `# extracted\n\n${bytes.toString('utf8')}` };
+        return { content: `# ${bytes.toString('utf8')}` };
       },
-    };
-    reg.register(fake);
+    });
     const hydrator = {
       hydrate: async (input: HydrateInput): Promise<Entry> => ({
-        id: 'crossing-millennia',
+        id: 'root-entry',
         collection: input.collectionId,
-        title: 'crossing-millennia',
+        title: 'root',
         summary: '',
         tags: [],
         links: [],
@@ -308,7 +295,7 @@ describe('processJob + converter pipeline', () => {
       }),
     } as unknown as HydrationService;
     const result = await processJob(file, {
-      collection,
+      collection: 'tech',
       force: false,
       hydrator,
       library,
@@ -316,18 +303,12 @@ describe('processJob + converter pipeline', () => {
       existingPaths: new Set(),
       claimedIds: new Set(),
       converterRegistry: reg,
-      // 关键：模拟 watcher.effectiveSourceRoot 的产出（吃掉了第一段 <collection>）
-      sourceRoot: path.join(watchRoot, collection),
     });
     expect(result.status).toBe('ok');
-    const expected = path.join(tmpDir, collection, '.cache', 'crossing-millennia.md');
-    // 不能含两层 collection 名
-    const wrongDoubled = path.join(tmpDir, collection, '.cache', collection, 'crossing-millennia.md');
-    const saved = library.get('crossing-millennia');
-    expect(saved?.source.cachePath).toBe(expected);
-    expect(saved?.source.cachePath).not.toBe(wrongDoubled);
+    const expected = path.join(tmpDir, 'tech', '.cache', 'root.md');
     expect(fs.existsSync(expected)).toBe(true);
-    expect(fs.existsSync(wrongDoubled)).toBe(false);
+    const saved = library.get('root-entry');
+    expect(saved?.source.cachePath).toBe(expected);
   });
 
   it('ctx.subpath 被钉到 entry 上，落盘到 <wikiRoot>/<collection>/<subpath>/<id>.md', async () => {
