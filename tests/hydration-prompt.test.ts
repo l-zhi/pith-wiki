@@ -10,7 +10,7 @@
  * 这些断言把那次修复"焊死"，避免回退。
  */
 import { describe, expect, it } from 'vitest';
-import { CONVERSATION_SYSTEM_PROMPT, SYSTEM_PROMPT } from '../src/wiki/hydration.js';
+import { CONVERSATION_SYSTEM_PROMPT, PLAN_SYSTEM_PROMPT, SYSTEM_PROMPT } from '../src/wiki/hydration.js';
 
 describe('Hydration SYSTEM_PROMPT — 不可回退的硬约束', () => {
   it('包含语言保持要求（避免中文输入被翻译成英文）', () => {
@@ -30,10 +30,33 @@ describe('Hydration SYSTEM_PROMPT — 不可回退的硬约束', () => {
     expect(SYSTEM_PROMPT).toMatch(/Chinese characters|CJK/);
   });
 
-  it('要求 ids 和 tags 保持 kebab-case ASCII（即使输入是中文）', () => {
-    // 这是为了让中文条目的文件名 / 链接仍然兼容文件系统与 URL。
-    expect(SYSTEM_PROMPT).toMatch(/kebab-case/);
-    expect(SYSTEM_PROMPT).toMatch(/ASCII|lowercase/i);
+  it('tags 保持 kebab-case ASCII（即使输入是中文）— 跨语言过滤一致性', () => {
+    // tags 仍是 kebab-case ASCII：不同语言的内容也能用同一组 tag 过滤。
+    expect(SYSTEM_PROMPT).toMatch(/Tags.*lowercase ASCII|Tags.*kebab/);
+  });
+
+  it('ID 命名按源语言分流：中文源 → 中文 id；英文源 → kebab-case ASCII', () => {
+    // 核心变化：filename / content 是中文时允许 id 用汉字，便于文件系统里直接
+    // 看到"成长经历.md"这种自然命名，而不是"cheng-zhang-jing-li.md"。
+    expect(SYSTEM_PROMPT).toMatch(/ID NAMING/);
+    expect(SYSTEM_PROMPT).toMatch(/predominantly Chinese|Han characters/);
+    // 给一个具体例子焊死意图
+    expect(SYSTEM_PROMPT).toMatch(/成长经历|成长/);
+    // 仍要保留 kebab-case ASCII 作为兜底（英文/混合 Latin 走这条）
+    expect(SYSTEM_PROMPT).toMatch(/kebab-case ASCII/);
+  });
+
+  it('ID 必须保留源文件名的特异性，不能压成单一钩子词', () => {
+    // 背景：实际用户反馈中观察到模型把"成本1500，估值1000万？死了么APP凭什么火了"
+    // 压成单一的"死了么"，丢失了成本/估值/凭什么火三个关键角度。
+    // 这条断言把"反例 + 正例"焊死，避免改 prompt 时把这条经验删掉。
+    expect(SYSTEM_PROMPT).toMatch(/preserve.*specificity|specificity rule/i);
+    // 反例存在
+    expect(SYSTEM_PROMPT).toContain('死了么');
+    // 长度建议（让 LLM 知道 4-6 字"够短就好"是错的）
+    expect(SYSTEM_PROMPT).toMatch(/6-14|6 to 14/);
+    // 明确的 BAD 标识，模型才能识别这是反例
+    expect(SYSTEM_PROMPT).toMatch(/Anti-pattern|BAD|❌/);
   });
 
   it('明确压缩比预期，分稠密源与稀疏源', () => {
@@ -115,8 +138,55 @@ describe('CONVERSATION_SYSTEM_PROMPT — Q&A 不可回退的硬约束', () => {
     }
   });
 
-  it('id / tags 仍是 kebab-case ASCII（即使对话是中文）', () => {
-    expect(CONVERSATION_SYSTEM_PROMPT).toMatch(/kebab-case/);
-    expect(CONVERSATION_SYSTEM_PROMPT).toMatch(/ASCII|lowercase/i);
+  it('tags 仍是 kebab-case ASCII（即使对话是中文）— 跨语言过滤一致性', () => {
+    expect(CONVERSATION_SYSTEM_PROMPT).toMatch(/Tags.*lowercase ASCII|Tags.*kebab/);
+  });
+
+  it('对话 id 按主语言分流：中文对话 → 中文 id；英文对话 → kebab-case ASCII', () => {
+    expect(CONVERSATION_SYSTEM_PROMPT).toMatch(/ID NAMING/);
+    expect(CONVERSATION_SYSTEM_PROMPT).toMatch(/predominantly Chinese|Han characters/);
+    // 给一个具体例子焊死意图（对应"成长与低谷期"那个具体不变量）
+    expect(CONVERSATION_SYSTEM_PROMPT).toMatch(/成长与低谷期|成长/);
+    expect(CONVERSATION_SYSTEM_PROMPT).toMatch(/kebab-case ASCII/);
+  });
+
+  it('对话 id 同样要保留问题特异性，不能压成单一短词', () => {
+    expect(CONVERSATION_SYSTEM_PROMPT).toMatch(/specificity rule|preserve.*question/i);
+    expect(CONVERSATION_SYSTEM_PROMPT).toMatch(/6-14|6 to 14/);
+    // 反例：成长 → 丢了 "低谷期" 角度
+    expect(CONVERSATION_SYSTEM_PROMPT).toMatch(/Bad|BAD|❌/);
+  });
+});
+
+/**
+ * Plan pass 专用 prompt。长文档（≥ 3000 字符）走 plan-then-write 两遍生成，
+ * 这里焊死 plan 阶段必须出的 outline + target_chars + 保持源语言三条。
+ */
+describe('PLAN_SYSTEM_PROMPT — 长文规划阶段的硬约束', () => {
+  it('要求严格 JSON 输出', () => {
+    expect(PLAN_SYSTEM_PROMPT).toMatch(/STRICT JSON/i);
+    expect(PLAN_SYSTEM_PROMPT).toMatch(/no code fences|no commentary/i);
+  });
+
+  it('JSON shape 包含 outline + target_chars 两个字段', () => {
+    expect(PLAN_SYSTEM_PROMPT).toContain('"outline"');
+    expect(PLAN_SYSTEM_PROMPT).toContain('"target_chars"');
+  });
+
+  it('outline 限制 3-7 节，避免过细或过粗', () => {
+    expect(PLAN_SYSTEM_PROMPT).toMatch(/3-7/);
+  });
+
+  it('保留源语言（heading 不翻译）', () => {
+    expect(PLAN_SYSTEM_PROMPT).toMatch(/SAME PRIMARY LANGUAGE|same.*language/i);
+    expect(PLAN_SYSTEM_PROMPT).toMatch(/do not translate|Chinese.*Chinese/i);
+  });
+
+  it('target_chars 有上限约束（避免规划出 5000 字大长文）', () => {
+    expect(PLAN_SYSTEM_PROMPT).toMatch(/1000|under 1000/);
+  });
+
+  it('禁止凭空虚构源没支持的章节', () => {
+    expect(PLAN_SYSTEM_PROMPT).toMatch(/DO NOT invent|don'?t invent|does(n'?| not) support/i);
   });
 });

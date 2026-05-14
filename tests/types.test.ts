@@ -92,9 +92,53 @@ describe('EntrySchema — id 校验', () => {
     expect(result.success).toBe(false);
   });
 
-  it('拒绝包含中文的 id（中文不是 kebab-case）', () => {
+  it('接受纯中文 id（用于源文件名是中文的场景）', () => {
     const result = EntrySchema.safeParse({
-      id: '中文条目',
+      id: '成长经历',
+      collection: 'tech',
+      title: '成长经历',
+      content: 'x',
+      updated: new Date().toISOString(),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('接受中文 + ASCII 连字符混合 id', () => {
+    const result = EntrySchema.safeParse({
+      id: '成长-2025',
+      collection: 'tech',
+      title: '成长',
+      content: 'x',
+      updated: new Date().toISOString(),
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('拒绝带空格的中文 id（文件名安全约束）', () => {
+    const result = EntrySchema.safeParse({
+      id: '成长 经历',
+      collection: 'tech',
+      title: 'A',
+      content: 'x',
+      updated: new Date().toISOString(),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('拒绝带点的 id（避免与文件扩展名混淆）', () => {
+    const result = EntrySchema.safeParse({
+      id: '成长.记录',
+      collection: 'tech',
+      title: 'A',
+      content: 'x',
+      updated: new Date().toISOString(),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('拒绝大写 ASCII id（保持 kebab-case 视觉一致性）', () => {
+    const result = EntrySchema.safeParse({
+      id: 'MyEntry',
       collection: 'tech',
       title: 'A',
       content: 'x',

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ToolDef } from './index.js';
 
 const params = z.object({
-  id: z.string().describe('The kebab-case slug of the wiki entry.'),
+  id: z.string().describe('The wiki entry id (kebab-case ASCII or CJK characters).'),
   collection: z.string().optional(),
 });
 
