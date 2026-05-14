@@ -46,6 +46,11 @@ export const QueueJobSchema = z.object({
    * path.dirname(absFile)，sidecar 扁平落在 `<wikiRoot>/<collection>/.cache/`。
    */
   sourceRoot: z.string().optional(),
+  /**
+   * Entry 在 collection 内的相对子路径（POSIX 形式）。watcher 派生于
+   * `<watch>/<collection>/<...>/<file>` 的中间段；缺省 = 落 collection 根（旧 flat 行为）。
+   */
+  subpath: z.string().optional(),
 });
 export type QueueJob = z.infer<typeof QueueJobSchema>;
 

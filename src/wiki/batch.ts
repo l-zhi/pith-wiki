@@ -1,3 +1,4 @@
+import path from 'node:path';
 import PQueue from 'p-queue';
 import type { HydrationService } from './hydration.js';
 import type { LibraryService } from './library.js';
@@ -10,6 +11,19 @@ import {
   formatResultLine,
   type FileResult,
 } from './queue/processJob.js';
+
+/**
+ * 给一个文件计算它在 collection 内的 subpath（POSIX 形式）。
+ * 单个 sourceRoot 下，subpath = 文件 dirname 相对 sourceRoot；落 sourceRoot 根 → undefined。
+ * 用于 CLI `--dir` 类批量入库：dir 当作 collection 物理根，子目录镜像为 subpath。
+ */
+function deriveSubpathFromRoot(absFile: string, sourceRoot: string): string | undefined {
+  const rel = path.relative(sourceRoot, path.dirname(absFile));
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return undefined;
+  const segs = rel.split(path.sep).filter((s) => s && !s.startsWith('.'));
+  if (segs.length === 0) return undefined;
+  return segs.join('/');
+}
 
 /**
  * 批量 ingest 编排器（一次性、内存内）。
@@ -83,6 +97,9 @@ export async function runBatch(opts: BatchOptions): Promise<BatchSummary> {
 
   for (const absFile of opts.files) {
     queue.add(async () => {
+      // sourceRoot 给定时同步派生 subpath：CLI --dir 下，dir 既是 sidecar 相对根，
+      // 也是 entry 在 collection 内的镜像根。两者复用同一 root 保持语义一致。
+      const subpath = opts.sourceRoot ? deriveSubpathFromRoot(absFile, opts.sourceRoot) : undefined;
       const result = await processJob(absFile, {
         collection: opts.collection,
         force: opts.force,
@@ -95,6 +112,7 @@ export async function runBatch(opts: BatchOptions): Promise<BatchSummary> {
         cache: opts.cache,
         converter: opts.converter,
         sourceRoot: opts.sourceRoot,
+        subpath,
       });
       completed += 1;
       results.push(result);

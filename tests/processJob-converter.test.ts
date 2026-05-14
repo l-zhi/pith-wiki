@@ -330,6 +330,43 @@ describe('processJob + converter pipeline', () => {
     expect(fs.existsSync(wrongDoubled)).toBe(false);
   });
 
+  it('ctx.subpath 被钉到 entry 上，落盘到 <wikiRoot>/<collection>/<subpath>/<id>.md', async () => {
+    const file = path.join(tmpDir, 'note.md');
+    fs.writeFileSync(file, '# body', 'utf8');
+    const calls: HydrateInput[] = [];
+    const hydrator = {
+      hydrate: async (input: HydrateInput): Promise<Entry> => {
+        calls.push(input);
+        return {
+          id: 'mirrored',
+          collection: input.collectionId,
+          title: 'mirrored',
+          summary: '',
+          tags: [],
+          links: [],
+          content: input.rawContent,
+          source: input.source,
+          updated: new Date().toISOString(),
+        };
+      },
+    } as unknown as HydrationService;
+    const result = await processJob(file, {
+      collection: 'tech',
+      force: false,
+      hydrator,
+      library,
+      existingEntries: [],
+      existingPaths: new Set(),
+      claimedIds: new Set(),
+      converterRegistry: makeRegistry(),
+      subpath: 'a/b',
+    });
+    expect(result.status).toBe('ok');
+    expect(fs.existsSync(path.join(tmpDir, 'tech', 'a', 'b', 'mirrored.md'))).toBe(true);
+    const saved = library.get('mirrored');
+    expect(saved?.subpath).toBe('a/b');
+  });
+
   it('markdown-passthrough → 不写 sidecar，cachePath 留空', async () => {
     const file = path.join(tmpDir, 'a.md');
     fs.writeFileSync(file, '# direct markdown', 'utf8');

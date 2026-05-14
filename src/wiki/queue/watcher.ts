@@ -121,6 +121,42 @@ export function resolveCollectionForFile(
 }
 
 /**
+ * 给定 (target, absFile) 返回 entry 在 collection 内的 subpath（POSIX 形式）。
+ *
+ * 计算方式：先确定文件物理路径相对 watch root 的中间目录段，去掉第一段（已经被
+ * resolveCollectionForFile 消费成 collection）和最后一段（文件名），剩下的拼起来就是
+ * subpath。
+ *
+ *   <watch>/人生大事/希区柯克/2024/note.pdf
+ *           └─collection─┘ └────subpath────┘ filename
+ *                        ↓
+ *                  subpath = '希区柯克/2024'
+ *
+ * 边界：
+ *   - 固定 collection 模式：subpath = 文件 dirname 相对 target.path（不吃任何段）。
+ *     例：watch=/inbox + collection=tech + file=/inbox/sub/a.md → subpath='sub'
+ *   - subdir 模式下文件直挂 watch root（走 fallbackCollection）→ 没有可派生的 subpath
+ *   - 文件直接在 collection 根下：subpath = undefined（不是 ''，让落盘走旧 flat 路径）
+ *   - 越界 / 含 dotdir 段 → 返回 undefined（保守落到 collection 根，避免污染 .cache 等）
+ */
+export function deriveSubpath(target: ResolvedWatchTarget, absFile: string): string | undefined {
+  const rel = path.relative(target.path, absFile);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return undefined;
+  const segs = rel.split(path.sep);
+  if (segs.length < 1) return undefined;
+  // 去掉最后一段（文件名）
+  const dirSegs = segs.slice(0, -1);
+  // subdir 模式：去掉第一段（已是 collection）
+  const middleSegs = target.collectionFromSubdir ? dirSegs.slice(1) : dirSegs;
+  if (middleSegs.length === 0) return undefined;
+  // dotdir 防御：任一段以 `.` 开头则视为非法 subpath（与 LibraryService scan 同步）
+  for (const s of middleSegs) {
+    if (!s || s.startsWith('.')) return undefined;
+  }
+  return middleSegs.join('/');
+}
+
+/**
  * 给定 (target, absFile) 返回 sidecar 计算 rel 时用的 sourceRoot。
  *
  * - 固定 collection 模式：直接返回 target.path（rel = 文件相对 watch root 的全路径）。
@@ -221,6 +257,7 @@ export function enqueueFromWatch(
   collection: string,
   kind: 'add' | 'change',
   sourceRoot?: string,
+  subpath?: string,
 ): EnqueueResult {
   const force = kind === 'change';
   const id = deriveJobId(absFile, collection);
@@ -237,6 +274,7 @@ export function enqueueFromWatch(
         attempts: 0,
         enqueuedAt: new Date().toISOString(),
         ...(sourceRoot ? { sourceRoot } : {}),
+        ...(subpath ? { subpath } : {}),
       };
       s.jobs[id] = job;
       pushEvent(s, {
@@ -265,6 +303,9 @@ export function enqueueFromWatch(
       existing.nextEarliestRunAt = undefined;
       // 如果有新的 sourceRoot（target 可能改了），更新；缺省保留旧值（initial-scan 来的 add 没传 sourceRoot 就不要把旧的清掉）
       if (sourceRoot) existing.sourceRoot = sourceRoot;
+      // subpath 同样：change 事件可能因为源文件被移动而改了子路径，得跟着更新
+      if (subpath !== undefined) existing.subpath = subpath;
+      else delete existing.subpath;
       pushEvent(s, {
         ts: new Date().toISOString(),
         jobId: id,
@@ -311,6 +352,7 @@ export async function initialScanEnqueue(
       const id = deriveJobId(abs, collection);
       if (s.jobs[id]) continue;
       const ts = new Date().toISOString();
+      const sub = deriveSubpath(target, abs);
       s.jobs[id] = {
         id,
         file: abs,
@@ -320,6 +362,7 @@ export async function initialScanEnqueue(
         attempts: 0,
         enqueuedAt: ts,
         sourceRoot: effectiveSourceRoot(target, abs),
+        ...(sub ? { subpath: sub } : {}),
       };
       pushEvent(s, { ts, jobId: id, kind: 'enqueued', msg: 'watcher:initial-scan' });
       added += 1;
@@ -422,7 +465,14 @@ export async function runWatcher(opts: RunWatcherOptions): Promise<void> {
         log(`[watch] skip ${abs} (no collection — direct child of root with no fallback?)`);
         return;
       }
-      const result = enqueueFromWatch(store, abs, collection, kind, effectiveSourceRoot(target, abs));
+      const result = enqueueFromWatch(
+        store,
+        abs,
+        collection,
+        kind,
+        effectiveSourceRoot(target, abs),
+        deriveSubpath(target, abs),
+      );
       if (result !== 'skipped') {
         log(`[watch] ${kind} ${abs} → ${collection} (${result})`);
       }

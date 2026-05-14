@@ -96,6 +96,11 @@ export interface ProcessJobCtx {
    * watcher 调用方应传 target.path；CLI subcommands 可以传 --source-root，或不传走扁平。
    */
   sourceRoot?: string;
+  /**
+   * Entry 在 collection 内的相对子路径（POSIX 形式）。watcher 派生于源目录结构；
+   * 缺省 = entry 落 collection 根（旧 flat 行为）。
+   */
+  subpath?: string;
   /** 长转换器进度回调，runner 桥到 queue events。 */
   onConvertProgress?(p: ConvertProgress): void;
   /** 用户取消（Ctrl+C / Electron 关页）。 */
@@ -280,6 +285,13 @@ export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<F
   if (!entry) {
     // 类型守卫：循环要么 break（entry 被赋值）要么 return，永远走不到这里。
     throw new Error('processJob: unreachable hydrate fallthrough');
+  }
+
+  // subpath 由调用方（watcher / batch）决定。hydrator 不感知文件系统布局，所以
+  // 在 hydrate 返回后把 subpath 钉到 entry 上；老路径（ctx.subpath 缺省）entry
+  // 落 collection 根，保持向后兼容。
+  if (ctx.subpath !== undefined) {
+    entry = { ...entry, subpath: ctx.subpath };
   }
 
   // id 冲突避让：

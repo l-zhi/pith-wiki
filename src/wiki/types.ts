@@ -41,6 +41,37 @@ export const SourceSchema = z.object({
   cachePath: z.string().optional(),
 });
 
+/**
+ * 子路径校验：entry 在 collection 内的相对目录。
+ *
+ * 设计原则：
+ *   - POSIX 风格的 `/` 分隔（即使在 Windows 上落盘前再 path.join，schema 内统一 POSIX）
+ *   - 缺省 / 空串 = collection 根（旧行为）
+ *   - 拒绝绝对路径 / `..` 段：防止逃出 collection 目录
+ *   - 拒绝以 `.` 开头的段：与 LibraryService 跳过 dotdir 的策略对齐，避免与 `.cache/` 撞车
+ *   - 拒绝段内 `/` 重复、首尾 `/`、空段：保持唯一规范形态
+ *   - 不限制段内字符（中文、空格、标点都允许），只挡危险字符 `\0` 和路径分隔符变体
+ */
+export function isValidSubpath(s: string): boolean {
+  if (s === '') return true;
+  if (s.startsWith('/') || s.endsWith('/')) return false;
+  const segs = s.split('/');
+  for (const seg of segs) {
+    if (!seg) return false; // 空段（连续 //）
+    if (seg === '.' || seg === '..') return false;
+    if (seg.startsWith('.')) return false; // dotdir 段
+    if (seg.includes('\0') || seg.includes('\\')) return false;
+  }
+  return true;
+}
+
+export const SubpathSchema = z
+  .string()
+  .refine(isValidSubpath, {
+    message:
+      'subpath must be POSIX-style relative path (no leading/trailing slash, no .. or dot segments, no \\ or NUL)',
+  });
+
 export const EntrySchema = z.object({
   id: z
     .string()
@@ -50,6 +81,13 @@ export const EntrySchema = z.object({
       'id must be kebab-case (a-z, 0-9, -) or CJK characters (Han / Kana / Hangul); no spaces, dots, uppercase, or leading hyphen',
     ),
   collection: z.string().min(1),
+  /**
+   * Entry 在 collection 目录内的相对子路径（POSIX 形式，`/` 分隔）。
+   * 缺省 / 空串 = collection 根（旧 flat 行为）。
+   * watcher collectionFromSubdir 模式下，segs[0] 用作 collection，segs[1..-1] 拼成 subpath。
+   * 落盘路径：`<wikiRoot>/<collection>/<subpath>/<id>.md`。
+   */
+  subpath: SubpathSchema.optional(),
   title: z.string().min(1),
   summary: z.string().default(''),
   tags: z.array(z.string()).default([]),

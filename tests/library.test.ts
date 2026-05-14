@@ -37,6 +37,7 @@ function makeEntry(overrides: Partial<Entry> = {}): Entry {
   return {
     id: overrides.id ?? 'foo',
     collection: overrides.collection ?? 'tech',
+    subpath: overrides.subpath,
     title: overrides.title ?? 'Foo',
     summary: overrides.summary ?? 'a foo entry',
     tags: overrides.tags ?? ['x'],
@@ -327,6 +328,77 @@ describe('LibraryService — 扫描器容错', () => {
     const lib = new LibraryService(path.join(tmpDir, 'never-created'));
     expect(lib.list()).toEqual([]);
     expect(lib.linkIndex().size).toBe(0);
+  });
+
+  it('subpath：put 落 <collection>/<subpath>/<id>.md，get 取回带 subpath', () => {
+    const lib = new LibraryService(tmpDir, { persist: false });
+    lib.put(makeEntry({ id: 'foo', collection: '人生大事', subpath: '希区柯克' }));
+    const expectedFile = path.join(tmpDir, '人生大事', '希区柯克', 'foo.md');
+    expect(fs.existsSync(expectedFile)).toBe(true);
+    const got = lib.get('foo');
+    expect(got?.subpath).toBe('希区柯克');
+    // 第二个实例走 scanAll 也能从目录派生出 subpath
+    const fresh = new LibraryService(tmpDir, { persist: false });
+    const r = fresh.get('foo');
+    expect(r?.subpath).toBe('希区柯克');
+  });
+
+  it('subpath 任意深度：a/b/c → 三级目录都建出来', () => {
+    const lib = new LibraryService(tmpDir, { persist: false });
+    lib.put(makeEntry({ id: 'deep', collection: 'tech', subpath: 'a/b/c' }));
+    expect(fs.existsSync(path.join(tmpDir, 'tech', 'a', 'b', 'c', 'deep.md'))).toBe(true);
+    const fresh = new LibraryService(tmpDir, { persist: false });
+    expect(fresh.get('deep')?.subpath).toBe('a/b/c');
+  });
+
+  it('subpath 变更：put 同 id 到不同 subpath，老文件被清理（无幽灵）', () => {
+    const lib = new LibraryService(tmpDir, { persist: false });
+    lib.put(makeEntry({ id: 'mover', collection: 'tech', subpath: 'old-loc' }));
+    expect(fs.existsSync(path.join(tmpDir, 'tech', 'old-loc', 'mover.md'))).toBe(true);
+    lib.put(makeEntry({ id: 'mover', collection: 'tech', subpath: 'new-loc' }));
+    expect(fs.existsSync(path.join(tmpDir, 'tech', 'old-loc', 'mover.md'))).toBe(false);
+    expect(fs.existsSync(path.join(tmpDir, 'tech', 'new-loc', 'mover.md'))).toBe(true);
+    // scanAll 也只看到一份
+    const fresh = new LibraryService(tmpDir, { persist: false });
+    expect(fresh.list().filter((e) => e.id === 'mover')).toHaveLength(1);
+  });
+
+  it('subpath delete：根据 cache 里 entry 的 subpath 找文件删', () => {
+    const lib = new LibraryService(tmpDir, { persist: false });
+    lib.put(makeEntry({ id: 'rmme', collection: 'tech', subpath: 'nested' }));
+    expect(lib.delete('rmme', 'tech')).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, 'tech', 'nested', 'rmme.md'))).toBe(false);
+  });
+
+  it('subpath 校验：拒绝 `..` / 绝对路径 / dotdir 段', () => {
+    const lib = new LibraryService(tmpDir, { persist: false });
+    expect(() =>
+      lib.put(makeEntry({ id: 'bad', collection: 'tech', subpath: '../escape' })),
+    ).toThrow();
+    expect(() =>
+      lib.put(makeEntry({ id: 'bad', collection: 'tech', subpath: '/abs' })),
+    ).toThrow();
+    expect(() =>
+      lib.put(makeEntry({ id: 'bad', collection: 'tech', subpath: '.git' })),
+    ).toThrow();
+    expect(() =>
+      lib.put(makeEntry({ id: 'bad', collection: 'tech', subpath: 'a//b' })),
+    ).toThrow();
+  });
+
+  it('递归 scanAll 跳过任意层级的 dotdir（.cache/.git 等）', () => {
+    const lib = new LibraryService(tmpDir, { persist: false });
+    lib.put(makeEntry({ id: 'real', collection: 'tech', subpath: 'inner' }));
+    // 手放一个 dotdir 内的 .md（譬如 sidecar） — 不该被读
+    const ghostDir = path.join(tmpDir, 'tech', 'inner', '.cache');
+    fs.mkdirSync(ghostDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(ghostDir, 'ghost.md'),
+      '---\nid: ghost\ncollection: tech\ntitle: ghost\nupdated: 2026-01-01T00:00:00Z\n---\n# ghost',
+    );
+    const fresh = new LibraryService(tmpDir, { persist: false });
+    const ids = fresh.list().map((e) => e.id);
+    expect(ids).toEqual(['real']);
   });
 
   it('跳过 dotdir：collection 同级的 .cache 不被当作 collection；collection 内的 .cache/*.md 不被当作 entry', () => {

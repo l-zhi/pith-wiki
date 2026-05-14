@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { QueueStore } from '../src/wiki/queue/store.js';
 import { deriveJobId } from '../src/wiki/queue/state.js';
 import {
+  deriveSubpath,
   effectiveSourceRoot,
   enqueueFromWatch,
   initialScanEnqueue,
@@ -212,6 +213,58 @@ describe('effectiveSourceRoot', () => {
   });
 });
 
+// ---- deriveSubpath ----
+
+describe('deriveSubpath', () => {
+  it('subdir 模式 + 文件在 <collection>/<sub>/<file>：返回 sub', () => {
+    const target = makeTarget();
+    const file = path.join(watchRoot, '人生大事', '希区柯克', 'hitchcock.pdf');
+    expect(deriveSubpath(target, file)).toBe('希区柯克');
+  });
+
+  it('subdir 模式 + 深层：a/b/c/file → "a/b/c"（POSIX 分隔）', () => {
+    const target = makeTarget();
+    const file = path.join(watchRoot, 'tech', 'a', 'b', 'c', 'note.pdf');
+    expect(deriveSubpath(target, file)).toBe('a/b/c');
+  });
+
+  it('subdir 模式 + 文件直接在 collection 根下：undefined（落 collection 根）', () => {
+    const target = makeTarget();
+    const file = path.join(watchRoot, '鸡眨眼', 'note.pdf');
+    expect(deriveSubpath(target, file)).toBeUndefined();
+  });
+
+  it('subdir 模式 + 文件直挂 watch root（fallback 场景）：undefined', () => {
+    const target = makeTarget({ fallbackCollection: 'misc' });
+    const file = path.join(watchRoot, 'orphan.pdf');
+    expect(deriveSubpath(target, file)).toBeUndefined();
+  });
+
+  it('固定 collection 模式：保留完整中间目录段', () => {
+    const target = makeTarget({ collection: 'fixed', collectionFromSubdir: false });
+    const file = path.join(watchRoot, 'sub', 'inner', 'note.pdf');
+    expect(deriveSubpath(target, file)).toBe('sub/inner');
+  });
+
+  it('固定 collection 模式 + 文件直接在 root：undefined', () => {
+    const target = makeTarget({ collection: 'fixed', collectionFromSubdir: false });
+    const file = path.join(watchRoot, 'note.pdf');
+    expect(deriveSubpath(target, file)).toBeUndefined();
+  });
+
+  it('subpath 含 dotdir 段（.git 等）：拒绝，返回 undefined', () => {
+    const target = makeTarget();
+    const file = path.join(watchRoot, 'tech', '.git', 'note.pdf');
+    expect(deriveSubpath(target, file)).toBeUndefined();
+  });
+
+  it('absFile 越界 target.path：保守 undefined', () => {
+    const target = makeTarget();
+    const file = path.join(tmpRoot, 'outside', 'x.pdf');
+    expect(deriveSubpath(target, file)).toBeUndefined();
+  });
+});
+
 // ---- resolveWatchTarget ----
 
 describe('resolveWatchTarget', () => {
@@ -382,6 +435,18 @@ describe('initialScanEnqueue', () => {
     for (const j of jobs) {
       expect(j.sourceRoot).toBe(path.join(watchRoot, j.collection));
     }
+  });
+
+  it('initial-scan 记录 subpath：<watch>/<collection>/<sub>/file → job.subpath = "sub"', async () => {
+    fs.mkdirSync(path.join(watchRoot, '人生大事', '希区柯克'), { recursive: true });
+    fs.writeFileSync(path.join(watchRoot, '人生大事', '希区柯克', 'foo.md'), 'x');
+    fs.writeFileSync(path.join(watchRoot, '人生大事', 'flat.md'), 'x');
+    await initialScanEnqueue(store, makeTarget());
+    const jobs = Object.values(store.load().jobs);
+    const deep = jobs.find((j) => j.file.endsWith(path.join('希区柯克', 'foo.md')));
+    const flat = jobs.find((j) => j.file.endsWith(path.join('人生大事', 'flat.md')));
+    expect(deep?.subpath).toBe('希区柯克');
+    expect(flat?.subpath).toBeUndefined();
   });
 
   it('屏蔽 .obsidian / wiki / outputs / dotfiles', async () => {
