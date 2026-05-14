@@ -4,7 +4,7 @@ import Spinner from 'ink-spinner';
 import os from 'node:os';
 import path from 'node:path';
 import type { DashboardData, CollectionRow, WatchRow } from './dashboardData.js';
-import { progressBar, visualWidth } from './dashboardData.js';
+import { visualWidth } from './dashboardData.js';
 
 /**
  * REPL 启动 dashboard 的 Ink 渲染。
@@ -229,10 +229,7 @@ function UnifiedTable({ rows }: { rows: CollectionRow[] }) {
   const watching = rows.filter((r) => r.watch).length;
 
   // 估算 rule 宽度（与列宽之和对齐；fallback 80）
-  const ruleW = Math.min(
-    100,
-    nameW + NUM_COL_W * 5 + WATCH_COL_W + 14 /*progress*/ + 8 /*updated*/ + 8,
-  );
+  const ruleW = Math.min(80, nameW + NUM_COL_W * 5 + WATCH_COL_W + 8);
 
   return (
     <Box flexDirection="column">
@@ -272,24 +269,11 @@ function Header({ nameW }: { nameW: number }) {
       <Cell width={WATCH_COL_W} center>
         <Text dimColor>watch</Text>
       </Cell>
-      <Cell flexGrow={1}>
-        <Text dimColor>progress</Text>
-      </Cell>
     </Box>
   );
 }
 
 function Row({ row, nameW }: { row: CollectionRow; nameW: number }) {
-  const bar = progressBar(row.done, row.files);
-  // 进度条着色：dead>0 整条 pink；running>0 amber；其余 green；空 collection 灰
-  const barColor =
-    row.files === 0
-      ? undefined
-      : row.dead > 0
-        ? C.pink
-        : row.running > 0
-          ? C.amber
-          : C.green;
   const nameColor = row.danger ? C.pink : undefined;
 
   return (
@@ -323,10 +307,6 @@ function Row({ row, nameW }: { row: CollectionRow; nameW: number }) {
       <Cell width={WATCH_COL_W} center>
         {row.watch ? <Text color={C.cyan}>●</Text> : <Text dimColor>○</Text>}
       </Cell>
-      <Cell flexGrow={1}>
-        <Text color={barColor}>{bar}</Text>
-        <Text dimColor>{'  ' + row.updated}</Text>
-      </Cell>
     </Box>
   );
 }
@@ -342,8 +322,6 @@ function TotalRow({
   watching: number;
   rowCount: number;
 }) {
-  const bar = progressBar(total.done, total.files);
-  const pct = total.files ? `${Math.round((100 * total.done) / total.files)}%` : '—';
   return (
     <Box>
       <Cell width={nameW}>
@@ -385,10 +363,6 @@ function TotalRow({
       <Cell width={WATCH_COL_W} center>
         <Text color={C.cyan}>{watching}</Text>
         <Text dimColor>/{rowCount}</Text>
-      </Cell>
-      <Cell flexGrow={1}>
-        <Text color={C.green}>{bar}</Text>
-        <Text dimColor>{'  ' + pct}</Text>
       </Cell>
     </Box>
   );

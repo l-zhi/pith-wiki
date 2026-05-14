@@ -40,6 +40,12 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     name: '/converters',
     description: 'List registered file → text converters (with extensions and priorities).',
   },
+  {
+    name: '/queue',
+    description:
+      'Inspect / manage the ingest queue. Subcommands: (none|dead) list dead jobs · status · retry <id> · retry-all · clear-dead',
+    takesArg: true,
+  },
   { name: '/exit', description: 'Exit the REPL.', aliases: ['/quit'] },
 ];
 

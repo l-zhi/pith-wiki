@@ -28,6 +28,7 @@ import { HydrationService } from '../wiki/hydration.js';
 import { formatConvertersTable } from './converterFormat.js';
 import { collectDashboardData, formatDashboard } from './dashboardData.js';
 import { Dashboard } from './Dashboard.js';
+import { clearDead, formatDeadList, formatQueueStatus, resetDead } from './queueOps.js';
 
 interface Props {
   /**
@@ -433,11 +434,74 @@ export function App({ config: initialConfig }: Props) {
       handleProvider(arg);
     } else if (cmd === '/converters') {
       append({ role: 'system', text: formatConvertersTable(converters.registry) });
+    } else if (cmd === '/queue' || cmd.startsWith('/queue ')) {
+      const arg = cmd === '/queue' ? '' : cmd.slice('/queue '.length).trim();
+      handleQueue(arg);
     } else if (cmd === '/exit' || cmd === '/quit') {
       exit();
     } else {
       append({ role: 'error', text: `Unknown command: ${cmd}` });
     }
+  };
+
+  /**
+   * /queue 处理：dashboard 看到 dead N 后能在 REPL 内直接处理。
+   *
+   * 子命令（无参 / dead → 列 dead 列表，是 dashboard 看到红色后最自然的下一步）：
+   *   - (无参) | dead     列 dead jobs + 操作提示
+   *   - status            完整计数 + 最近 events
+   *   - retry-all         全部 dead → pending
+   *   - retry <id>...     指定 id → pending（支持多个）
+   *   - clear-dead        删除全部 dead 记录
+   *
+   * 写动作走独立 QueueStore：与 worker 同进程并发 mutate state.json，QueueStore
+   * 注释保证最坏只丢 events 一条；dead/running 互不相交，job 字段层面安全。
+   */
+  const handleQueue = (arg: string): void => {
+    const store = new QueueStore(config.queueStatePath);
+    const [sub, ...rest] = arg.split(/\s+/).filter(Boolean);
+
+    if (!sub || sub === 'dead') {
+      append({ role: 'system', text: formatDeadList(store.load()) });
+      return;
+    }
+    if (sub === 'status') {
+      append({ role: 'system', text: formatQueueStatus(store.load()) });
+      return;
+    }
+    if (sub === 'retry-all') {
+      const r = resetDead(store);
+      append({
+        role: 'system',
+        text: r.reset === 0 ? 'No dead jobs to retry.' : `Reset ${r.reset} dead job(s) → pending.`,
+      });
+      return;
+    }
+    if (sub === 'retry') {
+      if (rest.length === 0) {
+        append({ role: 'error', text: 'Usage: /queue retry <id> [<id>...]  (or /queue retry-all)' });
+        return;
+      }
+      const r = resetDead(store, rest);
+      const parts: string[] = [];
+      if (r.reset > 0) parts.push(`reset ${r.reset} → pending`);
+      if (r.skipped.length) parts.push(`skipped: ${r.skipped.join(', ')}`);
+      if (r.notFound.length) parts.push(`not found: ${r.notFound.join(', ')}`);
+      append({ role: 'system', text: parts.join('  ·  ') || 'nothing to do' });
+      return;
+    }
+    if (sub === 'clear-dead') {
+      const { removed } = clearDead(store);
+      append({
+        role: 'system',
+        text: removed === 0 ? 'No dead jobs to clear.' : `Cleared ${removed} dead job(s).`,
+      });
+      return;
+    }
+    append({
+      role: 'error',
+      text: `Unknown /queue subcommand: "${sub}". Try: /queue, /queue status, /queue retry-all, /queue retry <id>, /queue clear-dead`,
+    });
   };
 
   /**

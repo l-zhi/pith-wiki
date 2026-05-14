@@ -31,7 +31,6 @@ export interface CollectionRow {
   done: number;
   dead: number;
   watch: boolean;
-  updated: string;
   danger: boolean;
 }
 
@@ -55,12 +54,12 @@ export interface DashboardData {
 /* ───────────────────────── 收集层 ───────────────────────── */
 
 /**
- * 同步扫 wikiRoot 一层得到 collection 列表 + 每个 collection 的 .md 数量 + mtime。
+ * 同步扫 wikiRoot 一层得到 collection 列表 + 每个 collection 的 .md 数量。
  * 口径与 LibraryService.scanAll 一致：只看 `<wikiRoot>/<collection>/*.md` 一层。
  * 跳过 dotdir（.cache、.queue 等不是 collection）。
  */
-function scanWikiCollections(wikiRoot: string): Map<string, { count: number; mtimeMs: number }> {
-  const out = new Map<string, { count: number; mtimeMs: number }>();
+function scanWikiCollections(wikiRoot: string): Map<string, number> {
+  const out = new Map<string, number>();
   if (!fs.existsSync(wikiRoot)) return out;
   let dirents: fs.Dirent[];
   try {
@@ -73,22 +72,14 @@ function scanWikiCollections(wikiRoot: string): Map<string, { count: number; mti
     if (entry.name.startsWith('.')) continue;
     const dir = path.join(wikiRoot, entry.name);
     let count = 0;
-    let mtimeMs = 0;
     try {
       for (const f of fs.readdirSync(dir)) {
-        if (!f.endsWith('.md')) continue;
-        count += 1;
-        try {
-          const st = fs.statSync(path.join(dir, f));
-          if (st.mtimeMs > mtimeMs) mtimeMs = st.mtimeMs;
-        } catch {
-          /* ignore single-file stat errors */
-        }
+        if (f.endsWith('.md')) count += 1;
       }
     } catch {
       /* ignore */
     }
-    out.set(entry.name, { count, mtimeMs });
+    out.set(entry.name, count);
   }
   return out;
 }
@@ -175,24 +166,6 @@ function deriveProviderLabel(config: Config): string {
   }
 }
 
-/**
- * mtime → 相对时间字符串，对齐设计稿："now" / "2m" / "3h" / "5d" / "—"。
- * mtimeMs=0 视为没数据，返回 `—`。
- */
-export function relativeTime(mtimeMs: number, nowMs = Date.now()): string {
-  if (!mtimeMs) return '—';
-  const diff = Math.max(0, nowMs - mtimeMs);
-  const sec = Math.floor(diff / 1000);
-  if (sec < 60) return 'now';
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h`;
-  const day = Math.floor(hr / 24);
-  if (day < 365) return `${day}d`;
-  return '—';
-}
-
 export async function collectDashboardData(
   config: Config,
   registry: ConverterRegistry,
@@ -204,13 +177,12 @@ export async function collectDashboardData(
   // 行集合 = (wiki 目录) ∪ (queue 提到过的 collection)
   // 设计稿里 `dead-letter` 这种"只存在于队列里"的虚拟 collection 也要出现。
   const names = new Set<string>([...wikiMap.keys(), ...queueMap.keys()]);
-  const now = Date.now();
   const rows: CollectionRow[] = [];
   for (const name of names) {
-    const wiki = wikiMap.get(name) ?? { count: 0, mtimeMs: 0 };
+    const wikiCount = wikiMap.get(name) ?? 0;
     const q = queueMap.get(name) ?? { pending: 0, running: 0, completed: 0, dead: 0 };
     // done 取 max：wiki 目录是持久化真理，但 queue.completed 在环形 buffer 截断之前能反映"刚完成"
-    const done = Math.max(wiki.count, q.completed);
+    const done = Math.max(wikiCount, q.completed);
     const files = q.pending + q.running + done + q.dead;
     rows.push({
       name,
@@ -220,7 +192,6 @@ export async function collectDashboardData(
       done,
       dead: q.dead,
       watch: watchSet.has(name),
-      updated: relativeTime(wiki.mtimeMs, now),
       danger: q.dead > 0,
     });
   }
@@ -275,8 +246,6 @@ export async function collectDashboardData(
 
 /* ───────────────────────── 渲染：纯文本 ───────────────────────── */
 
-const PROGRESS_WIDTH = 14;
-
 /** home 目录前缀压成 `~`，其它原样。 */
 function shortPath(abs: string): string {
   const home = os.homedir();
@@ -313,13 +282,6 @@ function vpad(s: string, width: number): string {
 
 function vpadStart(s: string, width: number): string {
   return ' '.repeat(Math.max(0, width - visualWidth(s))) + s;
-}
-
-/** ASCII 进度条：固定 PROGRESS_WIDTH 宽，按 done/files 比例填充。 */
-export function progressBar(done: number, files: number, width = PROGRESS_WIDTH): string {
-  if (files <= 0) return '░'.repeat(width);
-  const fill = Math.min(width, Math.max(0, Math.round((width * done) / files)));
-  return '█'.repeat(fill) + '░'.repeat(width - fill);
 }
 
 /** "·" 表示该列为零，与设计稿一致（避免一片 0 的视觉噪声）。 */
@@ -393,14 +355,13 @@ export function formatDashboard(data: DashboardData, worker?: WorkerSummary): st
     `${vpadStart('running', numColW)}  ` +
     `${vpadStart('done', numColW)}  ` +
     `${vpadStart('dead', numColW)}  ` +
-    `watch  progress`;
+    `watch`;
   lines.push(header);
 
   if (data.collections.length === 0) {
     lines.push('(no collections yet)');
   } else {
     for (const r of data.collections) {
-      const bar = progressBar(r.done, r.files);
       lines.push(
         `${vpad(r.name, nameW)}  ` +
           `${vpadStart(String(r.files || '—'), filesW)}  ` +
@@ -408,8 +369,7 @@ export function formatDashboard(data: DashboardData, worker?: WorkerSummary): st
           `${vpadStart(num(r.running), numColW)}  ` +
           `${vpadStart(num(r.done), numColW)}  ` +
           `${vpadStart(num(r.dead), numColW)}  ` +
-          `  ${r.watch ? '●' : '○'}   ` +
-          `${bar} ${r.updated}`,
+          `  ${r.watch ? '●' : '○'}`,
       );
     }
     // 总计行：dashed rule 上方
@@ -424,11 +384,7 @@ export function formatDashboard(data: DashboardData, worker?: WorkerSummary): st
       { files: 0, pending: 0, running: 0, done: 0, dead: 0 },
     );
     const watching = data.collections.filter((c) => c.watch).length;
-    const pct = total.files
-      ? `${Math.round((100 * total.done) / total.files)}%`
-      : '—';
-    const ruleW =
-      nameW + 2 + filesW + 2 + (numColW + 2) * 4 + 7 /* watch col */ + 2 + PROGRESS_WIDTH + 4;
+    const ruleW = nameW + 2 + filesW + 2 + (numColW + 2) * 4 + 7 /* watch col */;
     lines.push('─'.repeat(ruleW));
     lines.push(
       `${vpad('total', nameW)}  ` +
@@ -437,8 +393,7 @@ export function formatDashboard(data: DashboardData, worker?: WorkerSummary): st
         `${vpadStart(num(total.running), numColW)}  ` +
         `${vpadStart(num(total.done), numColW)}  ` +
         `${vpadStart(num(total.dead), numColW)}  ` +
-        ` ${watching}/${data.collections.length}  ` +
-        `${progressBar(total.done, total.files)} ${pct}`,
+        ` ${watching}/${data.collections.length}`,
     );
   }
 

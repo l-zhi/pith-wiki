@@ -30,8 +30,8 @@ describe('filterCommands', () => {
   });
 
   it('别名前缀也算匹配', () => {
-    // /quit 是 /exit 的别名
-    expect(filterCommands('/q').map((c) => c.name)).toEqual(['/exit']);
+    // /quit 是 /exit 的别名；/queue 本名也以 /q 开头 → 一并匹配
+    expect(filterCommands('/q').map((c) => c.name).sort()).toEqual(['/exit', '/queue']);
   });
 
   it('完整命令名返回该条目', () => {
