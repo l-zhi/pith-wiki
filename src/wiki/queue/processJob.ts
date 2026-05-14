@@ -8,6 +8,14 @@ import type { ConverterCache, CacheKey } from '../converters/cache.js';
 import { cacheKey, cacheKeyString, NullConverterCache } from '../converters/cache.js';
 import { EmptyConversionError, type ConvertProgress } from '../converters/types.js';
 import { defaultConverters } from '../converters/index.js';
+import { writeCacheSidecar } from '../converters/sidecar.js';
+
+/**
+ * 走过 passthrough 转换器（源已经是 markdown / 纯文本）的不写 sidecar：
+ * 源文件本身就是 LLM 可读的，再 copy 一份是冗余的，且 wiki_read_source 直接读
+ * source.value 行为已经正确。
+ */
+const PASSTHROUGH_CONVERTERS = new Set(['markdown-passthrough', 'text-passthrough']);
 
 let _defaultRegistrySingleton: ConverterRegistry | null = null;
 /**
@@ -82,6 +90,12 @@ export interface ProcessJobCtx {
   cache?: ConverterCache;
   /** 强指定转换器名（绕过 ConverterRegistry 的扩展名解析）。 */
   converter?: string;
+  /**
+   * 推导 sidecar 相对路径的根。缺省时退化为 path.dirname(absFile)，sidecar 扁平
+   * 落在 `<wikiRoot>/<collection>/.cache/<basename>.md`。
+   * watcher 调用方应传 target.path；CLI subcommands 可以传 --source-root，或不传走扁平。
+   */
+  sourceRoot?: string;
   /** 长转换器进度回调，runner 桥到 queue events。 */
   onConvertProgress?(p: ConvertProgress): void;
   /** 用户取消（Ctrl+C / Electron 关页）。 */
@@ -203,6 +217,25 @@ export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<F
     };
   }
 
+  // sidecar：把转换后的 markdown 落地到 <wikiRoot>/<collection>/.cache/<rel>.md。
+  // 仅对非 passthrough 转换器写（passthrough 源就是 markdown / text，sidecar 是冗余 copy）。
+  // 即使 cache 命中也写：sidecar 可能被用户手动删过，每次都覆盖一次保持磁盘状态一致。
+  // 失败不阻塞主路径：sidecar 是衍生品，丢了 wiki_read_source 回退到 source.value 也能用。
+  let cachePath: string | undefined;
+  if (!PASSTHROUGH_CONVERTERS.has(converter.name)) {
+    try {
+      cachePath = writeCacheSidecar({
+        wikiRoot: ctx.library.getWikiRoot(),
+        collection: ctx.collection,
+        sourceRoot: ctx.sourceRoot,
+        absFile,
+        content: convOut.content,
+      });
+    } catch {
+      cachePath = undefined;
+    }
+  }
+
   // hydrate（带 429 退避）。把重试逻辑内联是为了让 attempts 在失败路径也能正确传出。
   const filename = path.basename(absFile);
   const maxRetries = 3;
@@ -214,7 +247,12 @@ export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<F
       entry = await ctx.hydrator.hydrate({
         rawContent: convOut.content,
         collectionId: ctx.collection,
-        source: { type: 'file', value: absFile, convertedBy: converter.name },
+        source: {
+          type: 'file',
+          value: absFile,
+          convertedBy: converter.name,
+          ...(cachePath ? { cachePath } : {}),
+        },
         linkCandidates: ctx.existingEntries,
         filenameHint: filename,
       });

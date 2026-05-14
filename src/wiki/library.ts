@@ -49,6 +49,11 @@ export class LibraryService {
     this.persistDelayMs = options.persistDelayMs ?? 5000;
   }
 
+  /** wikiRoot 绝对路径。给需要计算 cache / sidecar 路径的子系统用。 */
+  getWikiRoot(): string {
+    return this.wikiRoot;
+  }
+
   private collectionDir(collection: string): string {
     return path.join(this.wikiRoot, collection);
   }
@@ -190,7 +195,7 @@ export class LibraryService {
     if (fs.existsSync(this.wikiRoot)) {
       const dirs = fs
         .readdirSync(this.wikiRoot, { withFileTypes: true })
-        .filter((d) => d.isDirectory());
+        .filter((d) => d.isDirectory() && !d.name.startsWith('.'));
       for (const d of dirs) {
         try {
           const dirMtime = fs.statSync(path.join(this.wikiRoot, d.name)).mtimeMs;
@@ -242,13 +247,19 @@ export class LibraryService {
 
   private scanAll(): Entry[] {
     if (!fs.existsSync(this.wikiRoot)) return [];
+    // 跳过 dotdir：兜底 .cache（converter sidecar）、可能的 .git 等。
+    // entry collection 不允许以 `.` 开头，所以过滤是无损的。
     const collections = fs
       .readdirSync(this.wikiRoot, { withFileTypes: true })
-      .filter((d) => d.isDirectory());
+      .filter((d) => d.isDirectory() && !d.name.startsWith('.'));
     const out: Entry[] = [];
     for (const c of collections) {
       const dir = path.join(this.wikiRoot, c.name);
-      const files = fs.readdirSync(dir).filter((f) => f.endsWith('.md'));
+      // 同样跳过 collection 内的 dotdir / dotfile —— .cache 子目录里的 sidecar .md
+      // 不是 entry，不该被加载。
+      const files = fs
+        .readdirSync(dir)
+        .filter((f) => !f.startsWith('.') && f.endsWith('.md'));
       for (const f of files) {
         try {
           out.push(this.readFile(path.join(dir, f), c.name));

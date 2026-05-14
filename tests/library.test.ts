@@ -243,6 +243,44 @@ describe('LibraryService — 中文内容', () => {
     expect(fetched!.content).toContain('[[other-zh-entry]]');
   });
 
+  it('中文 id：put → 文件名是中文 .md → get 拿得回来', () => {
+    // 业务诉求：源文件名是中文时（如"成长经历.md"），生成的 wiki 条目
+    // 文件名也应该是中文，而不是被翻译成 cheng-zhang-jing-li。
+    // 这条端到端断言：UTF-8 文件名能正常落盘、能正常 round-trip。
+    const lib = new LibraryService(tmpDir);
+    const entry = makeEntry({
+      id: '成长经历',
+      title: '成长经历',
+      summary: '一段中文 id 的样例条目',
+      content: '# 成长经历\n\n- 内容若干',
+    });
+
+    lib.put(entry);
+    // 文件确实以中文 id 落盘
+    const expectedPath = path.join(tmpDir, 'tech', '成长经历.md');
+    expect(fs.existsSync(expectedPath)).toBe(true);
+
+    // get 也能用中文 id 取回
+    const fetched = lib.get('成长经历');
+    expect(fetched!.id).toBe('成长经历');
+    expect(fetched!.title).toBe('成长经历');
+
+    // delete 也按中文 id 工作
+    expect(lib.delete('成长经历', 'tech')).toBe(true);
+    expect(fs.existsSync(expectedPath)).toBe(false);
+  });
+
+  it('中文 + ASCII 连字符混合 id：成长-2025 也能 round-trip', () => {
+    const lib = new LibraryService(tmpDir);
+    const entry = makeEntry({
+      id: '成长-2025',
+      title: '2025 成长复盘',
+    });
+    lib.put(entry);
+    expect(fs.existsSync(path.join(tmpDir, 'tech', '成长-2025.md'))).toBe(true);
+    expect(lib.get('成长-2025')?.title).toBe('2025 成长复盘');
+  });
+
   it('文件落盘后用 gray-matter 读出来 frontmatter 的字段都对', () => {
     const lib = new LibraryService(tmpDir);
     const entry = makeEntry({
@@ -289,6 +327,35 @@ describe('LibraryService — 扫描器容错', () => {
     const lib = new LibraryService(path.join(tmpDir, 'never-created'));
     expect(lib.list()).toEqual([]);
     expect(lib.linkIndex().size).toBe(0);
+  });
+
+  it('跳过 dotdir：collection 同级的 .cache 不被当作 collection；collection 内的 .cache/*.md 不被当作 entry', () => {
+    const lib = new LibraryService(tmpDir, { persist: false });
+    lib.put(makeEntry({ id: 'real', collection: 'tech' }));
+
+    // 模拟 converter sidecar：collection 内有 .cache 子目录，里面藏一个 .md
+    const cacheDir = path.join(tmpDir, 'tech', '.cache', 'sub');
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(cacheDir, 'cached.md'),
+      ['---', 'id: cached', 'collection: tech', 'title: cached', 'updated: 2026-01-01T00:00:00Z', '---', '# cached body'].join('\n'),
+    );
+    // 模拟 wikiRoot 顶层的 dotdir（.git / 别的工具放的）
+    fs.mkdirSync(path.join(tmpDir, '.scratch'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, '.scratch', 'whatever.md'),
+      '---\nid: ghost\ncollection: ghost\ntitle: ghost\nupdated: 2026-01-01T00:00:00Z\n---\n# ghost',
+    );
+
+    // 第二个实例，全量 scanAll（persist=false 强制走 scan）
+    const fresh = new LibraryService(tmpDir, { persist: false });
+    const ids = fresh.list().map((e) => e.id);
+    expect(ids).toEqual(['real']);
+    // 确认 dotdir 内文件存在但被忽略
+    expect(fs.existsSync(path.join(cacheDir, 'cached.md'))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, '.scratch', 'whatever.md'))).toBe(true);
+    // 用一个变量消解未使用警告
+    expect(lib.list()).toHaveLength(1);
   });
 });
 

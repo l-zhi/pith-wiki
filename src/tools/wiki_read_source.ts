@@ -4,7 +4,7 @@ import { resolveSafePath, truncatePayload } from './safety.js';
 import type { ToolDef } from './index.js';
 
 const params = z.object({
-  id: z.string().describe('Wiki entry id (kebab-case slug).'),
+  id: z.string().describe('Wiki entry id (kebab-case ASCII or CJK characters).'),
   collection: z.string().optional(),
 });
 
@@ -22,7 +22,7 @@ const params = z.object({
 export const wikiReadSourceTool: ToolDef<typeof params> = {
   name: 'wiki_read_source',
   description:
-    "Read the original source file referenced by a wiki entry's `source.value`. Use this when wiki_query / wiki_get's hydrated content is too compressed and you need the full original text. Only works when source.type === 'file'; for url/inline sources returns an error.",
+    "Read the full original source behind a wiki entry. For PDF/DOCX/HTML entries this returns the converter's markdown sidecar (cache_path) — that's the LLM-readable form; for plain .md/.txt entries it returns the file at source.value. Use this when wiki_query / wiki_get's hydrated content is too compressed and you need the full text. Only works when source.type === 'file'; for url/inline returns an error.",
   parameters: params,
   handler: async ({ id, collection }, ctx) => {
     const entry = ctx.library.get(id, collection);
@@ -38,10 +38,15 @@ export const wikiReadSourceTool: ToolDef<typeof params> = {
       };
     }
 
-    const sourcePath = entry.source.value;
+    // PDF / DOCX / HTML / TXT (non-passthrough converters) 都不能直接 utf8 解码；
+    // 优先读 converter sidecar（.cache 下的 .md），拿到的是 LLM 可读的 markdown。
+    // markdown / text passthrough：cachePath 缺省，回落到 source.value 行为不变。
+    const cachePath = entry.source.cachePath;
+    const readPath = cachePath ?? entry.source.value;
+    const usingCache = !!cachePath;
     let safe: string;
     try {
-      safe = resolveSafePath(sourcePath, 'read', {
+      safe = resolveSafePath(readPath, 'read', {
         workspaceRoot: ctx.config.workspaceRoot,
         wikiRoot: ctx.config.wikiRoot,
         maxPayloadBytes: ctx.config.maxToolPayloadBytes,
@@ -52,21 +57,32 @@ export const wikiReadSourceTool: ToolDef<typeof params> = {
       return {
         ok: false,
         error:
-          `Source path outside read sandbox: ${sourcePath}\n` +
+          `${usingCache ? 'Cache sidecar' : 'Source path'} outside read sandbox: ${readPath}\n` +
           `Add it to LLM_WIKI_READ_PATHS or run with --read-path to allow. (${(err as Error).message})`,
       };
     }
 
     if (!fs.existsSync(safe)) {
+      // Sidecar 可能被用户手动删掉了 —— 回退到原始 source.value 再试一次（仅当
+      // 原始路径是 markdown 或文本时才有意义，但还是尝试一下，让用户拿到点东西
+      // 总比硬失败强；如果是 PDF/DOCX 二进制会读出乱码，调用方自行判断 convertedBy）。
+      if (usingCache) {
+        return {
+          ok: false,
+          error:
+            `Cache sidecar missing: ${readPath} (original source: ${entry.source.value}).\n` +
+            'The entry may need re-ingesting to regenerate the sidecar.',
+        };
+      }
       return {
         ok: false,
-        error: `Source file no longer exists: ${sourcePath}. The wiki entry may be stale; consider re-ingesting.`,
+        error: `Source file no longer exists: ${readPath}. The wiki entry may be stale; consider re-ingesting.`,
       };
     }
 
     const stat = fs.statSync(safe);
     if (stat.isDirectory()) {
-      return { ok: false, error: `Source path resolves to a directory: ${sourcePath}` };
+      return { ok: false, error: `Source path resolves to a directory: ${readPath}` };
     }
 
     const raw = fs.readFileSync(safe, 'utf8');
@@ -75,7 +91,10 @@ export const wikiReadSourceTool: ToolDef<typeof params> = {
       ok: true,
       id: entry.id,
       title: entry.title,
-      source_path: sourcePath,
+      source_path: entry.source.value,
+      cache_path: cachePath,
+      read_from: usingCache ? 'cache' : 'source',
+      converted_by: entry.source.convertedBy,
       bytes: stat.size,
       content,
     };

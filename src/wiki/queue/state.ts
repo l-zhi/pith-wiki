@@ -40,6 +40,12 @@ export const QueueJobSchema = z.object({
    * 让 worker 按 ConverterRegistry 默认规则解析。
    */
   converter: z.string().optional(),
+  /**
+   * 推导 converter sidecar 相对路径的根目录。watcher 写入时填 target.path，
+   * 这样 sidecar 镜像 watch root 下的子路径；缺省时 processJob 退化为
+   * path.dirname(absFile)，sidecar 扁平落在 `<wikiRoot>/<collection>/.cache/`。
+   */
+  sourceRoot: z.string().optional(),
 });
 export type QueueJob = z.infer<typeof QueueJobSchema>;
 

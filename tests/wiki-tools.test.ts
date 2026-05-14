@@ -251,6 +251,68 @@ describe('wiki_read_source', () => {
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/no longer exists|re-ingest/);
   });
+
+  it('source.cachePath 存在 → 读 sidecar 而不是原始（二进制）source.value', async () => {
+    // 模拟一个 PDF entry：source.value 指向 .pdf（这里只是占位，内容随便），
+    // source.cachePath 指向 wikiRoot 下 .cache 里转换后的 markdown。
+    const pdf = path.join(workspaceRoot, 'paper.pdf');
+    fs.writeFileSync(pdf, Buffer.from([0x25, 0x50, 0x44, 0x46])); // %PDF magic bytes
+    const cacheDir = path.join(wikiRoot, 'tech', '.cache');
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const sidecar = path.join(cacheDir, 'paper.md');
+    fs.writeFileSync(sidecar, '# Paper\n\nClean markdown extracted from PDF.');
+    library.put(
+      makeEntry({
+        id: 'paper',
+        source: {
+          type: 'file',
+          value: pdf,
+          convertedBy: 'pdf-parse',
+          cachePath: sidecar,
+        },
+      }),
+    );
+
+    const r = (await wikiReadSourceTool.handler({ id: 'paper' }, ctx)) as {
+      ok: boolean;
+      content: string;
+      source_path: string;
+      cache_path: string;
+      read_from: string;
+      converted_by: string;
+    };
+    expect(r.ok).toBe(true);
+    expect(r.read_from).toBe('cache');
+    expect(r.cache_path).toBe(sidecar);
+    expect(r.source_path).toBe(pdf); // 原始路径仍然返回，用于溯源
+    expect(r.converted_by).toBe('pdf-parse');
+    expect(r.content).toContain('Clean markdown extracted');
+  });
+
+  it('source.cachePath 丢失 → 提示 sidecar 需重新生成（不静默回退）', async () => {
+    const pdf = path.join(workspaceRoot, 'paper2.pdf');
+    fs.writeFileSync(pdf, Buffer.from([0x25, 0x50, 0x44, 0x46]));
+    const sidecar = path.join(wikiRoot, 'tech', '.cache', 'paper2.md');
+    // 故意不创建 sidecar 文件
+    library.put(
+      makeEntry({
+        id: 'paper2',
+        source: {
+          type: 'file',
+          value: pdf,
+          convertedBy: 'pdf-parse',
+          cachePath: sidecar,
+        },
+      }),
+    );
+
+    const r = (await wikiReadSourceTool.handler({ id: 'paper2' }, ctx)) as {
+      ok: boolean;
+      error?: string;
+    };
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/sidecar missing|re-ingest/i);
+  });
 });
 
 // ---- wiki_query 新返回字段 ----

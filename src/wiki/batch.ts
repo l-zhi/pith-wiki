@@ -47,6 +47,11 @@ export interface BatchOptions {
   cache?: ConverterCache;
   /** 强指定转换器名（适用于整批文件强走同一个转换器，比如 --converter）。 */
   converter?: string;
+  /**
+   * 推导 converter sidecar 相对路径的根。常见做法：把 ingest --dir 的目录传进来。
+   * 缺省时 sidecar 扁平落在 `<wikiRoot>/<collection>/.cache/<basename>.md`。
+   */
+  sourceRoot?: string;
   /** 单行日志回调；调用方决定怎么输出（chalk / 普通 console.log / 测试 spy）。 */
   log: (line: string) => void;
 }
@@ -89,6 +94,7 @@ export async function runBatch(opts: BatchOptions): Promise<BatchSummary> {
         converterRegistry: opts.converterRegistry,
         cache: opts.cache,
         converter: opts.converter,
+        sourceRoot: opts.sourceRoot,
       });
       completed += 1;
       results.push(result);

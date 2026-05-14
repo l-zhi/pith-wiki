@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { QueueStore } from '../src/wiki/queue/store.js';
 import { deriveJobId } from '../src/wiki/queue/state.js';
 import {
+  effectiveSourceRoot,
   enqueueFromWatch,
   initialScanEnqueue,
   isDefaultIgnored,
@@ -165,6 +166,49 @@ describe('resolveCollectionForFile', () => {
   it('subdir 模式：root 下文件 + 无 fallback → null', () => {
     const target = makeTarget({ fallbackCollection: undefined });
     expect(resolveCollectionForFile(path.join(watchRoot, 'orphan.md'), target)).toBeNull();
+  });
+});
+
+// ---- effectiveSourceRoot ----
+
+describe('effectiveSourceRoot', () => {
+  it('固定 collection 模式：直接返回 target.path', () => {
+    const target = makeTarget({ collection: 'fixed', collectionFromSubdir: false });
+    const file = path.join(watchRoot, 'sub', 'a.pdf');
+    expect(effectiveSourceRoot(target, file)).toBe(watchRoot);
+  });
+
+  it('subdir 模式 + 文件在子目录：strip 物理第一段 → sidecar 不重复 collection 名', () => {
+    const target = makeTarget();
+    const file = path.join(watchRoot, '鸡眨眼', '穿越千年.pdf');
+    expect(effectiveSourceRoot(target, file)).toBe(path.join(watchRoot, '鸡眨眼'));
+  });
+
+  it('subdir 模式 + alias：strip 的是物理段，不是 alias 后的 collection 名', () => {
+    // 物理目录 '荔枝AI圈' → collection 'lizhi-ai'。sidecar 计算 rel 时要
+    // 以 '<watch>/荔枝AI圈' 为根，否则 rel 又会带回那一段，造成
+    // .cache/荔枝AI圈/... 的重复。
+    const target = makeTarget({ subdirAlias: { '荔枝AI圈': 'lizhi-ai' } });
+    const file = path.join(watchRoot, '荔枝AI圈', 'post.md');
+    expect(effectiveSourceRoot(target, file)).toBe(path.join(watchRoot, '荔枝AI圈'));
+  });
+
+  it('subdir 模式 + 深层子目录：仍只 strip 第一段（深层结构保留在 sidecar 里）', () => {
+    const target = makeTarget();
+    const file = path.join(watchRoot, '工作', '2024', 'Q1', 'foo.pdf');
+    expect(effectiveSourceRoot(target, file)).toBe(path.join(watchRoot, '工作'));
+  });
+
+  it('subdir 模式 + 文件直接挂 root（fallback collection 场景）：不 strip，返回 target.path', () => {
+    const target = makeTarget({ fallbackCollection: 'misc' });
+    const file = path.join(watchRoot, 'orphan.pdf');
+    expect(effectiveSourceRoot(target, file)).toBe(watchRoot);
+  });
+
+  it('absFile 越界 target.path（rel 含 ..）：保守返回 target.path', () => {
+    const target = makeTarget();
+    const file = path.join(tmpRoot, 'outside', 'x.pdf');
+    expect(effectiveSourceRoot(target, file)).toBe(watchRoot);
   });
 });
 
@@ -333,6 +377,11 @@ describe('initialScanEnqueue', () => {
     expect(jobs).toHaveLength(3);
     const collections = jobs.map((j) => j.collection).sort();
     expect(collections).toEqual(['tech', '工作', '工作']);
+    // sourceRoot 被 effectiveSourceRoot 吃掉第一段，否则 sidecar 会在 .cache/<collection>/...
+    // 下重复一层 collection 名（issue 截图里看到的现象）。
+    for (const j of jobs) {
+      expect(j.sourceRoot).toBe(path.join(watchRoot, j.collection));
+    }
   });
 
   it('屏蔽 .obsidian / wiki / outputs / dotfiles', async () => {

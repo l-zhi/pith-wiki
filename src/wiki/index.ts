@@ -24,6 +24,8 @@ export {
   cacheKey,
   cacheKeyString,
   sha256,
+  cacheSidecarPath,
+  writeCacheSidecar,
   EmptyConversionError,
   UnknownConverterError,
   NoConverterError,

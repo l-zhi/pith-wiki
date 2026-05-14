@@ -37,6 +37,7 @@ export {
   cacheKey,
   cacheKeyString,
 } from './cache.js';
+export { cacheSidecarPath, writeCacheSidecar } from './sidecar.js';
 
 import type { Converter } from './types.js';
 import { markdownPassthrough } from './builtin/markdown.js';

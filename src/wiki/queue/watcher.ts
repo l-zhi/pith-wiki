@@ -121,6 +121,29 @@ export function resolveCollectionForFile(
 }
 
 /**
+ * 给定 (target, absFile) 返回 sidecar 计算 rel 时用的 sourceRoot。
+ *
+ * - 固定 collection 模式：直接返回 target.path（rel = 文件相对 watch root 的全路径）。
+ * - collectionFromSubdir 模式：吃掉物理第一级目录段——这段在 resolveCollectionForFile
+ *   里已经被消费成 collection 名，再镜像进 .cache/ 就是重复（rel 第一段 == collection）。
+ *   注意：用 path.relative 取到的是**物理**目录名，对 subdirAlias 也正确——
+ *   即便 alias 把 `荔枝AI圈` 映射成 `lizhi-ai`，要 strip 的也是物理段 `荔枝AI圈`。
+ * - subdir 模式但文件直接挂在 watch root 下（走 fallbackCollection）：没有可吃的子目录，
+ *   返回 target.path。
+ */
+export function effectiveSourceRoot(
+  target: ResolvedWatchTarget,
+  absFile: string,
+): string {
+  if (!target.collectionFromSubdir) return target.path;
+  const rel = path.relative(target.path, absFile);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return target.path;
+  const segs = rel.split(path.sep);
+  if (segs.length <= 1) return target.path;
+  return path.join(target.path, segs[0]);
+}
+
+/**
  * 沙箱化 + 自写循环防御后，把 WatchTargetConfig 解析成 ResolvedWatchTarget。
  * 失败抛 Error，调用方负责打印（启动期 fail-fast）。
  */
@@ -197,6 +220,7 @@ export function enqueueFromWatch(
   absFile: string,
   collection: string,
   kind: 'add' | 'change',
+  sourceRoot?: string,
 ): EnqueueResult {
   const force = kind === 'change';
   const id = deriveJobId(absFile, collection);
@@ -212,6 +236,7 @@ export function enqueueFromWatch(
         status: 'pending',
         attempts: 0,
         enqueuedAt: new Date().toISOString(),
+        ...(sourceRoot ? { sourceRoot } : {}),
       };
       s.jobs[id] = job;
       pushEvent(s, {
@@ -238,6 +263,8 @@ export function enqueueFromWatch(
       existing.completedAt = undefined;
       existing.finalEntryId = undefined;
       existing.nextEarliestRunAt = undefined;
+      // 如果有新的 sourceRoot（target 可能改了），更新；缺省保留旧值（initial-scan 来的 add 没传 sourceRoot 就不要把旧的清掉）
+      if (sourceRoot) existing.sourceRoot = sourceRoot;
       pushEvent(s, {
         ts: new Date().toISOString(),
         jobId: id,
@@ -292,6 +319,7 @@ export async function initialScanEnqueue(
         status: 'pending',
         attempts: 0,
         enqueuedAt: ts,
+        sourceRoot: effectiveSourceRoot(target, abs),
       };
       pushEvent(s, { ts, jobId: id, kind: 'enqueued', msg: 'watcher:initial-scan' });
       added += 1;
@@ -394,7 +422,7 @@ export async function runWatcher(opts: RunWatcherOptions): Promise<void> {
         log(`[watch] skip ${abs} (no collection — direct child of root with no fallback?)`);
         return;
       }
-      const result = enqueueFromWatch(store, abs, collection, kind);
+      const result = enqueueFromWatch(store, abs, collection, kind, effectiveSourceRoot(target, abs));
       if (result !== 'skipped') {
         log(`[watch] ${kind} ${abs} → ${collection} (${result})`);
       }
