@@ -46,6 +46,11 @@ export const SLASH_COMMANDS: SlashCommand[] = [
       'Inspect / manage the ingest queue. Subcommands: (none|dead) list dead jobs · status · retry <id> · retry-all · clear-dead',
     takesArg: true,
   },
+  {
+    name: '/soul',
+    description:
+      'Show the active SOUL.md (voice/style overrides). Edit the file + restart REPL to apply.',
+  },
   { name: '/exit', description: 'Exit the REPL.', aliases: ['/quit'] },
 ];
 

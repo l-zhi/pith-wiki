@@ -1,8 +1,10 @@
+import os from 'node:os';
 import path from 'node:path';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
-import { Agent, AgentError } from '../llm/agent.js';
+import { Agent, AgentError, defaultSystemPrompt } from '../llm/agent.js';
 import { createClient } from '../llm/client.js';
+import { composeSystemPrompt, loadSoul, type LoadedSoul } from '../llm/soul.js';
 import { buildContext } from '../tools/index.js';
 import {
   ensureOutputDir,
@@ -66,6 +68,14 @@ export function App({ config: initialConfig }: Props) {
   // OpenAI client 跟随 config；切换 provider 时自动重建。
   const client = useMemo(() => createClient(config), [config]);
 
+  // SOUL.md：启动时按 (config.soulFile > env > 默认双层) 解析一次。
+  // useState lazy init 保证整个 session 只读一次盘——切 provider 不需要重读
+  // （soul 跟 wiki/模型无关），改 SOUL.md 文件本身要重启 REPL 才生效（避免半中段
+  // 风格漂移）。
+  const [soul] = useState<LoadedSoul>(() =>
+    loadSoul({ soulFile: config.soulFile, workspaceRoot: config.workspaceRoot }),
+  );
+
   const [messages, setMessages] = useState<DisplayMessage[]>([
     {
       id: 'welcome',
@@ -76,7 +86,10 @@ export function App({ config: initialConfig }: Props) {
         `\nType "/" for command suggestions (Tab completes). Ctrl+C cancels in-flight; press twice to exit.` +
         (config.transcriptEnabled
           ? `\ntranscript on (use /transcript to see path)`
-          : '\ntranscript off'),
+          : '\ntranscript off') +
+        (soul.sources.length > 0
+          ? `\nsoul loaded from ${soul.sources.map((p) => shortenHome(p)).join(' + ')}`
+          : ''),
     },
   ]);
   const [inFlight, setInFlight] = useState(false);
@@ -304,8 +317,9 @@ export function App({ config: initialConfig }: Props) {
       converterRegistry: converters.registry,
       converterCache: converters.cache,
     });
-    return new Agent(client, config.model, ctx);
-  }, [config, client, requestApproval, library, converters]);
+    const systemPrompt = composeSystemPrompt(defaultSystemPrompt, soul);
+    return new Agent(client, config.model, ctx, { systemPrompt });
+  }, [config, client, requestApproval, library, converters, soul]);
 
   const append = (msg: Omit<DisplayMessage, 'id'>) =>
     setMessages((prev) => [...prev, { ...msg, id: nextId() }]);
@@ -437,6 +451,24 @@ export function App({ config: initialConfig }: Props) {
     } else if (cmd === '/queue' || cmd.startsWith('/queue ')) {
       const arg = cmd === '/queue' ? '' : cmd.slice('/queue '.length).trim();
       handleQueue(arg);
+    } else if (cmd === '/soul') {
+      if (soul.sources.length === 0) {
+        append({
+          role: 'system',
+          text:
+            'No SOUL.md loaded.\nDrop one at ~/.llm-wiki/SOUL.md (user-global)\n' +
+            'or ' + path.join(config.workspaceRoot, 'SOUL.md') + ' (project-local),\n' +
+            'or set LLM_WIKI_SOUL=<path>. Restart REPL to apply.',
+        });
+      } else {
+        append({
+          role: 'system',
+          text:
+            `soul sources:\n  ${soul.sources.map((p) => shortenHome(p)).join('\n  ')}\n\n` +
+            '─'.repeat(40) + '\n' +
+            soul.content,
+        });
+      }
     } else if (cmd === '/exit' || cmd === '/quit') {
       exit();
     } else {
@@ -675,4 +707,10 @@ const HISTORY_LIMIT = 20;
 function truncateJson(args: unknown): string {
   const json = JSON.stringify(args);
   return json.length > 80 ? `${json.slice(0, 80)}…` : json;
+}
+
+/** 显示路径时把 `<homedir>/...` 压缩成 `~/...`，让 dashboard 一行装得下。 */
+function shortenHome(p: string): string {
+  const home = os.homedir();
+  return p.startsWith(home + path.sep) ? '~' + p.slice(home.length) : p;
 }

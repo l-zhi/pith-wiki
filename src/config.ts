@@ -144,6 +144,14 @@ const ConfigSchema = z.object({
    * 默认 true：避免重复解析。CLI `--no-cache` / 库 `defineConfig({cacheConverted:false})` 可关。
    */
   cacheConverted: z.boolean(),
+  /**
+   * SOUL.md 路径——显式指定时只读这一份，不再查默认位置。
+   *
+   * 解析在 src/llm/soul.ts 内做：显式 > LLM_WIKI_SOUL env > 默认双层
+   *   (~/.llm-wiki/SOUL.md + <workspaceRoot>/SOUL.md)。
+   * 内容拼到 Agent 的 system prompt 末尾作为 voice/style 层。
+   */
+  soulFile: z.string().optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -178,6 +186,7 @@ export interface ConfigOverrides {
   transcriptEnabled?: boolean;
   digestCollection?: string;
   cacheConverted?: boolean;
+  soulFile?: string;
 }
 
 const DEFAULTS = {
@@ -350,6 +359,10 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
       overrides.digestCollection ?? file.digestCollection ?? DEFAULTS.digestCollection,
     cacheConverted:
       overrides.cacheConverted ?? file.cacheConverted ?? DEFAULTS.cacheConverted,
+    // SOUL.md：显式 CLI 覆盖 > env > file（指定 file 也算"explicit"，不再走默认双层）
+    // 实际读盘 + ~/展开在 src/llm/soul.ts 内，避免 config schema 持有读盘副作用
+    soulFile:
+      overrides.soulFile ?? process.env.LLM_WIKI_SOUL ?? file.soulFile ?? undefined,
     // multi-provider：providers 表来自 file（不接受 env，结构复杂），activeProvider
     // 走 CLI > env > file。Zod 校验之后再 overlay 到顶层 apiKey/baseURL/model。
     providers: overrides.providers ?? file.providers ?? {},
@@ -417,6 +430,8 @@ export interface DefineConfigInput {
   transcriptEnabled?: boolean;
   digestCollection?: string;
   cacheConverted?: boolean;
+  /** 显式 SOUL.md 路径；嵌入应用通常通过这里注入持久 persona。 */
+  soulFile?: string;
   /**
    * 宿主注入的转换器（默认 priority=100，自然覆盖内置）。
    *
@@ -457,6 +472,7 @@ export function defineConfig(input: DefineConfigInput): Config {
     transcriptEnabled: input.transcriptEnabled ?? DEFAULTS.transcriptEnabled,
     digestCollection: input.digestCollection ?? DEFAULTS.digestCollection,
     cacheConverted: input.cacheConverted ?? DEFAULTS.cacheConverted,
+    soulFile: input.soulFile,
     providers: input.providers ?? {},
     activeProvider: input.activeProvider,
   };
