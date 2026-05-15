@@ -41,6 +41,10 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description: 'List registered file → text converters (with extensions and priorities).',
   },
   {
+    name: '/dashboard',
+    description: 'Re-render the startup dashboard (collections, watchers, queue summary).',
+  },
+  {
     name: '/queue',
     description:
       'Inspect / manage the ingest queue. Subcommands: (none|dead) list dead jobs · status · retry <id> · retry-all · clear-dead',

@@ -448,6 +448,25 @@ export function App({ config: initialConfig }: Props) {
       handleProvider(arg);
     } else if (cmd === '/converters') {
       append({ role: 'system', text: formatConvertersTable(converters.registry) });
+    } else if (cmd === '/dashboard') {
+      // 复用启动 dashboard 的同款渲染：异步采集 + Ink 表格节点。
+      // worker / dashboard 状态都按"调用瞬间"快照，不订阅后续变化（StatusBar 已实时反映）。
+      const workerSnap = {
+        mode: queueWorkerStatus.mode,
+        externalPid: queueWorkerStatus.externalPid,
+        error: queueWorkerStatus.error,
+      };
+      collectDashboardData(config, converters.registry)
+        .then((data) => {
+          append({
+            role: 'system',
+            text: formatDashboard(data, workerSnap),
+            node: <Dashboard data={data} worker={workerSnap} />,
+          });
+        })
+        .catch((err: Error) => {
+          append({ role: 'error', text: `dashboard error: ${err.message}` });
+        });
     } else if (cmd === '/queue' || cmd.startsWith('/queue ')) {
       const arg = cmd === '/queue' ? '' : cmd.slice('/queue '.length).trim();
       handleQueue(arg);

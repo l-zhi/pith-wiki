@@ -18,7 +18,10 @@ describe('filterCommands', () => {
   });
 
   it('按前缀过滤', () => {
-    expect(filterCommands('/d').map((c) => c.name)).toEqual(['/digest']);
+    // /digest + /dashboard 都以 /d 开头
+    expect(filterCommands('/d').map((c) => c.name).sort()).toEqual(['/dashboard', '/digest']);
+    // /di 唯一命中 /digest
+    expect(filterCommands('/di').map((c) => c.name)).toEqual(['/digest']);
     // /clear + /converters 都以 /c 开头
     expect(filterCommands('/c').map((c) => c.name)).toEqual(['/clear', '/converters']);
     expect(filterCommands('/r').map((c) => c.name)).toEqual(['/reset']);
@@ -65,8 +68,16 @@ describe('completeOnTab', () => {
   });
 
   it('1 个匹配（takesArg）→ 补全后追加空格', () => {
+    // /di 唯一匹配 /digest（takesArg=true），Tab 应补全为 "/digest "
+    const matches = filterCommands('/di');
+    expect(completeOnTab('/di', matches)).toBe('/digest ');
+  });
+
+  it('多匹配且共享前缀 → 取 LCP，不追加空格（哪怕其中有 takesArg）', () => {
+    // /d 同时匹配 /digest 和 /dashboard，LCP 只是 /d 本身（/digest 以 /di 起头，
+    // /dashboard 以 /da 起头）→ 输入未变长，completeOnTab 应原样返回。
     const matches = filterCommands('/d');
-    expect(completeOnTab('/d', matches)).toBe('/digest ');
+    expect(completeOnTab('/d', matches)).toBe('/d');
   });
 
   it('多匹配 → 取最长公共前缀', () => {
