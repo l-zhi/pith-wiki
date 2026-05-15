@@ -48,7 +48,18 @@ interface Counts {
   dead: number;
 }
 
-export function StatusBar({
+function countsEqual(a: Counts | null, b: Counts | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.pending === b.pending &&
+    a.running === b.running &&
+    a.completed === b.completed &&
+    a.dead === b.dead
+  );
+}
+
+function StatusBarImpl({
   statePath,
   worker,
   watchedTargets,
@@ -72,10 +83,15 @@ export function StatusBar({
           sum.completed += v.completed;
           sum.dead += v.dead;
         }
-        setCounts(sum);
-        setReadErr(null);
+        // 等值判断：每 tick 都重建一个 sum 对象，setCounts 看引用变化会重渲；
+        // 实际数字没变时直接 noop，避免在 worker 空转的稳态下 2s 一次的无意义
+        // re-render。这种重渲在终端尺寸偏紧时会被 Ink 当作新行写进 scrollback，
+        // 表现为同一行 status bar 不停堆叠刷屏。
+        setCounts((prev) => (countsEqual(prev, sum) ? prev : sum));
+        setReadErr((prev) => (prev === null ? prev : null));
       } catch (err) {
-        setReadErr((err as Error).message);
+        const msg = (err as Error).message;
+        setReadErr((prev) => (prev === msg ? prev : msg));
       }
     }
     tick();
@@ -206,3 +222,26 @@ function renderMode(w: QueueWorkerStatus): { value: string; color: string | unde
       return { value: 'error', color: C.pink };
   }
 }
+
+/**
+ * 浅比较 props：父组件（App）每次任意 state 变化都会重渲整棵子树，但 StatusBar
+ * 自己的展示只关心 statePath / pollMs / worker / watched* 这几样。memo 后只要
+ * 这些值未变就跳过整次渲染 —— 大幅减少 Ink 重绘次数，配合内部 setCounts 的等值
+ * 判断把"刷屏 bug"双保险地堵掉。
+ *
+ * worker 是个对象，引用比较：父组件用 useState 维护它，没 setQueueWorkerStatus
+ * 就引用稳定；arePropsEqual 显式比对字段，避免父组件偶尔传新对象引用导致漏命中。
+ */
+function arePropsEqual(prev: Props, next: Props): boolean {
+  return (
+    prev.statePath === next.statePath &&
+    prev.pollMs === next.pollMs &&
+    prev.watchedTargets === next.watchedTargets &&
+    prev.totalWatchDirs === next.totalWatchDirs &&
+    prev.worker.mode === next.worker.mode &&
+    prev.worker.error === next.worker.error &&
+    prev.worker.externalPid === next.worker.externalPid
+  );
+}
+
+export const StatusBar = React.memo(StatusBarImpl, arePropsEqual);
