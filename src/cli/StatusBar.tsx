@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
-import Spinner from 'ink-spinner';
 import { loadQueueCounts } from './dashboardData.js';
 
 /**
@@ -143,10 +142,13 @@ function StatusBarImpl({
         <Sep />
 
         {isWorking ? (
+          // 故意不用 ink-spinner：它默认 80ms 转一次帧，触发 StatusBar 每秒
+          // ~12 次重渲，Ink 在重渲跟不上时会把每帧追加到 scrollback，
+          // 表现为 status bar 在终端里疯狂刷屏堆叠。
+          // 改用静态 ● 加 amber 上色：counts.running 数字本身随 worker 推进
+          // 而变化就是最准的"还在动"信号，不需要再叠一层 spinner 动画。
           <>
-            <Text color={C.amber}>
-              <Spinner type="dots" />{' '}
-            </Text>
+            <Text color={C.amber}>● </Text>
             <Text color={C.amber}>{counts.running} run</Text>
           </>
         ) : (
