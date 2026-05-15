@@ -34,6 +34,7 @@ export {
   pdfParseConverter,
   docxMammothConverter,
   htmlTurndownConverter,
+  emlMailparserConverter,
   type Converter,
   type ConvertInput,
   type ConvertOutput,

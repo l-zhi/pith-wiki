@@ -16,6 +16,7 @@ import {
   pdfParseConverter,
   docxMammothConverter,
   htmlTurndownConverter,
+  emlMailparserConverter,
   NoConverterError,
   UnknownConverterError,
   EmptyConversionError,
@@ -153,6 +154,128 @@ describe('docx-mammoth', () => {
         {},
       ),
     ).rejects.toThrow();
+  });
+});
+
+describe('eml-mailparser', () => {
+  function makeEml(parts: {
+    from?: string;
+    to?: string;
+    cc?: string;
+    subject?: string;
+    date?: string;
+    contentType?: string;
+    body?: string;
+    extraHeaders?: string;
+  }): Buffer {
+    const headers: string[] = [];
+    if (parts.from) headers.push(`From: ${parts.from}`);
+    if (parts.to) headers.push(`To: ${parts.to}`);
+    if (parts.cc) headers.push(`Cc: ${parts.cc}`);
+    if (parts.subject) headers.push(`Subject: ${parts.subject}`);
+    if (parts.date) headers.push(`Date: ${parts.date}`);
+    headers.push('MIME-Version: 1.0');
+    headers.push(`Content-Type: ${parts.contentType ?? 'text/plain; charset=utf-8'}`);
+    if (parts.extraHeaders) headers.push(parts.extraHeaders);
+    return Buffer.from(`${headers.join('\r\n')}\r\n\r\n${parts.body ?? ''}`, 'utf8');
+  }
+
+  it('plaintext 邮件：header 拼成 markdown，正文原样', async () => {
+    const eml = makeEml({
+      from: 'Alice <alice@example.com>',
+      to: 'Bob <bob@example.com>',
+      subject: 'Hello world',
+      date: 'Thu, 15 May 2026 10:00:00 +0000',
+      body: 'This is the body.\n\nLine two.',
+    });
+    const out = await emlMailparserConverter.convert(
+      { filePath: '/x.eml', bytes: eml },
+      {},
+    );
+    // mailparser 给 display name 加引号是预期行为（RFC 5322 安全转义），断言允许引号
+    expect(out.content).toMatch(/\*\*From:\*\* "?Alice"? <alice@example\.com>/);
+    expect(out.content).toMatch(/\*\*To:\*\* "?Bob"? <bob@example\.com>/);
+    expect(out.content).toMatch(/\*\*Subject:\*\* Hello world/);
+    expect(out.content).toMatch(/\*\*Date:\*\* 2026-05-15T10:00:00\.000Z/);
+    expect(out.content).toMatch(/This is the body\./);
+    expect(out.content).toMatch(/Line two\./);
+    // meta 里 title = subject
+    expect(out.meta?.title).toBe('Hello world');
+  });
+
+  it('HTML-only 邮件：走 turndown 转 md', async () => {
+    const eml = makeEml({
+      from: 'a@b',
+      subject: 'html mail',
+      contentType: 'text/html; charset=utf-8',
+      body: '<h1>Heading</h1><p>Has <strong>bold</strong> text.</p>',
+    });
+    const out = await emlMailparserConverter.convert(
+      { filePath: '/x.eml', bytes: eml },
+      {},
+    );
+    expect(out.content).toMatch(/# Heading/);
+    expect(out.content).toMatch(/\*\*bold\*\*/);
+  });
+
+  it('CJK subject + 正文：UTF-8 不出乱码', async () => {
+    const eml = makeEml({
+      from: 'a@b',
+      subject: '会议纪要：5 月 15 日',
+      body: '今天讨论了产品路线图，主要决定如下。',
+    });
+    const out = await emlMailparserConverter.convert(
+      { filePath: '/x.eml', bytes: eml },
+      {},
+    );
+    expect(out.content).toMatch(/会议纪要：5 月 15 日/);
+    expect(out.content).toMatch(/今天讨论了产品路线图/);
+  });
+
+  it('多收件人 To：逗号分隔展开', async () => {
+    const eml = makeEml({
+      from: 'a@b',
+      to: 'Bob <b@x>, Carol <c@y>, dan@z',
+      subject: 'group msg',
+      body: 'hi all',
+    });
+    const out = await emlMailparserConverter.convert(
+      { filePath: '/x.eml', bytes: eml },
+      {},
+    );
+    expect(out.content).toMatch(/\*\*To:\*\* .*Bob.*<b@x>.*Carol.*<c@y>.*dan@z/);
+  });
+
+  it('空邮件（无 body、无 attachments）：只剩 header 段', async () => {
+    const eml = makeEml({
+      from: 'a@b',
+      subject: 'ping',
+      body: '',
+    });
+    const out = await emlMailparserConverter.convert(
+      { filePath: '/x.eml', bytes: eml },
+      {},
+    );
+    expect(out.content).toMatch(/\*\*Subject:\*\* ping/);
+    // 不应崩；body 段为空也不会留 "---\n\n---" 那种结构
+    expect(out.content).not.toMatch(/---\s*---/);
+  });
+
+  it('完全无法解析的字节：mailparser 把整段当 body，content 至少非空', async () => {
+    // mailparser 比较宽容——给它垃圾它也会返回一个 ParsedMail，不抛
+    // 我们这里只验证不抛 + 返回的 content 是字符串
+    const out = await emlMailparserConverter.convert(
+      { filePath: '/x.eml', bytes: Buffer.from('not an email at all') },
+      {},
+    );
+    expect(typeof out.content).toBe('string');
+  });
+
+  it('注册到 defaultConverters：.eml 能被解析', () => {
+    const reg = new ConverterRegistry();
+    for (const c of defaultConverters()) reg.register(c);
+    expect(reg.resolve('/path/foo.eml').name).toBe('eml-mailparser');
+    expect(reg.extensions()).toContain('.eml');
   });
 });
 

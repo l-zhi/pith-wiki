@@ -45,6 +45,7 @@ import { textPassthrough } from './builtin/text.js';
 import { pdfParseConverter } from './builtin/pdf.js';
 import { docxMammothConverter } from './builtin/docx.js';
 import { htmlTurndownConverter } from './builtin/html.js';
+import { emlMailparserConverter } from './builtin/eml.js';
 
 /**
  * 内置转换器集合。
@@ -63,6 +64,7 @@ export function defaultConverters(): Converter[] {
     pdfParseConverter,
     docxMammothConverter,
     htmlTurndownConverter,
+    emlMailparserConverter,
   ];
 }
 
@@ -72,6 +74,7 @@ export {
   pdfParseConverter,
   docxMammothConverter,
   htmlTurndownConverter,
+  emlMailparserConverter,
 };
 
 import path from 'node:path';
