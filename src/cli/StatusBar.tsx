@@ -104,16 +104,16 @@ function StatusBarImpl({
 
   if (readErr) {
     return (
-      <Box>
+      <PinnedRows>
         <Text color={C.pink}>queue: read error — {readErr}</Text>
-      </Box>
+      </PinnedRows>
     );
   }
   if (!counts) {
     return (
-      <Box>
+      <PinnedRows>
         <Text dimColor>queue: loading…</Text>
-      </Box>
+      </PinnedRows>
     );
   }
 
@@ -124,7 +124,7 @@ function StatusBarImpl({
   const pct = totalKnown ? Math.round((100 * counts.completed) / totalKnown) : null;
 
   return (
-    <Box flexDirection="column">
+    <PinnedRows>
       <Box>
         <Text dimColor>queue </Text>
         <Text color={workerMode.color}>{workerMode.value}</Text>
@@ -195,6 +195,26 @@ function StatusBarImpl({
           <Text color={C.pink}>worker: {worker.error}</Text>
         </Box>
       ) : null}
+    </PinnedRows>
+  );
+}
+
+/**
+ * 锁 live 区高度 = 2 行的容器。
+ *
+ * 出现"长空白"的根因之一是 StatusBar 在不同状态下高度会变（worker error 多一行、
+ * loading / readErr 只占一行、正常态一行）。每次高度变化都让 Ink 在重画时多/少
+ * 擦一行；若同时 inFlight spinner / approval / slash 提示也在变，cursor 漂移就
+ * 会在 scrollback 里留下空行。
+ *
+ * 用 minHeight=2 把所有分支统一到 2 行物理高度：极少数情况下 worker error 文本
+ * 会被截断，但比"对话区上面留几屏空白"代价小得多。worker error 同时也会通过
+ * setQueueWorkerStatus 触发一条独立的 system message，全文进 scrollback，不丢信息。
+ */
+function PinnedRows({ children }: { children: React.ReactNode }) {
+  return (
+    <Box flexDirection="column" minHeight={2}>
+      {children}
     </Box>
   );
 }
