@@ -204,6 +204,81 @@ export interface HydrateInput {
 }
 
 /**
+ * Hydration 输出 JSON 解析失败的专用错误。
+ *
+ * 关键字段是 `rawResponse`：把 LLM 的原始输出原样捎出去，让调用方（processJob /
+ * runner）能落到 job log 里供排错——否则用户只会看到 "Unexpected token..." 这
+ * 种没法定位根因的消息。
+ *
+ * 触发场景（按经验排序）：
+ *   1. provider 不认 `response_format: json_object`（MiniMax / 部分本地模型），
+ *      模型把 JSON 包在 markdown 代码块里，或夹带前后散文
+ *   2. 模型偏弱在长 prompt 下输出半结构化文本
+ *   3. JSON 内含未转义字符 / 截断
+ *
+ * extractJson 已经尝试过 strip-fence + first-{-to-last-} 两种 rescue，到这一步
+ * 是真没救了。
+ */
+export class HydrationJsonError extends Error {
+  readonly rawResponse: string;
+  constructor(rawResponse: string, cause?: Error) {
+    const preview = rawResponse.length > 200
+      ? rawResponse.slice(0, 200) + '…'
+      : rawResponse;
+    super(
+      `Hydration output was not valid JSON (even after rescue attempts). ` +
+      `Preview: ${JSON.stringify(preview)}` +
+      (cause ? ` — last parser error: ${cause.message}` : ''),
+    );
+    this.name = 'HydrationJsonError';
+    this.rawResponse = rawResponse;
+  }
+}
+
+/**
+ * 从 LLM 输出里抢救 JSON。按"代价递增"顺序试三招：
+ *   1. 直接 JSON.parse —— 模型守规矩时 99% 这一步就过
+ *   2. 剥 markdown 代码块（```json ... ``` 或裸 ``` ... ```）
+ *   3. 取首个 `{` 到末个 `}` 的子串（兜底"前面散文 + 后面 JSON"这种格式）
+ *
+ * 三招都不行 → 抛 HydrationJsonError，带上原始 text 让调用方落日志。
+ *
+ * 设计取舍：不做更激进的修复（比如补引号、补逗号）。那会引入"看似 parse 成功
+ * 但语义错"的更危险情况；让用户从 raw 日志看到模型实际输出更有价值。
+ */
+export function extractJson(text: string): unknown {
+  let lastErr: Error | undefined;
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    lastErr = err as Error;
+  }
+
+  // 剥 markdown 代码块：```json\n{...}\n``` 或 ```\n{...}\n```
+  const fenceMatch = text.match(/```(?:json|JSON)?\s*\n?([\s\S]*?)\n?\s*```/);
+  if (fenceMatch?.[1]) {
+    try {
+      return JSON.parse(fenceMatch[1]);
+    } catch (err) {
+      lastErr = err as Error;
+    }
+  }
+
+  // 首 { 到末 }——容忍前后散文 / HTML 包裹
+  const first = text.indexOf('{');
+  const last = text.lastIndexOf('}');
+  if (first !== -1 && last > first) {
+    try {
+      return JSON.parse(text.slice(first, last + 1));
+    } catch (err) {
+      lastErr = err as Error;
+    }
+  }
+
+  throw new HydrationJsonError(text, lastErr);
+}
+
+/**
  * Plan pass 的输出 schema。容错：outline 至少 1 节，target_chars 兜底到 600。
  * 验证失败 → runPlan 返 null，写正文阶段无 plan 注入（等价于单次模式）。
  */
@@ -277,14 +352,32 @@ export class HydrationService {
     const text = completion.choices[0]?.message?.content;
     if (!text) throw new Error('Hydration LLM returned no content');
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch (err) {
-      throw new Error(`Hydration output was not valid JSON: ${(err as Error).message}`);
-    }
+    // extractJson 会先直 parse，失败时依次试剥 markdown fence、找首 {…末 }。
+    // 三招都不行抛 HydrationJsonError，带 rawResponse 字段给 processJob 落日志。
+    const parsed = extractJson(text);
 
-    const out = HydrationOutputSchema.parse(parsed);
+    // id 自愈：模型偶尔会照抄文件名输出形如 "华硕Zenbo72p_07" 的 id —— 下划线、
+    // 全角字符等会让 HydrationOutputSchema 在 id 正则上挂掉。但我们对文件源
+    // 本来就有 deriveIdFromFilename 兜底，没必要为此整条 hydration 失败。
+    // 策略：parse 失败时检查是不是"仅 id 字段非法"，是的话用派生 id 覆盖再 parse。
+    let out: z.infer<typeof HydrationOutputSchema>;
+    try {
+      out = HydrationOutputSchema.parse(parsed);
+    } catch (err) {
+      const onlyIdInvalid =
+        err instanceof z.ZodError &&
+        err.issues.length > 0 &&
+        err.issues.every((i) => i.path[0] === 'id');
+      const derivedFallback =
+        input.source.type === 'file' && input.filenameHint
+          ? deriveIdFromFilename(input.filenameHint)
+          : '';
+      if (onlyIdInvalid && derivedFallback && parsed && typeof parsed === 'object') {
+        out = HydrationOutputSchema.parse({ ...(parsed as object), id: derivedFallback });
+      } else {
+        throw err;
+      }
+    }
 
     // ── id 工程化覆盖 ─────────────────────────────────────────────────────
     // LLM 自选 id 在中文场景下经验性地不稳定（观察到把长文件名压成 2-3 字钩子词）。
@@ -351,7 +444,9 @@ export class HydrationService {
       });
       const text = completion.choices[0]?.message?.content;
       if (!text) return null;
-      const parsed: unknown = JSON.parse(text);
+      // plan 阶段也用 extractJson：MiniMax 之类不严格 JSON mode 的 provider 同样
+      // 倾向于把 plan 包在 markdown fence 里。失败仍静默回退到无 plan 模式。
+      const parsed: unknown = extractJson(text);
       return PlanSchema.parse(parsed);
     } catch {
       return null;
