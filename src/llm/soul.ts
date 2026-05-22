@@ -28,7 +28,7 @@ import path from 'node:path';
  */
 
 export interface SoulLookupOptions {
-  /** 显式 override：CLI `--soul <path>` 或 `defineConfig({soulFile})`。 */
+  /** 显式 override：CLI `--soul <path>` 或配置文件里的 `soulFile`。 */
   soulFile?: string;
   /** workspaceRoot：用于解析 `<workspaceRoot>/SOUL.md` 默认位置。 */
   workspaceRoot: string;

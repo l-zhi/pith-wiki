@@ -19,7 +19,7 @@ import {
   cacheKey,
   cacheKeyString,
   sha256,
-} from '../src/wiki/index.js';
+} from '../src/wiki/converters/index.js';
 
 let tmpDir: string;
 

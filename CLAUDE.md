@@ -5,23 +5,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-pnpm dev            # run the REPL via tsx (no build needed)
-pnpm build          # tsc → dist/, also chmods bin
-pnpm start          # run built CLI from dist/
-pnpm test           # vitest run (one-shot)
-pnpm test:watch
-pnpm typecheck      # tsc --noEmit
+npm run dev         # run the REPL via tsx (no build needed)
+npm run build       # tsc → dist/, also chmods bin
+npm start           # run built CLI from dist/
+npm test            # vitest run (one-shot)
+npm run test:watch
+npm run typecheck   # tsc --noEmit
 ```
 
-Run a single test: `pnpm vitest run tests/library.test.ts` (or `-t "<name>"` to filter by test name).
+Run a single test: `npx vitest run tests/library.test.ts` (or `-t "<name>"` to filter by test name).
 
-Subcommands during development: prefix with `pnpm dev` instead of `llm-wiki`, e.g. `pnpm dev list --collection tech`. Stdin piping works (`cat foo.md | pnpm dev ingest --collection tech`).
+Subcommands during development: prefix with `npm run dev --` instead of `llm-wiki`, e.g. `npm run dev -- list --collection tech`. Stdin piping works (`cat foo.md | npm run dev -- ingest --collection tech`).
 
 `DEEPSEEK_API_KEY` (in `.env`) is required for `ingest` and the REPL; `get` / `list` / `query` work without it.
 
 ## Architecture
 
-Single codepath, two entry shapes. `bin/llm-wiki.ts` uses commander to dispatch either to subcommands (`src/cli/subcommands.ts`) or the default Ink REPL (`src/cli/App.tsx`). Both paths instantiate the same three services in `src/wiki/` — there is no parallel implementation for the LLM-tool route.
+`bin/llm-wiki.ts` uses commander to dispatch either to subcommands (`src/cli/subcommands.ts`) or the default Ink REPL (`src/cli/App.tsx`). Both paths instantiate the same three services in `src/wiki/` — there is no parallel implementation for the LLM-tool route.
 
 **Three core services** (`src/wiki/`):
 
@@ -43,6 +43,6 @@ Single codepath, two entry shapes. `bin/llm-wiki.ts` uses commander to dispatch 
 
 - Entry IDs are kebab-case slugs enforced by `EntrySchema` regex (`^[a-z0-9][a-z0-9-]*$`). Hydration prompt repeats this rule but the schema is the actual gate.
 - TS config uses `NodeNext` modules, so all relative imports inside `src/` and `bin/` end in `.js` (not `.ts`). Tests in `tests/` are excluded from the build but vitest resolves them fine.
-- `pnpm build` writes only `bin/` and `src/` to `dist/`; `tests/` is excluded by `tsconfig.json`.
+- `npm run build` writes only `bin/` and `src/` to `dist/`; `tests/` is excluded by `tsconfig.json`.
 - `--url` on `ingest` only tags the entry's `source` — it does **not** fetch. Pipe content via `--file` or stdin.
 - The wiki layer is `Promise`-light: `LibraryService` is sync (filesystem only); only `HydrationService` and the agent are async.

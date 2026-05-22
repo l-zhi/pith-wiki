@@ -22,7 +22,7 @@ import {
   defaultConverters,
   FileSystemConverterCache,
   type Converter,
-} from '../src/wiki/index.js';
+} from '../src/wiki/converters/index.js';
 import { processJob } from '../src/wiki/queue/processJob.js';
 
 let tmpDir: string;

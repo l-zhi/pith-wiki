@@ -11,9 +11,6 @@ import dotenv from 'dotenv';
  * 设计意图：避免每个项目根都需要复制一份 .env；让 DEEPSEEK_API_KEY 这类
  * 跨工作区不变的密钥只放一份在 ~/.llm-wiki/.env。
  *
- * 模块加载时不再自动跑 dotenv —— 库消费者 `import { defineConfig } from 'llm-wiki/config'`
- * 不会污染宿主进程的 env。
- *
  * 幂等：第二次调用 no-op，避免覆盖测试或调用方在第一次 load 后手工改的 env。
  */
 let dotenvLoaded = false;
@@ -141,7 +138,7 @@ const ConfigSchema = z.object({
   digestCollection: z.string().min(1),
   /**
    * 是否把转换器输出（PDF→md 之类）写入 `<wikiRoot>/.cache/converters/`。
-   * 默认 true：避免重复解析。CLI `--no-cache` / 库 `defineConfig({cacheConverted:false})` 可关。
+   * 默认 true：避免重复解析。CLI `--no-cache` 可关。
    */
   cacheConverted: z.boolean(),
   /**
@@ -273,8 +270,6 @@ export function parseReadPathsFromEnv(raw: string | undefined): string[] | undef
 /**
  * CLI 入口的配置加载：读 `.env`、`~/.llm-wiki/config.json`、env 变量，
  * 再叠加显式 overrides，zod 校验后返回。
- *
- * 仅 CLI 用——库消费者请用 `defineConfig`，那是纯函数，无副作用。
  */
 export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
   loadDotenvOnce();
@@ -387,102 +382,6 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
  * v0.3 移除。语义没变。
  */
 export const loadConfig = loadConfigFromEnv;
-
-/**
- * 库（嵌入）模式的配置工厂。**纯函数**：不读 `.env`、不读 `~/.llm-wiki/config.json`、
- * 不读 `process.env`、不写文件系统。只把传入的 input 与默认值合并、做 zod 校验。
- *
- * 与 `loadConfigFromEnv` 的关键差别：
- *   - 必填：`apiKey`、`baseURL`、`model`、`wikiRoot`
- *   - `workspaceRoot` 缺省 = `wikiRoot`
- *   - 队列 / history / output 等路径默认派生自 `wikiRoot`，**不**落到 `~/.llm-wiki/`
- *     —— 嵌入应用的数据应集中在它自己规划的目录里
- *   - 不应用 dotenv，宿主进程的 env 不会被污染
- *
- * 示例：
- *   const config = defineConfig({
- *     apiKey: 'sk-...',
- *     baseURL: 'https://api.deepseek.com',
- *     model: 'deepseek-chat',
- *     wikiRoot: '/path/to/wiki',
- *   });
- */
-export interface DefineConfigInput {
-  apiKey: string;
-  baseURL: string;
-  model: string;
-  wikiRoot: string;
-  workspaceRoot?: string;
-  providers?: Record<string, ProviderConfig>;
-  activeProvider?: string;
-  readOnly?: boolean;
-  maxToolPayloadBytes?: number;
-  additionalReadPaths?: string[];
-  historyFile?: string;
-  queueStatePath?: string;
-  queueLogDir?: string;
-  queueConcurrency?: number;
-  queueMaxAttempts?: number;
-  queueAutoStart?: boolean;
-  watchDirs?: ConfigOverrides['watchDirs'];
-  watchAutoStart?: boolean;
-  outputDir?: string;
-  transcriptEnabled?: boolean;
-  digestCollection?: string;
-  cacheConverted?: boolean;
-  /** 显式 SOUL.md 路径；嵌入应用通常通过这里注入持久 persona。 */
-  soulFile?: string;
-  /**
-   * 宿主注入的转换器（默认 priority=100，自然覆盖内置）。
-   *
-   * 注意：这个字段不进 zod schema（Converter 是包含函数的接口），仅在
-   * `buildConverterRegistry()` 里读出来。Config 上不持有，避免把 zod 校验弄复杂。
-   */
-  converters?: import('./wiki/converters/types.js').Converter[];
-}
-
-export function defineConfig(input: DefineConfigInput): Config {
-  const wikiRoot = path.resolve(expandHome(input.wikiRoot));
-  const workspaceRoot = path.resolve(expandHome(input.workspaceRoot ?? wikiRoot));
-  const queueDir = path.join(wikiRoot, '.queue');
-  const merged = {
-    apiKey: input.apiKey,
-    baseURL: input.baseURL,
-    model: input.model,
-    workspaceRoot,
-    wikiRoot,
-    readOnly: input.readOnly ?? false,
-    maxToolPayloadBytes: input.maxToolPayloadBytes ?? DEFAULTS.maxToolPayloadBytes,
-    historyFile: path.resolve(expandHome(input.historyFile ?? path.join(wikiRoot, '.history'))),
-    additionalReadPaths: (input.additionalReadPaths ?? []).map((p) =>
-      path.resolve(expandHome(p)),
-    ),
-    queueStatePath: path.resolve(
-      expandHome(input.queueStatePath ?? path.join(queueDir, 'state.json')),
-    ),
-    queueLogDir: path.resolve(expandHome(input.queueLogDir ?? path.join(queueDir, 'logs'))),
-    queueConcurrency: input.queueConcurrency ?? DEFAULTS.queueConcurrency,
-    queueMaxAttempts: input.queueMaxAttempts ?? DEFAULTS.queueMaxAttempts,
-    queueAutoStart: input.queueAutoStart ?? DEFAULTS.queueAutoStart,
-    watchDirs: input.watchDirs ?? [],
-    watchAutoStart: input.watchAutoStart ?? DEFAULTS.watchAutoStart,
-    outputDir: path.resolve(
-      expandHome(input.outputDir ?? path.join(wikiRoot, 'output', 'transcripts')),
-    ),
-    transcriptEnabled: input.transcriptEnabled ?? DEFAULTS.transcriptEnabled,
-    digestCollection: input.digestCollection ?? DEFAULTS.digestCollection,
-    cacheConverted: input.cacheConverted ?? DEFAULTS.cacheConverted,
-    soulFile: input.soulFile,
-    providers: input.providers ?? {},
-    activeProvider: input.activeProvider,
-  };
-  const parsed = ConfigSchema.parse(merged);
-  parsed.watchDirs = parsed.watchDirs.map((wd) => ({
-    ...wd,
-    path: path.resolve(expandHome(wd.path)),
-  }));
-  return applyActiveProvider(parsed);
-}
 
 /**
  * 把 entry.apiKey / apiKeyEnv 折成最终的 apiKey 字符串。

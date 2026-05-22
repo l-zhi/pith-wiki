@@ -21,7 +21,7 @@ import {
   UnknownConverterError,
   EmptyConversionError,
   type Converter,
-} from '../src/wiki/index.js';
+} from '../src/wiki/converters/index.js';
 
 describe('ConverterRegistry', () => {
   it('按扩展名解析 → 命中内置', () => {
