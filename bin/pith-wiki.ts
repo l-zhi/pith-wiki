@@ -31,8 +31,8 @@ function collectPaths(value: string, previous: string[]): string[] {
 
 const program = new Command();
 program
-  .name('llm-wiki')
-  .description('Karpathy-style LLM wiki CLI (DeepSeek-powered).')
+  .name('pith-wiki')
+  .description('Karpathy-style LLM knowledge base CLI — hydrate docs into dense Markdown entries, retrieve by keyword + link traversal.')
   .version('0.1.0')
   .option('--read-only', 'Disable file writes.')
   .option('--model <name>', 'Override the LLM model.')

@@ -1,17 +1,17 @@
 {
-  "name": "llm-wiki",
+  "name": "pith-wiki",
   "version": "0.2.0-beta.0",
-  "description": "Karpathy-style LLM wiki CLI: chat with an LLM-driven Markdown knowledge base from the terminal.",
+  "description": "Karpathy-style LLM knowledge base CLI: hydrate raw docs into dense Markdown entries; retrieve by keyword + link traversal. No embeddings, no vector DB, files all the way down.",
   "type": "module",
   "license": "MIT",
   "author": "l-zhi",
-  "homepage": "https://github.com/l-zhi/llm-wiki#readme",
+  "homepage": "https://github.com/l-zhi/pith-wiki#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/l-zhi/llm-wiki.git"
+    "url": "git+https://github.com/l-zhi/pith-wiki.git"
   },
   "bugs": {
-    "url": "https://github.com/l-zhi/llm-wiki/issues"
+    "url": "https://github.com/l-zhi/pith-wiki/issues"
   },
   "keywords": [
     "cli",
@@ -21,10 +21,12 @@
     "knowledge-base",
     "markdown",
     "ink",
-    "claude-code"
+    "claude-code",
+    "pith",
+    "hydration"
   ],
   "bin": {
-    "llm-wiki": "./dist/bin/llm-wiki.js"
+    "pith-wiki": "./dist/bin/pith-wiki.js"
   },
   "files": [
     "dist",
@@ -35,9 +37,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "tsx bin/llm-wiki.ts",
-    "build": "tsc && chmod +x dist/bin/llm-wiki.js",
-    "start": "node dist/bin/llm-wiki.js",
+    "dev": "tsx bin/pith-wiki.ts",
+    "build": "tsc && chmod +x dist/bin/pith-wiki.js",
+    "start": "node dist/bin/pith-wiki.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
