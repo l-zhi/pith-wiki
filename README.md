@@ -24,6 +24,8 @@
 
 ## 安装
 
+> 5 分钟从 0 跑通第一条入库 → [docs/quickstart.md](docs/quickstart.md)。下面是简版。
+
 ```bash
 npm install
 mkdir -p ~/.llm-wiki && cp .env.example ~/.llm-wiki/.env && chmod 600 ~/.llm-wiki/.env
