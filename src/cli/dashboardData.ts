@@ -296,7 +296,7 @@ export interface WorkerSummary {
   error?: string;
 }
 
-/** 文本表格输出，给 CLI `llm-wiki status` + REPL transcript 兜底用。 */
+/** 文本表格输出，给 CLI `pith-wiki status` + REPL transcript 兜底用。 */
 export function formatDashboard(data: DashboardData, worker?: WorkerSummary): string {
   const lines: string[] = [];
 

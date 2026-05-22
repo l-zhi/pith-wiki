@@ -25,7 +25,7 @@ let tmpDir: string;
 let statePath: string;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-queue-state-'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-queue-state-'));
   statePath = path.join(tmpDir, 'state.json');
 });
 

@@ -21,8 +21,8 @@ let wiki: string;
 
 beforeEach(() => {
   // 工作区与 wiki 根分别用独立临时目录，模拟生产配置。
-  workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-ws-'));
-  wiki = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-wk-'));
+  workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-ws-'));
+  wiki = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-wk-'));
 });
 
 afterEach(() => {
@@ -94,7 +94,7 @@ describe('resolveSafePath — 沙箱拒绝', () => {
 
   it('指向沙箱外的 symlink 被 realpath 后拒绝', () => {
     // 模拟攻击者在 workspace 里建一个软链接指向 /tmp 之外的目录。
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-out-'));
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-out-'));
     const link = path.join(workspace, 'escape');
     fs.symlinkSync(outside, link);
 
@@ -146,8 +146,8 @@ describe('resolveSafePath — additionalReadPaths（扩展只读目录）', () =
   let outsideDir: string;
 
   beforeEach(() => {
-    extraDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-extra-'));
-    outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-out-'));
+    extraDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-extra-'));
+    outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-out-'));
     fs.writeFileSync(path.join(extraDir, 'note.md'), '额外目录里的笔记');
     fs.writeFileSync(path.join(outsideDir, 'secret.txt'), '不该被读到');
   });
@@ -187,7 +187,7 @@ describe('resolveSafePath — additionalReadPaths（扩展只读目录）', () =
   });
 
   it('多条额外目录，命中其中任意一条即可', () => {
-    const otherExtra = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-other-'));
+    const otherExtra = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-other-'));
     fs.writeFileSync(path.join(otherExtra, 'b.md'), 'x');
     try {
       const safe = resolveSafePath(path.join(otherExtra, 'b.md'), 'read', opts({

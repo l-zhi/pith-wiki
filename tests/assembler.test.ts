@@ -22,7 +22,7 @@ let lib: LibraryService;
 let assembler: ContextAssembler;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-asm-'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-asm-'));
   lib = new LibraryService(tmpDir);
   assembler = new ContextAssembler(lib);
 });

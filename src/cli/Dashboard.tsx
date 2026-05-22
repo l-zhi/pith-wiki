@@ -18,7 +18,7 @@ import { visualWidth } from './dashboardData.js';
  *   green=done/ready · cyan=watch/system · amber=running/exts · pink/red=dead · purple=brand
  *
  * 用 Ink Box 的 flex 引擎按列布局：CJK 自动算 2 列；数字列 justifyContent="flex-end"。
- * 纯文本兜底（formatDashboard）见 dashboardData.ts，给 CLI `llm-wiki status` 和 transcript 用。
+ * 纯文本兜底（formatDashboard）见 dashboardData.ts，给 CLI `pith-wiki status` 和 transcript 用。
  */
 
 /** 进程级队列 worker 状态，只在 REPL 模式下传入；CLI 子命令 `status` 不传 → 不渲染该 pill。 */

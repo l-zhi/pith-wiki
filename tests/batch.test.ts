@@ -25,7 +25,7 @@ let library: LibraryService;
 let logs: string[];
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-batch-'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-batch-'));
   library = new LibraryService(tmpDir);
   logs = [];
 });

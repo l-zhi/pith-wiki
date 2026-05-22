@@ -32,7 +32,7 @@ let store: QueueStore;
 let safety: SafetyOptions;
 
 beforeEach(() => {
-  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-watcher-'));
+  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-watcher-'));
   watchRoot = path.join(tmpRoot, 'src-notes');
   wikiRoot = path.join(tmpRoot, 'wiki');
   workspaceRoot = tmpRoot;

@@ -24,7 +24,7 @@ let origHomedir: typeof os.homedir;
 let origEnv: string | undefined;
 
 beforeEach(() => {
-  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-soul-'));
+  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-soul-'));
   fakeHome = path.join(tmpRoot, 'home');
   workspaceRoot = path.join(tmpRoot, 'project');
   fs.mkdirSync(fakeHome, { recursive: true });

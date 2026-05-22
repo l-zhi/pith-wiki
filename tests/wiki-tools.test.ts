@@ -25,7 +25,7 @@ let library: LibraryService;
 let ctx: ToolContext;
 
 beforeEach(() => {
-  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-tools-'));
+  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-tools-'));
   workspaceRoot = path.join(tmpRoot, 'workspace');
   wikiRoot = path.join(tmpRoot, 'wiki');
   fs.mkdirSync(workspaceRoot, { recursive: true });

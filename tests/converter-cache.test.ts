@@ -24,7 +24,7 @@ import {
 let tmpDir: string;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-conv-cache-'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-conv-cache-'));
 });
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });

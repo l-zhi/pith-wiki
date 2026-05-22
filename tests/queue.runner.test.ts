@@ -34,7 +34,7 @@ let library: LibraryService;
 let store: QueueStore;
 
 beforeEach(() => {
-  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-queue-runner-'));
+  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-queue-runner-'));
   wikiRoot = path.join(tmpRoot, 'wiki');
   logDir = path.join(tmpRoot, 'logs');
   statePath = path.join(tmpRoot, 'state.json');

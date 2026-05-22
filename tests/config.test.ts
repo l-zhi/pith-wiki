@@ -22,7 +22,7 @@ import {
 const ORIGINAL_PITH_WIKI_CONFIG_PATH = process.env.PITH_WIKI_CONFIG_PATH;
 const ISOLATED_CONFIG_PATH = path.join(
   os.tmpdir(),
-  `llm-wiki-config-test-nonexistent-${process.pid}-${Date.now()}.json`,
+  `pith-wiki-config-test-nonexistent-${process.pid}-${Date.now()}.json`,
 );
 
 beforeAll(() => {
@@ -396,7 +396,7 @@ describe('PITH_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-config-path-'));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-config-path-'));
   });
 
   afterEach(() => {

@@ -343,7 +343,7 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     queueAutoStart:
       overrides.queueAutoStart ?? file.queueAutoStart ?? DEFAULTS.queueAutoStart,
     // watchDirs：CLI overrides > 配置文件 > []。环境变量先不引入（结构太复杂，
-    // 不像单条路径列表那么自然）；CLI 也只在 `llm-wiki watch` 命令里用 flag 覆盖。
+    // 不像单条路径列表那么自然）；CLI 也只在 `pith-wiki watch` 命令里用 flag 覆盖。
     // 路径里的 ~/ 在 schema parse 之后再展开（loadConfig 末尾统一处理）。
     watchDirs: overrides.watchDirs ?? file.watchDirs ?? [],
     watchAutoStart:

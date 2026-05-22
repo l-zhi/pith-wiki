@@ -23,7 +23,7 @@ let tmpDir: string;
 
 beforeEach(() => {
   // 每个用例都用独立的临时目录，避免互相污染。
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-lib-'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-lib-'));
 });
 
 afterEach(() => {

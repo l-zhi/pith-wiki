@@ -69,7 +69,7 @@ let tmpDir: string;
 let lib: LibraryService;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-hyd-'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-hyd-'));
   lib = new LibraryService(tmpDir);
 });
 

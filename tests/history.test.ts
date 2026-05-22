@@ -20,7 +20,7 @@ let tmpFile: string;
 beforeEach(() => {
   // 每个用例用独立的临时文件路径，互不干扰。
   tmpFile = path.join(
-    fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-hist-')),
+    fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-hist-')),
     'history',
   );
 });

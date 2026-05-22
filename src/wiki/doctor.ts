@@ -1,5 +1,5 @@
 /**
- * `llm-wiki doctor` 的核心扫描逻辑。
+ * `pith-wiki doctor` 的核心扫描逻辑。
  *
  * 设计原则：
  *   - **report-only**。不修改任何 entry / 文件系统状态。`--fix` 是单独的后续 issue。

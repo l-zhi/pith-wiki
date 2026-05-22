@@ -29,7 +29,7 @@ let tmpDir: string;
 let library: LibraryService;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-pj-conv-'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-pj-conv-'));
   library = new LibraryService(tmpDir);
 });
 

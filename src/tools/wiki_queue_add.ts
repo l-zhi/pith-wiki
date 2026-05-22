@@ -23,14 +23,14 @@ const params = z.object({
     .string()
     .optional()
     .describe(
-      'Force a specific converter name (e.g. "pdf-parse"). Bypasses extension-based resolution. Run wiki_query with /converters or check llm-wiki converters for registered names.',
+      'Force a specific converter name (e.g. "pdf-parse"). Bypasses extension-based resolution. Run wiki_query with /converters or check pith-wiki converters for registered names.',
     ),
 });
 
 export const wikiQueueAddTool: ToolDef<typeof params> = {
   name: 'wiki_queue_add',
   description:
-    'Enqueue one or more files for the persistent ingest queue. Returns the per-file enqueue outcome (added/reset/skipped). The actual hydration happens later when `llm-wiki queue run` is started.',
+    'Enqueue one or more files for the persistent ingest queue. Returns the per-file enqueue outcome (added/reset/skipped). The actual hydration happens later when `pith-wiki queue run` is started.',
   parameters: params,
   handler: async (args, ctx) => {
     if (args.files.length === 0) {
@@ -136,7 +136,7 @@ export const wikiQueueAddTool: ToolDef<typeof params> = {
       outOfSandbox,
       enqueuedIds,
       hint:
-        'Run `llm-wiki queue run` (in a separate terminal or after this REPL session) to process the queue.',
+        'Run `pith-wiki queue run` (in a separate terminal or after this REPL session) to process the queue.',
     };
   },
 };

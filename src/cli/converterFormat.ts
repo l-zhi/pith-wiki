@@ -8,7 +8,7 @@ import type { ConverterRegistry } from '../wiki/converters/registry.js';
  *     pdf-parse        v1   p=0    .pdf
  *     markdown-passthrough v1 p=0  .md, .markdown
  *
- * REPL 的 /converters slash 和 CLI 的 `llm-wiki converters` 共用同一个格式化函数，
+ * REPL 的 /converters slash 和 CLI 的 `pith-wiki converters` 共用同一个格式化函数，
  * 避免两处实现长歪。
  */
 export function formatConvertersTable(registry: ConverterRegistry): string {

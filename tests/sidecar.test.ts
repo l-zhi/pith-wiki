@@ -19,7 +19,7 @@ import { cacheSidecarPath, writeCacheSidecar } from '../src/wiki/converters/side
 let tmp: string;
 
 beforeEach(() => {
-  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-sidecar-'));
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-sidecar-'));
 });
 afterEach(() => {
   fs.rmSync(tmp, { recursive: true, force: true });

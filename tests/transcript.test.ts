@@ -16,7 +16,7 @@ import { TranscriptLogger, deriveTranscriptPath } from '../src/cli/transcript.js
 let tmpDir: string;
 
 beforeEach(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-transcript-'));
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-transcript-'));
 });
 
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));

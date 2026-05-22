@@ -13,7 +13,7 @@ import { ALL_TOOLS, ToolContext, toolsForOpenAI, type AnyToolDef } from '../tool
  * CLI 在 App.tsx 里追加一段 "你正运行在终端里" 的小后缀；嵌入应用按需
  * 通过 `AgentOptions.systemPrompt` 完整替换。
  */
-export const defaultSystemPrompt = `You are llm-wiki, an assistant that helps the user manage a Karpathy-style Markdown knowledge base.
+export const defaultSystemPrompt = `You are pith-wiki, an assistant that helps the user manage a Karpathy-style Markdown knowledge base.
 
 Available tools:
   File (sandboxed): read_file, write_file, list_dir

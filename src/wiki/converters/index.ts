@@ -7,7 +7,7 @@
  *     defaultConverters,
  *     FileSystemConverterCache,
  *     type Converter,
- *   } from 'llm-wiki/wiki';
+ *   } from 'pith-wiki/wiki';
  *
  *   const registry = new ConverterRegistry();
  *   for (const c of defaultConverters()) registry.register(c);

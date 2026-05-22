@@ -74,7 +74,7 @@ function labelFor(role: DisplayMessage['role']): string {
     case 'user':
       return 'you';
     case 'assistant':
-      return 'llm-wiki';
+      return 'pith-wiki';
     case 'tool':
       return 'tool';
     case 'error':

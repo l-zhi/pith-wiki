@@ -81,7 +81,7 @@ export function App({ config: initialConfig }: Props) {
       id: 'welcome',
       role: 'system',
       text:
-        `llm-wiki ready. model=${config.model} root=${config.workspaceRoot}` +
+        `pith-wiki ready. model=${config.model} root=${config.workspaceRoot}` +
         (activeProviderName ? ` provider=${activeProviderName}` : '') +
         `\nType "/" for command suggestions (Tab completes). Ctrl+C cancels in-flight; press twice to exit.` +
         (config.transcriptEnabled

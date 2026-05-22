@@ -74,7 +74,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
 
       // 公共读沙箱选项：复用 read_file/list_dir 的同款校验，让 ingest 文件路径
       // 必须落在 workspaceRoot ∪ wikiRoot ∪ additionalReadPaths 之内。
-      // 防止有人写出 `llm-wiki ingest --file /etc/passwd` 这类调用。
+      // 防止有人写出 `pith-wiki ingest --file /etc/passwd` 这类调用。
       const readSandbox = {
         workspaceRoot: config.workspaceRoot,
         wikiRoot: config.wikiRoot,

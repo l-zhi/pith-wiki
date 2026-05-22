@@ -375,8 +375,8 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
  *
  * 与 `queue run` 解耦——watcher 进程只 enqueue，不取队列锁，可与 REPL / `queue run`
  * 并行。两种用法：
- *   1. `llm-wiki watch --dir <p> --collection <c>`：CLI flag 临时配一条
- *   2. `llm-wiki watch`：读 config.watchDirs（推荐多 target 场景）
+ *   1. `pith-wiki watch --dir <p> --collection <c>`：CLI flag 临时配一条
+ *   2. `pith-wiki watch`：读 config.watchDirs（推荐多 target 场景）
  */
 export function buildWatchCommand(program: Command, args: BuildArgs): void {
   program

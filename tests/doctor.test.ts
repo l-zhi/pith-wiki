@@ -1,5 +1,5 @@
 /**
- * `llm-wiki doctor` 单元测试。
+ * `pith-wiki doctor` 单元测试。
  *
  * 测试策略：每个 case 在 tmpdir 起一个微型 wikiRoot，写最小化的 entry 文件，
  * 跑 `runDoctor`，对返回的结构化 `DoctorReport` 做断言（不依赖人类格式化输出）。
@@ -21,7 +21,7 @@ import {
 
 /** 用 tmpdir 起一个 wiki 根，给 sandbox 用的 workspaceRoot 用同一根。 */
 function makeWiki(): { wikiRoot: string; workspaceRoot: string; cleanup: () => void } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-doctor-test-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-doctor-test-'));
   return {
     wikiRoot: dir,
     workspaceRoot: dir,
