@@ -1,6 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
-import type { HydrationService } from '../hydration.js';
+import { HydrationJsonError, type HydrationService } from '../hydration.js';
 import type { LibraryService } from '../library.js';
 import type { Entry } from '../types.js';
 import { ConverterRegistry } from '../converters/registry.js';
@@ -65,6 +65,12 @@ export interface FileResult {
    * 等"重试也无意义"的情况下设 true，调用方（runner）据此把 job 直接打 dead。
    */
   permanent?: boolean;
+  /**
+   * Hydration 返回非 JSON 时捎出来的 LLM 原始输出。仅在 HydrationJsonError 路径
+   * 上填，让 runner 把它落到 job log——这是用户排查"为什么 minimax/xxx 返回了
+   * 一坨 HTML / markdown"的唯一线索。可能很长（数千字符），调用方自行决定截断。
+   */
+  rawResponse?: string;
 }
 
 export interface ProcessJobCtx {
@@ -153,6 +159,18 @@ export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<F
   try {
     bytes = await fs.promises.readFile(absFile);
   } catch (err) {
+    // 文件不存在（被删 / 移走 / watcher 抓到时还在但 worker 起跑时已不在）：
+    // 没有可重试性，也没必要打 dead 占着用户的注意力——当成 skipped 静默掉。
+    // runner 的 skipped 分支会把 job 标 completed，不会进入 dead 桶。
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') {
+      return {
+        file: absFile,
+        status: 'skipped',
+        reason: 'source file no longer exists',
+        attempts: 0,
+      };
+    }
     return {
       file: absFile,
       status: 'failed',
@@ -268,6 +286,9 @@ export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<F
       const reason = status
         ? `hydration failed (status ${status}): ${(err as Error).message}`
         : `hydration failed: ${(err as Error).message}`;
+      // JSON 解析失败把 LLM 原始输出捎给 runner —— 它是唯一能排查"provider 不
+      // 认 json_object / 模型偷偷包 markdown fence"这类问题的物证。
+      const rawResponse = err instanceof HydrationJsonError ? err.rawResponse : undefined;
       return {
         file: absFile,
         status: 'failed',
@@ -275,6 +296,7 @@ export async function processJob(absFile: string, ctx: ProcessJobCtx): Promise<F
         attempts,
         convertedBy: converter.name,
         cacheHit,
+        ...(rawResponse !== undefined ? { rawResponse } : {}),
       };
     }
   }

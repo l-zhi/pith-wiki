@@ -265,6 +265,20 @@ export async function runQueue(opts: RunQueueOptions): Promise<RunQueueSummary> 
     // permanent 标记（EmptyConversion / UnknownConverter 等"重试也无意义"）→ 直接 dead，
     // 不消耗用户重试预算。
     logger.error(`failed reason=${result.reason}${result.permanent ? ' [permanent]' : ''}`);
+    // 把 LLM 原始输出落到 job log（仅 HydrationJsonError 路径会带）。多行 dump 用
+    // 边界标记包起来，方便 `grep -A` 截取或人眼定位。截断到 8KB 避免一坨 markdown
+    // 把日志吹爆——更长的原文也不会比 8KB 多提供多少诊断信号。
+    if (result.rawResponse !== undefined) {
+      const MAX = 8 * 1024;
+      const body = result.rawResponse.length > MAX
+        ? result.rawResponse.slice(0, MAX) + `\n…[truncated ${result.rawResponse.length - MAX} more chars]`
+        : result.rawResponse;
+      logger.error(
+        `---BEGIN raw LLM response (${result.rawResponse.length} chars)---\n` +
+          body +
+          `\n---END raw LLM response---`,
+      );
+    }
     const stateAfter = store.mutate((s) => {
       const cur = s.jobs[job.id];
       if (!cur) return;
