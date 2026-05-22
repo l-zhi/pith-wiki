@@ -199,8 +199,17 @@ const DEFAULTS = {
   cacheConverted: true,
 };
 
+/**
+ * 读取持久化 config 文件。
+ *
+ * 默认路径：`~/.llm-wiki/config.json`。
+ * 测试 / 嵌入场景：通过 `LLM_WIKI_CONFIG_PATH` env 改向；指向不存在的文件等价于"没有 config"。
+ * 这条 env 主要给 vitest 用：让 `npm test` 在维护者本机不被真实 config 污染。
+ *
+ * 找不到文件不抛错（这是常态：用户没建过 config）；JSON 解析失败必须抛（用户写错了要立刻知道）。
+ */
 function loadFileConfig(): Partial<Config> {
-  const file = path.join(os.homedir(), '.llm-wiki', 'config.json');
+  const file = process.env.LLM_WIKI_CONFIG_PATH ?? path.join(os.homedir(), '.llm-wiki', 'config.json');
   if (!fs.existsSync(file)) return {};
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -268,8 +277,8 @@ export function parseReadPathsFromEnv(raw: string | undefined): string[] | undef
 }
 
 /**
- * CLI 入口的配置加载：读 `.env`、`~/.llm-wiki/config.json`、env 变量，
- * 再叠加显式 overrides，zod 校验后返回。
+ * CLI 入口的配置加载：读 `.env`、`~/.llm-wiki/config.json`（或 `LLM_WIKI_CONFIG_PATH` 指向的文件）、
+ * env 变量，再叠加显式 overrides，zod 校验后返回。
  */
 export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
   loadDotenvOnce();

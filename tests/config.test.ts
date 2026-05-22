@@ -4,9 +4,10 @@
  * 重点测 parseReadPathsFromEnv —— 这是 .env / 环境变量里把"路径列表"喂给系统
  * 的入口。两种语法（JSON 数组与分隔符串）都要稳定，并且 ~ 展开要正确。
  */
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   applyActiveProvider,
   loadConfig,
@@ -14,6 +15,27 @@ import {
   resolveProviderEntry,
   type Config,
 } from '../src/config.js';
+
+// 文件级 isolation：让所有 loadConfig 调用看不到维护者本机的 ~/.llm-wiki/config.json。
+// 通过 LLM_WIKI_CONFIG_PATH 把 loadFileConfig 指向一个不存在的临时路径，等价于"没有配置文件"。
+// 不这样做的话，本仓库的开发者只要本地放过 config.json，这个 test 文件就会红。
+const ORIGINAL_LLM_WIKI_CONFIG_PATH = process.env.LLM_WIKI_CONFIG_PATH;
+const ISOLATED_CONFIG_PATH = path.join(
+  os.tmpdir(),
+  `llm-wiki-config-test-nonexistent-${process.pid}-${Date.now()}.json`,
+);
+
+beforeAll(() => {
+  process.env.LLM_WIKI_CONFIG_PATH = ISOLATED_CONFIG_PATH;
+});
+
+afterAll(() => {
+  if (ORIGINAL_LLM_WIKI_CONFIG_PATH === undefined) {
+    delete process.env.LLM_WIKI_CONFIG_PATH;
+  } else {
+    process.env.LLM_WIKI_CONFIG_PATH = ORIGINAL_LLM_WIKI_CONFIG_PATH;
+  }
+});
 
 describe('parseReadPathsFromEnv — JSON 数组语法', () => {
   it('标准 JSON 数组被解析成路径数组', () => {
@@ -357,5 +379,67 @@ describe('multi-provider — loadConfig 端到端', () => {
     expect(cfg.providers).toEqual({});
     // baseURL 走 DEFAULTS
     expect(cfg.baseURL).toBe('https://api.deepseek.com');
+  });
+});
+
+/**
+ * LLM_WIKI_CONFIG_PATH env 契约。
+ *
+ * 这条 env 让 `loadFileConfig` 改读指定路径而不是默认的 `~/.llm-wiki/config.json`。
+ * 目的：测试隔离（让 npm test 在维护者机器上不被本地真实 config 污染）+ 嵌入场景的
+ * 自定义配置文件路径。下面三个 case 把这条契约焊死，未来不会被无意改坏。
+ *
+ * 注：本文件顶部已经有 beforeAll 把 LLM_WIKI_CONFIG_PATH 指向不存在的路径；
+ * 下面三个 case 各自临时改写 env，afterEach 还原成那个不存在的"全文件 isolation 路径"。
+ */
+describe('LLM_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'llm-wiki-config-path-'));
+  });
+
+  afterEach(() => {
+    // 还原成文件级 isolation 设置的"不存在路径"。
+    process.env.LLM_WIKI_CONFIG_PATH = ISOLATED_CONFIG_PATH;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('指向有效 config.json → loadConfig 读得到它的字段', () => {
+    const cfgFile = path.join(tmpDir, 'config.json');
+    fs.writeFileSync(
+      cfgFile,
+      JSON.stringify({
+        providers: {
+          custom: { baseURL: 'https://custom.example.com/v1', model: 'custom-model' },
+        },
+        activeProvider: 'custom',
+      }),
+    );
+    process.env.LLM_WIKI_CONFIG_PATH = cfgFile;
+
+    const cfg = loadConfig({});
+    expect(cfg.activeProvider).toBe('custom');
+    expect(cfg.baseURL).toBe('https://custom.example.com/v1');
+    expect(cfg.model).toBe('custom-model');
+  });
+
+  it('指向不存在的文件 → 等价于"没有 config"（silent fallback 到默认 + overrides）', () => {
+    process.env.LLM_WIKI_CONFIG_PATH = path.join(tmpDir, 'does-not-exist.json');
+
+    const cfg = loadConfig({});
+    // 没有任何 provider 配置 → 顶层默认 baseURL
+    expect(cfg.activeProvider).toBeUndefined();
+    expect(cfg.providers).toEqual({});
+    expect(cfg.baseURL).toBe('https://api.deepseek.com');
+  });
+
+  it('指向格式错误的 JSON → 抛带文件路径的可读错误', () => {
+    const cfgFile = path.join(tmpDir, 'bad.json');
+    fs.writeFileSync(cfgFile, '{ not valid json');
+    process.env.LLM_WIKI_CONFIG_PATH = cfgFile;
+
+    expect(() => loadConfig({})).toThrow(/Failed to parse/);
+    expect(() => loadConfig({})).toThrow(cfgFile);
   });
 });
