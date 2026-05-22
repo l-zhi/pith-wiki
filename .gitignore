@@ -56,5 +56,6 @@ desktop.ini
 
 # --- Claude Code local artifacts ---
 .claude/
+.agents/
 skills-lock.json
 plans/
