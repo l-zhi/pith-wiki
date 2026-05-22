@@ -46,3 +46,20 @@ Subcommands during development: prefix with `npm run dev --` instead of `llm-wik
 - `npm run build` writes only `bin/` and `src/` to `dist/`; `tests/` is excluded by `tsconfig.json`.
 - `--url` on `ingest` only tags the entry's `source` — it does **not** fetch. Pipe content via `--file` or stdin.
 - The wiki layer is `Promise`-light: `LibraryService` is sync (filesystem only); only `HydrationService` and the agent are async.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs live as GitHub issues at `l-zhi/llm-wiki`. Use the `gh` CLI.
+See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default mattpocock/skills vocabulary (no custom mapping).
+See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo: one `CONTEXT.md` at root + `docs/adr/`.
+See `docs/agents/domain.md`.
