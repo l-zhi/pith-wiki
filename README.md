@@ -9,6 +9,10 @@
 
 交互式 REPL + 子命令（`llm-wiki`、`llm-wiki ingest` 等），见下方 [安装](#安装) 与 [使用](#使用)。
 
+**平台支持**：Linux 与 macOS 一等公民，CI 矩阵两个都跑（Node 20 / 22）。Windows
+理论可用但**不在 CI 覆盖范围**——`fs.rename` 原子性、chokidar fs-event、`path.delimiter`
+都跟 POSIX 不一样；社区 PR 欢迎，但首发不投入这部分工程量。详见 [ADR-0003](docs/adr/0003-windows-best-effort.md)。
+
 ## 安装
 
 ```bash

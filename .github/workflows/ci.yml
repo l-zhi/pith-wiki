@@ -8,9 +8,15 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # ubuntu + macos: 双平台覆盖。Windows 不进 matrix（fs-event 语义、`rename`、
+    # `path.delimiter` 三处都不一样；首发不投入 Windows 兼容工程量）。
+    # 详见 docs/adr/0003-windows-best-effort.md。
+    runs-on: ${{ matrix.os }}
     strategy:
+      # 一个平台失败不阻塞其它平台跑完，便于一次 push 看完整全貌。
+      fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest]
         node: ['20', '22']
     steps:
       - uses: actions/checkout@v4
