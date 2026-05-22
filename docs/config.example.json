@@ -1,0 +1,62 @@
+{
+  "providers": {
+    "deepseek": {
+      "baseURL": "https://api.deepseek.com",
+      "model": "deepseek-chat",
+      "apiKeyEnv": "DEEPSEEK_API_KEY"
+    },
+    "qwen": {
+      "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen-plus",
+      "apiKeyEnv": "DASHSCOPE_API_KEY"
+    },
+    "openai": {
+      "baseURL": "https://api.openai.com/v1",
+      "model": "gpt-4o-mini",
+      "apiKeyEnv": "OPENAI_API_KEY"
+    },
+    "ollama-local": {
+      "baseURL": "http://127.0.0.1:11434/v1",
+      "model": "qwen2.5:14b",
+      "apiKey": "ollama-no-key-needed"
+    }
+  },
+
+  "activeProvider": "deepseek",
+
+  "wikiRoot": "~/.llm-wiki/wiki-data",
+  "workspaceRoot": "~/code/my-project",
+
+  "additionalReadPaths": [
+    "~/notes",
+    "~/research/papers"
+  ],
+
+  "watchDirs": [
+    {
+      "path": "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/MyVault",
+      "collectionFromSubdir": true,
+      "fallbackCollection": "inbox",
+      "subdirAlias": {
+        "工作": "work",
+        "读书": "reading"
+      },
+      "initialScan": false
+    }
+  ],
+  "watchAutoStart": true,
+
+  "queueConcurrency": 2,
+  "queueMaxAttempts": 3,
+  "queueAutoStart": true,
+
+  "outputDir": "~/.llm-wiki/wiki-data/output/transcripts",
+  "transcriptEnabled": true,
+  "digestCollection": "output",
+
+  "cacheConverted": true,
+
+  "soulFile": "~/.llm-wiki/SOUL.md",
+
+  "maxToolPayloadBytes": 100000
+}

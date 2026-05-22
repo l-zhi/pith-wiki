@@ -487,6 +487,10 @@ compressionRatio: 0.12
 
 优先级：命令行 flag > 环境变量 > `~/.llm-wiki/config.json` > 默认值。
 
+需要一份能直接 copy 的完整 `config.json` 示例？看 [docs/config.example.json](docs/config.example.json) ——
+多 provider + watchDirs + queue + 自定义路径全字段都有，对照下面的字段表挑你
+要的部分粘到 `~/.llm-wiki/config.json` 就行。
+
 | 字段 | 环境变量 | 默认 |
 | --- | --- | --- |
 | `apiKey` | `DEEPSEEK_API_KEY` | _必填_（仅 ingest 与 REPL 需要；多 provider 模式下被 active entry 覆盖） |
