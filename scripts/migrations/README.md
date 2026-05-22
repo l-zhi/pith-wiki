@@ -9,21 +9,19 @@ anyone resurrecting a very old `wiki-data/` directory.
 
 ## Inventory
 
-| Script | Commit | What it did |
-|---|---|---|
-| `migrate-entries-to-subpath.mjs` | f013ef4 | Mirrored flat `<wikiRoot>/<collection>/<id>.md` layout into the new `subpath`-aware tree, so watcher's `collectionFromSubdir` mode could preserve source directory structure. |
-| `migrate-sidecar-colocate.mjs` | a707a34 | Relocated converter sidecar files (PDF/DOCX → markdown caches) from a global `<wikiRoot>/.cache/` to per-entry `.cache/` co-located next to the entry. |
-| `migrate-sidecar-dedup.mjs` | dd29eb3 | Fixed a transient bug where a sidecar was double-written under two paths after the relocation above; deduped by deleting the old copy. |
-
-## When to ignore
-
-- You started using pith-wiki at 0.3.0 or later.
-- Your `wiki-data/` was created by the current `LibraryService.put` / converter pipeline.
+| Script | What it does |
+|---|---|
+| `migrate-from-llm-wiki.mjs` | **v0.3.0 rename**. Moves `~/.llm-wiki/` → `~/.pith-wiki/` and rewrites `LLM_WIKI_*` env-var names inside `.env` to `PITH_WIKI_*`. Dry-run by default; `--apply` to commit. Run once after upgrading from `llm-wiki` to `pith-wiki`. |
+| `migrate-entries-to-subpath.mjs` | Mirrored flat `<wikiRoot>/<collection>/<id>.md` layout into the new `subpath`-aware tree, so watcher's `collectionFromSubdir` mode could preserve source directory structure. _0.2.x internal._ |
+| `migrate-sidecar-colocate.mjs` | Relocated converter sidecar files (PDF/DOCX → markdown caches) from a global `<wikiRoot>/.cache/` to per-entry `.cache/` co-located next to the entry. _0.2.x internal._ |
+| `migrate-sidecar-dedup.mjs` | Fixed a transient bug where a sidecar was double-written under two paths after the relocation above; deduped by deleting the old copy. _0.2.x internal._ |
 
 ## When to run
 
-Only if you have a backup of a `wiki-data/` from a pre-0.3.0 install and want to
-bring it forward. Read each script's source comment block first — they were
-written for specific moments in time and may need tweaks against your actual layout.
+| Situation | Script |
+|---|---|
+| You used to run `llm-wiki` and now installed `pith-wiki` | `migrate-from-llm-wiki.mjs` (one time) |
+| You're carrying a `wiki-data/` from before 0.3.0 with old sidecar layouts | The three `migrate-*` scripts above (read their source first; tweak for your layout) |
+| Fresh install of pith-wiki ≥ 0.3.0 | None — ignore this folder |
 
-Always back up `wiki-data/` before running any migration.
+**Always back up `~/.pith-wiki/` (or `wiki-data/`) before running any migration.** All scripts here are idempotent enough to not lose data, but a backup is cheap insurance.

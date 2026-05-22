@@ -37,6 +37,15 @@ npm run build
 若 workspace 根目录里也存在 `.env`，会被先加载作为 fallback，但
 home 里的同名变量优先级更高（`override: true`）。
 
+> **从老版 `llm-wiki` 升级？** 项目在 v0.3.0 改名为 `pith-wiki`。如果你本机有
+> `~/.llm-wiki/` 旧数据，跑一次迁移脚本：
+> ```bash
+> node scripts/migrations/migrate-from-llm-wiki.mjs          # 预览
+> node scripts/migrations/migrate-from-llm-wiki.mjs --apply  # 真改
+> ```
+> 它会把 `~/.llm-wiki/` 整体改名到 `~/.pith-wiki/`，并把 `.env` 里
+> `LLM_WIKI_*` env 变量名改成 `PITH_WIKI_*`（带备份）。
+
 ## 使用
 
 交互式 REPL（基于 Ink 的富终端 UI）：
