@@ -331,7 +331,7 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
       const store = new QueueStore(config.queueStatePath);
 
       let reset = 0;
-      let notFound: string[] = [];
+      const notFound: string[] = [];
       store.mutate((s) => {
         const targets = new Set<string>(ids);
         if (opts.allDead) {

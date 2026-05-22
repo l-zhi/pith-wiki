@@ -1,0 +1,13 @@
+dist/
+node_modules/
+wiki-data/
+output/
+.cache/
+coverage/
+.vitest/
+
+# Markdown 文档手写格式（表格 / 中英混排）prettier 容易把宽度搞糟
+*.md
+
+# Lock file — npm 自己维护
+package-lock.json

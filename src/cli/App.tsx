@@ -163,7 +163,8 @@ export function App({ config: initialConfig }: Props) {
     return () => {
       alive = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // 故意省略 dep: hydrator / library / config 的其它派生都不参与 watcher 启停
+    // （等以后启用 react-hooks lint 再加 `eslint-disable-next-line react-hooks/exhaustive-deps`）
   }, [config.wikiRoot, config.watchDirs, converters]);
 
   useEffect(() => {

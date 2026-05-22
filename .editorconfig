@@ -1,0 +1,20 @@
+# https://editorconfig.org/
+# 让任何编辑器（VS Code / IntelliJ / vim）自动用项目期望的缩进 / 换行 / 编码。
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Markdown：保留尾随空格（双空格是硬换行的常见语义）
+[*.md]
+trim_trailing_whitespace = false
+
+# Makefile（虽然项目里没用，但兜底）：必须 tab
+[Makefile]
+indent_style = tab

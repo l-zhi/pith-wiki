@@ -124,8 +124,9 @@ auto-closes the issue when the commit lands on `main`.
 - TypeScript with `NodeNext` modules — relative imports inside `src/` end in
   `.js` (not `.ts`). Tests import from `../src/foo.js`.
 - Prettier handles formatting; ESLint handles common pitfalls. Run
-  `npm run lint` if available; if not yet wired, just match surrounding
-  style.
+  `npm run lint` (0 errors required) and `npm run format` (rewrites files
+  in place) before pushing. Existing codebase has ~150 prettier warnings
+  intentionally left as-is for now; new code should not add more.
 - Function and variable comments — code is allowed to have personality.
   Long-form explanations of nontrivial decisions are encouraged in JSDoc
   above the symbol. Look at `src/wiki/hydration.ts` for the tone.
