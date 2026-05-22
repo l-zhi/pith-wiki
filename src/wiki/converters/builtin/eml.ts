@@ -70,13 +70,52 @@ function formatAddresses(addr: AddressObject | AddressObject[] | undefined): str
   return parts.join(', ');
 }
 
+/**
+ * 邮件正文 HTML 转 markdown 之前先做一遍噪声清洗。
+ *
+ * 为什么必须做：Outlook / Foxmail 这类客户端发的邮件 HTML 体积巨大但信号极低。
+ * 一封 200 字的"放假通知"经常带 1.6MB 的 `<style>` 块（@font-face / p.MsoNormal /
+ * mso-* 全家桶）和嵌入 base64 的 inline 图。turndown 不识别这些非文本元素，
+ * 会原样保留进 markdown——最后喂给 LLM 触发 context window 爆掉。
+ *
+ * 清洗清单（按收益排）：
+ *   1. `<style>` / `<script>` 整块剥掉 —— 邮件正文里的 mso CSS 是体积大头
+ *   2. `<!-- ... -->` 注释 —— Outlook 常把样式包在注释里防老客户端崩
+ *   3. `<head>...</head>` 整块剥 —— meta / link / 注释样式集中地
+ *   4. data:image base64 URL —— 一张内嵌图能顶几百 KB，且 LLM 看不懂二进制
+ *   5. `<o:p>` `<v:*>` 这类 Office 专有命名空间标签
+ *
+ * 不做（保守）：
+ *   - style="" 属性内联值：去掉无害但回归风险高（个别邮件靠 style 表达加粗等
+ *     语义），且大头不在这里——剥完 <style> 之后剩下的体积通常已经能塞下了
+ *   - <img src="cid:..."> inline 图引用：保留无害，turndown 会渲成 ![](cid:xxx)
+ *     LLM 能识别为图片占位，比硬删更有意义
+ */
+function preprocessHtml(html: string): string {
+  return (
+    html
+      // 1+2+3：注释、style、script、head（注意 [\s\S] 跨行；DOTALL 等价）
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<head\b[^>]*>[\s\S]*?<\/head>/gi, '')
+      // 4：data:image/...;base64,... 长 URL（出现在 src= 或 background= 里）
+      //    用 [base64 image stripped] 替换，保留语义占位
+      .replace(/data:image\/[a-z+]+;base64,[A-Za-z0-9+/=\s]+/gi, '[base64 image stripped]')
+      // 5：Office 专有命名空间标签（<o:p>、<v:shape>、<w:WordDocument> 等）
+      //    匹配 `<前缀:标签 ...>` 和闭合 `</前缀:标签>`
+      .replace(/<\/?[a-z]+:[a-z][a-z0-9-]*\b[^>]*>/gi, '')
+  );
+}
+
 function htmlToMarkdown(html: string): string {
+  const cleaned = preprocessHtml(html);
   const td = new TurndownService({
     headingStyle: 'atx',
     bulletListMarker: '*',
     codeBlockStyle: 'fenced',
   });
-  return td.turndown(html);
+  return td.turndown(cleaned);
 }
 
 function formatBytes(n: number | undefined): string {
