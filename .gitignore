@@ -40,9 +40,9 @@ desktop.ini
 *.seed
 .cache/
 
-# --- llm-wiki local data ---
-# Wiki 默认存放在 ~/.llm-wiki/wiki-data（不在 repo 内，自然被忽略）。
-# 如果用户用 LLM_WIKI_ROOT 或配置把 wikiRoot 指回项目内的 ./wiki-data，
+# --- pith-wiki local data ---
+# Wiki 默认存放在 ~/.pith-wiki/wiki-data（不在 repo 内，自然被忽略）。
+# 如果用户用 PITH_WIKI_ROOT 或配置把 wikiRoot 指回项目内的 ./wiki-data，
 # 这一条保证那份本地数据不会被误提交。
 /wiki-data/
 
@@ -51,7 +51,8 @@ desktop.ini
 # 设回项目 cwd 的用户兜底。
 /output/
 
-# Per-user history & local config
+# Per-user history & local config（兼容老 .llm-wiki/ 名字以防有人本机还没跑迁移脚本）
+.pith-wiki/
 .llm-wiki/
 
 # --- Claude Code local artifacts ---

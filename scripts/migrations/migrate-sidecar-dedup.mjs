@@ -36,7 +36,7 @@ const apply = args.includes('--apply');
 const wikiRootArg = args.find((a) => a.startsWith('--wiki-root='));
 const wikiRoot = wikiRootArg
   ? wikiRootArg.slice('--wiki-root='.length)
-  : path.join(process.env.HOME, '.llm-wiki', 'wiki-data');
+  : path.join(process.env.HOME, '.pith-wiki', 'wiki-data');
 
 if (!fs.existsSync(wikiRoot)) {
   console.error(`wikiRoot does not exist: ${wikiRoot}`);

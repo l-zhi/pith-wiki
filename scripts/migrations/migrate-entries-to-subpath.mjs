@@ -10,7 +10,7 @@
  *   新:   <wikiRoot>/人生大事/希区柯克/foo-id.md   (mirrored)
  *
  * 怎么推导 subpath：
- *   - 默认从 ~/.llm-wiki/config.json 读 watchDirs[].path
+ *   - 默认从 ~/.pith-wiki/config.json 读 watchDirs[].path
  *   - 对每个 entry：尝试每个 watch root；若 source.value 落在某个 watch root 下，
  *     用 dirname(source.value) 相对 <watch>/<collection> 算 subpath
  *   - 多个 watch root 命中：取最长前缀（最具体的）
@@ -32,10 +32,10 @@ const args = process.argv.slice(2);
 const apply = args.includes('--apply');
 const wikiRoot =
   args.find((a) => a.startsWith('--wiki-root='))?.slice('--wiki-root='.length) ??
-  path.join(os.homedir(), '.llm-wiki', 'wiki-data');
+  path.join(os.homedir(), '.pith-wiki', 'wiki-data');
 const configPath =
   args.find((a) => a.startsWith('--config='))?.slice('--config='.length) ??
-  path.join(os.homedir(), '.llm-wiki', 'config.json');
+  path.join(os.homedir(), '.pith-wiki', 'config.json');
 
 if (!fs.existsSync(wikiRoot)) {
   console.error(`wikiRoot does not exist: ${wikiRoot}`);
