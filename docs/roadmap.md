@@ -1,147 +1,109 @@
 # Roadmap
 
-> 配套文档：[PRD](./PRD.md) · [架构](./architecture.md) · [API 设计](./api.md)
+llm-wiki 是 solo dev 维护的开源工具，**没有承诺过的时间表**。
 
-## 版本节奏
+按 [issue](https://github.com/l-zhi/llm-wiki/issues) 上的 reaction count 与
+讨论质量决定优先级。本文件分三栏：**Likely next**（短期内可能动手）、
+**Maybe someday**（中长期，等真实信号）、**明确不做**（避免 scope creep）。
 
-| 版本 | 主题 | 预估时间 | 状态 |
-| --- | --- | --- | --- |
-| v0.1 | 脚手架：核心三服务 + Ink REPL | — | ✅ 已交付 |
-| v0.2 | 易用性补全：诊断、diff 预览、自动建链 | ~2 周 | 🟡 规划中 |
-| v0.3 | 多输入源 + 批量处理 | ~3 周 | ⚪ |
-| v1.0 | HTTP REST + 多模型 + BM25 | ~2 个月 | ⚪ |
-| v2.0 | 可选 embedding 混合检索 + Web UI | ~6 个月 | ⚪ |
+> 决策机制详见 [ADR-0002](adr/0002-issue-driven-roadmap.md)。
 
 ---
 
-## v0.1 ✅（已交付）
+## Likely next
 
-- Ink 富终端 REPL（Ctrl+C 取消、token 计量、历史持久化）
-- DeepSeek 工具调用循环（OpenAI 风格 function calling，串行执行）
-- 6 个工具：`read_file`、`write_file`、`list_dir`、`wiki_ingest`、`wiki_get`、`wiki_query`
-- 4 个子命令：`ingest`、`get`、`list`、`query`
-- 三个核心服务：HydrationService、LibraryService、ContextAssembler
-- 路径沙箱 + 写入审批
-- 16 个单元测试（library / assembler / safety）
-- zod 校验的分层配置
+短期内可能进入下一个 minor 版本的方向。如果你想推动其中某条，去对应 issue
++1，或开 issue 描述你的具体用例 —— 真实需求会被优先做。
 
----
+| 主题 | 一句话 | tracking issue |
+|---|---|---|
+| URL 抓取 | `--url` 真正发 HTTP 拉网页，配 readability 提取正文（目前仅做 source 字段标记） | _未开 — 想推请开 issue_ |
+| `llm-wiki update <id>` | 用新原文重新脱水覆盖旧 entry，保留 backlinks | _未开_ |
+| `llm-wiki rename <old> <new>` | 改 id 时同步修改所有 `links:` 字段里的引用 | _未开_ |
+| `[[concept-id]]` 自动建链补全 | 扫描正文里的 `[[xxx]]` 标记，与 `links` 字段对账并自动补齐（目前由 `doctor` 仅报错不修） | _未开_ |
+| `/save <name>` / `/load <name>` | REPL 对话存档与恢复 | _未开_ |
+| `doctor --fix` | 当前的 `doctor` 只读；增加自动修复模式（per-problem 审批，沿用 `write_file` 的 `[y/N/a]`） | _未开_ |
 
-## v0.2 🟡（短期）
-
-**主题**：把脚手架打磨到日常顺手能用。
-
-### 必做
-
-- [ ] **`llm-wiki doctor`**：扫描 `wiki-data/`，报告 frontmatter 格式错误、孤儿链接（指向不存在的 id）、重复 id。
-- [ ] **写入前 diff 预览**：`write_file` 审批弹窗显示与现有文件的差异（chalk 着色），而不是只显示新内容。
-- [ ] **`[[concept-id]]` 自动建链补全**：扫描 `content` 中的 `[[xxx]]` 标记，与 `links` 字段对账并修复。
-- [ ] **`/save <name>`、`/load <name>`**：把 REPL 对话保存/恢复到 `~/.llm-wiki/sessions/`。
-
-### 可选
-
-- [ ] **Markdown 渲染**：REPL 内对模型返回的 Markdown 做基本渲染（粗体、列表、代码块）。
-- [ ] **`--dry-run`**：`ingest` 子命令仅打印生成的 entry，不落盘。
-
-### 用户故事
-
-> 作为一个用了一周积累 50+ 词条的用户，我想运行 `llm-wiki doctor` 一眼看出哪些条目有问题，并在 REPL 里安全地批量改写。
+> 这些是维护者觉得"最可能下一步动手"的方向，但**没有承诺时间**。等
+> 真有 issue 讨论 / +1 / 用户 PR 出现，再确定哪个先做。
 
 ---
 
-## v0.3 ⚪（中近期）
+## Maybe someday
 
-**主题**：批量处理 + 输入源扩展。
-
-- [ ] **`llm-wiki ingest --batch <pattern>`**：对 glob 匹配的所有文件并发脱水入库（带速率限制）。
-- [ ] **URL 抓取**：`--url` 真正发起 HTTP 请求并 readability 提取正文。
-- [ ] **PDF 输入**：`--file foo.pdf` 自动文本提取。
-- [ ] **`llm-wiki update <id>`**：用新原文重新脱水覆盖旧 entry，保留 backlinks。
-- [ ] **`llm-wiki rename <old> <new>`**：改 id 时同步修改所有引用了它的 entry 的 `links` 字段。
-
----
-
-## v1.0 ⚪（中期）
-
-**主题**：从单机 CLI 走向"可被外部调用的服务"。
+长期方向。一般不主动做，除非用户用真实场景驱动 —— 解释下为什么这么保守：
 
 ### HTTP REST 接口
 
-- [ ] `POST /wiki/ingest`、`GET /wiki/entries/:id`、`POST /wiki/query-context`、`GET /wiki/list`。
-- [ ] OpenAPI 3.1 schema 自动生成。
-- [ ] 简单的 API key 鉴权。
-- [ ] 框架候选：Fastify（更轻）vs Hono（更现代），决策见 [ADR](#待写-adr)。
+让 llm-wiki 能被远程服务调用（VS Code 插件 / Web 前端 / 其它语言客户端）。
+设计上不难（Fastify / Hono 套一层），但**会改变项目定位**：从"个人 CLI"
+变成"可部署服务"，工程量翻倍（鉴权、TLS、并发、日志、监控）。
 
-### 多模型支持
+**触发条件**：有人明确说"我要在 X 用例里远程调用 llm-wiki"且讨论清楚需求。
 
-- [ ] 模型 provider 抽象层：DeepSeek / OpenAI / Anthropic / Ollama。
-- [ ] 配置层增加 `provider` 字段：`{ provider: 'anthropic', model: 'claude-3-5-sonnet' }`。
-- [ ] Hydration 提示词按模型微调（部分模型不支持 JSON mode，用结构化输出 fallback）。
+### BM25 评分模式
 
-### 检索增强
+当前检索是 `2*title + 2*tags + summary + 0.5*content` 的关键词加权 + BFS 链接
+展开。BM25 在大库（5000+ entries）下精度更好。
 
-- [ ] **持久化 link index**：`wiki-data/.index.json`，启动时验证并按需重建。
-- [ ] **BM25 评分模式**：作为可选项保留关键词模式作为默认。
-- [ ] **同义词字典**：`wiki-data/.synonyms.yml` 支持基本归一化。
+**触发条件**：有人用 1k+ entries 报告检索精度问题，且 issue 里能给出
+"BM25 会改善哪条具体 query"的反例。
 
-### 性能
+### 同义词字典
 
-- [ ] entry 数量上 10k 时启动 < 2s（增量扫描 mtime）。
-- [ ] `query` 端到端 < 100ms（在 1k entry 范围内）。
+`<wikiRoot>/.synonyms.yml`，把"agent / 智能体 / agent loop"归到一组。tokenize
+阶段做替换。
 
----
+**触发条件**：BM25 之后还没解决精度问题；或中英混合检索有人报告卡顿。
 
-## v2.0 ⚪（远期）
+### Embedding 混合检索（明确克制）
 
-**主题**：从"个人玩具"到"小团队工具"。
+向量检索 + 关键词 + 链接遍历的三路合并。但项目哲学（PRD §1.2）明确是
+"脱水到 Markdown 后关键词足够"——加 embedding 等于自打嘴巴。
 
-### 可选 embedding 混合检索
+**触发条件**：用户用真实库（不是 toy demo）证明"关键词怎么调都查不准这条"，
+且 embedding 能查到。不是"理论上更好"的论证。
 
-- [ ] 增加 `embedding` 字段到 frontmatter（可选，默认关闭）。
-- [ ] 检索流：关键词召回 → embedding rerank → 链接展开。
-- [ ] 选 provider：本地 `nomic-embed-text` via Ollama / OpenAI text-embedding-3-small。
-- [ ] **不取代关键词模式**：让用户选；混合模式在小库里反而不如纯关键词。
+### Web UI（不取代 CLI）
 
-### Web UI
+只读的 entry 浏览器 + 图谱视图，挂在本地 HTTP 服务上。**不**做编辑（编辑去
+Obsidian / VS Code）、**不**做 chat（chat 去 REPL）。
 
-- [ ] React + Tailwind 单页应用，挂在本地 HTTP 服务上。
-- [ ] 功能上 = `list` + `get` + `query` 的可视化版，**不取代 CLI/REPL**。
-- [ ] 支持图谱视图（基于 forward/backward links）。
+**触发条件**：图谱视图是个真实需求被反复提到 ≥3 次。
 
-### 协作
+### 团队协作
 
-- [ ] 多用户支持（基本 RBAC）。
-- [ ] Git 后端：`wiki-data/` 直接是 Git 仓库，PR 流程审批新词条。
-- [ ] 团队 collection 命名空间。
+多用户 RBAC、Git 后端、collection 命名空间。会让整个架构脱形（v0 是单机
+单用户文件系统模型）。
+
+**触发条件**：有团队场景的具体提案，且作者愿意维护这部分长期功能。
 
 ---
 
-## 长期不做
+## 明确不做（Won't do）
 
-明确放弃的方向：
+不会接受这类方向的 PR，避免 scope creep 浪费贡献者时间：
 
-- ❌ **取代 Notion / Obsidian**：这俩有完整的 GUI 和插件生态，竞争没意义。
-- ❌ **AI 自动写作平台**：llm-wiki 是知识库，不是内容生成器。
-- ❌ **企业知识库**：合规、SSO、审计这些需求会让架构脱形。
-- ❌ **通用 RAG 框架**：哲学不一样；想要通用 RAG 用 LangChain / LlamaIndex。
-
----
-
-## 决策记录（ADR）
-
-随着版本演进将单独维护：
-
-- [ ] ADR-001: 为什么不用 embedding（v0.1 时记录）
-- [ ] ADR-002: 反向链接计算 vs 持久化（v0.1）
-- [ ] ADR-003: HTTP 框架选型（Fastify vs Hono，v1.0）
-- [ ] ADR-004: 多模型 provider 抽象（v1.0）
-- [ ] ADR-005: Embedding 选型与开关策略（v2.0）
+- ❌ **取代 Notion / Obsidian** —— 它们有完整 GUI + 插件生态，没法竞争，
+  也不该竞争。llm-wiki 跟 Obsidian 是**互补**（Obsidian 编辑 + llm-wiki 脱水检索）。
+- ❌ **AI 自动写作平台** —— llm-wiki 是知识库，不是内容生成器。
+- ❌ **企业知识库** —— 合规、SSO、审计这些需求会让架构脱形。
+- ❌ **通用 RAG 框架** —— 项目哲学跟"通用 RAG"反着来。要通用 RAG 用
+  LangChain / LlamaIndex。
+- ❌ **GUI 客户端** —— Electron / Tauri 客户端，跨平台维护成本太高，没收益。
+- ❌ **多语言 SDK** —— Python / Go / Rust 客户端。CLI + 持久化文件格式
+  足够当跨语言协议；想要语言 binding 直接 fork。
 
 ---
 
-## 反馈与优先级调整
+## 想推动某个方向？
 
-里程碑顺序会根据真实使用反馈调整。如果你在用：
+[开 issue](https://github.com/l-zhi/llm-wiki/issues/new?template=feature.md) 描述：
 
-- **撞到痛点** → 提 issue（暂未配 GitHub），目前在 [PRD §8](./PRD.md#8-风险与开放问题) 维护。
-- **想要的功能不在路线图上** → 先评估是否落在"长期不做"清单里；不在的话考虑加进 v0.x。
+- 你的具体用例（不是"功能上更全"）
+- 现在的 workaround 和它的痛点
+- 提议的 CLI / API 形态
+
+或者，在已有 issue 上 +1 + 留言补充你的场景 —— 真实信号会被优先做。
+
+[Bug reports](https://github.com/l-zhi/llm-wiki/issues/new?template=bug.md) 永远走快道。
