@@ -324,7 +324,7 @@ export function formatDashboard(data: DashboardData, worker?: WorkerSummary): st
   // ── watch 区：每个 dir 一行，加 exts ──
   if (data.watchDirs.length === 0) {
     lines.push(
-      'WATCH  (no watch dirs; add one to ~/.llm-wiki/config.json → watchDirs[])',
+      'WATCH  (no watch dirs; add one to ~/.pith-wiki/config.json → watchDirs[])',
     );
   } else {
     for (let i = 0; i < data.watchDirs.length; i++) {

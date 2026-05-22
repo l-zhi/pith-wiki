@@ -7,7 +7,7 @@ import { z } from 'zod';
  * 持久化队列的 schema、序列化和原子 IO。
  *
  * 设计要点：
- *   - 整个队列状态存为一个 JSON 文件（默认 ~/.llm-wiki/queue/state.json）。
+ *   - 整个队列状态存为一个 JSON 文件（默认 ~/.pith-wiki/queue/state.json）。
  *     体量不大（~10k jobs ~几 MB）的场景下，整文件原子写法（`.tmp + rename`）
  *     比 SQLite 之类简单太多，且与 LibraryService.put 同源。
  *   - jobId 是稳定确定性 hash（path + collection），让 `queue add` 天然幂等。

@@ -176,7 +176,7 @@ export function resolveWatchTarget(
   } catch (err) {
     if (err instanceof SafetyError) {
       throw new Error(
-        `watch path outside read sandbox: ${abs} — add it to additionalReadPaths (LLM_WIKI_READ_PATHS)`,
+        `watch path outside read sandbox: ${abs} — add it to additionalReadPaths (PITH_WIKI_READ_PATHS)`,
       );
     }
     throw err;

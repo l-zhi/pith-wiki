@@ -38,7 +38,7 @@ export function formatDeadList(state: QueueState): string {
     '  /queue retry-all        reset all dead → pending',
     '  /queue clear-dead       delete all dead from state',
     '  /queue status           full counts + recent events',
-    '  log:  ~/.llm-wiki/queue/logs/<id>.log',
+    '  log:  ~/.pith-wiki/queue/logs/<id>.log',
   );
   return lines.join('\n');
 }

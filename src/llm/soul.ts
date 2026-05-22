@@ -12,11 +12,11 @@ import path from 'node:path';
  *
  * 查找顺序（首条命中即用作 explicit override；否则走默认双层叠加）：
  *
- *   1. 显式：`soulFile` 配置字段 / `LLM_WIKI_SOUL` 环境变量
+ *   1. 显式：`soulFile` 配置字段 / `PITH_WIKI_SOUL` 环境变量
  *      → 只读这一份，找不到不退化
  *
  *   2. 默认双层叠加：
- *      a. `~/.llm-wiki/SOUL.md`        — 跨工作区的"我的风格"
+ *      a. `~/.pith-wiki/SOUL.md`        — 跨工作区的"我的风格"
  *      b. `<workspaceRoot>/SOUL.md`    — 当前项目的覆盖/扩展
  *      存在哪份就拼哪份；两份都存在则前者在前、后者在后。
  *
@@ -47,16 +47,16 @@ export interface LoadedSoul {
   sources: string[];
 }
 
-/** ~/.llm-wiki/SOUL.md 的绝对路径。懒求值，便于测试 monkey-patch os.homedir。 */
+/** ~/.pith-wiki/SOUL.md 的绝对路径。懒求值，便于测试 monkey-patch os.homedir。 */
 function userDefaultPath(): string {
-  return path.join(os.homedir(), '.llm-wiki', 'SOUL.md');
+  return path.join(os.homedir(), '.pith-wiki', 'SOUL.md');
 }
 
 export const SOUL_PROMPT_HEADER = '## Voice and style';
 
 export function loadSoul(opts: SoulLookupOptions): LoadedSoul {
   // 1. 显式 override：CLI flag > env > 都没有 → 落到默认双层
-  const explicit = opts.soulFile ?? process.env.LLM_WIKI_SOUL;
+  const explicit = opts.soulFile ?? process.env.PITH_WIKI_SOUL;
   if (explicit && explicit.trim()) {
     const abs = path.resolve(expandHome(explicit.trim()));
     if (!fs.existsSync(abs)) return { content: '', sources: [] };

@@ -16,24 +16,24 @@ import {
   type Config,
 } from '../src/config.js';
 
-// 文件级 isolation：让所有 loadConfig 调用看不到维护者本机的 ~/.llm-wiki/config.json。
-// 通过 LLM_WIKI_CONFIG_PATH 把 loadFileConfig 指向一个不存在的临时路径，等价于"没有配置文件"。
+// 文件级 isolation：让所有 loadConfig 调用看不到维护者本机的 ~/.pith-wiki/config.json。
+// 通过 PITH_WIKI_CONFIG_PATH 把 loadFileConfig 指向一个不存在的临时路径，等价于"没有配置文件"。
 // 不这样做的话，本仓库的开发者只要本地放过 config.json，这个 test 文件就会红。
-const ORIGINAL_LLM_WIKI_CONFIG_PATH = process.env.LLM_WIKI_CONFIG_PATH;
+const ORIGINAL_PITH_WIKI_CONFIG_PATH = process.env.PITH_WIKI_CONFIG_PATH;
 const ISOLATED_CONFIG_PATH = path.join(
   os.tmpdir(),
   `llm-wiki-config-test-nonexistent-${process.pid}-${Date.now()}.json`,
 );
 
 beforeAll(() => {
-  process.env.LLM_WIKI_CONFIG_PATH = ISOLATED_CONFIG_PATH;
+  process.env.PITH_WIKI_CONFIG_PATH = ISOLATED_CONFIG_PATH;
 });
 
 afterAll(() => {
-  if (ORIGINAL_LLM_WIKI_CONFIG_PATH === undefined) {
-    delete process.env.LLM_WIKI_CONFIG_PATH;
+  if (ORIGINAL_PITH_WIKI_CONFIG_PATH === undefined) {
+    delete process.env.PITH_WIKI_CONFIG_PATH;
   } else {
-    process.env.LLM_WIKI_CONFIG_PATH = ORIGINAL_LLM_WIKI_CONFIG_PATH;
+    process.env.PITH_WIKI_CONFIG_PATH = ORIGINAL_PITH_WIKI_CONFIG_PATH;
   }
 });
 
@@ -147,29 +147,29 @@ describe('parseReadPathsFromEnv — 集成：.env 实际写法', () => {
   });
 });
 
-describe('process.env 端到端（loadConfig 钩进 LLM_WIKI_READ_PATHS）', () => {
-  // 这一组没有直接测 loadConfig（因为它会读 ~/.llm-wiki/config.json，要 mock 文件系统才公平），
-  // 但通过临时设置 process.env.LLM_WIKI_READ_PATHS 验证 parseReadPathsFromEnv 在
+describe('process.env 端到端（loadConfig 钩进 PITH_WIKI_READ_PATHS）', () => {
+  // 这一组没有直接测 loadConfig（因为它会读 ~/.pith-wiki/config.json，要 mock 文件系统才公平），
+  // 但通过临时设置 process.env.PITH_WIKI_READ_PATHS 验证 parseReadPathsFromEnv 在
   // 真实环境变量值上工作。
   let original: string | undefined;
 
   beforeEach(() => {
-    original = process.env.LLM_WIKI_READ_PATHS;
+    original = process.env.PITH_WIKI_READ_PATHS;
   });
 
   afterEach(() => {
-    if (original === undefined) delete process.env.LLM_WIKI_READ_PATHS;
-    else process.env.LLM_WIKI_READ_PATHS = original;
+    if (original === undefined) delete process.env.PITH_WIKI_READ_PATHS;
+    else process.env.PITH_WIKI_READ_PATHS = original;
   });
 
   it('从真实 process.env 取到 JSON 数组并解析', () => {
-    process.env.LLM_WIKI_READ_PATHS = '["/tmp/a","/tmp/b"]';
-    expect(parseReadPathsFromEnv(process.env.LLM_WIKI_READ_PATHS)).toEqual(['/tmp/a', '/tmp/b']);
+    process.env.PITH_WIKI_READ_PATHS = '["/tmp/a","/tmp/b"]';
+    expect(parseReadPathsFromEnv(process.env.PITH_WIKI_READ_PATHS)).toEqual(['/tmp/a', '/tmp/b']);
   });
 
   it('从真实 process.env 取到分隔符串并解析', () => {
-    process.env.LLM_WIKI_READ_PATHS = `/tmp/a${path.delimiter}/tmp/b`;
-    expect(parseReadPathsFromEnv(process.env.LLM_WIKI_READ_PATHS)).toEqual(['/tmp/a', '/tmp/b']);
+    process.env.PITH_WIKI_READ_PATHS = `/tmp/a${path.delimiter}/tmp/b`;
+    expect(parseReadPathsFromEnv(process.env.PITH_WIKI_READ_PATHS)).toEqual(['/tmp/a', '/tmp/b']);
   });
 });
 
@@ -316,7 +316,7 @@ describe('multi-provider — loadConfig 端到端', () => {
 
   beforeEach(() => {
     savedEnv = {
-      LLM_WIKI_PROVIDER: process.env.LLM_WIKI_PROVIDER,
+      PITH_WIKI_PROVIDER: process.env.PITH_WIKI_PROVIDER,
       DEEPSEEK_KEY: process.env.DEEPSEEK_KEY,
       QWEN_KEY: process.env.QWEN_KEY,
     };
@@ -330,7 +330,7 @@ describe('multi-provider — loadConfig 端到端', () => {
   });
 
   it('CLI override 的 activeProvider 覆盖 env', () => {
-    process.env.LLM_WIKI_PROVIDER = 'qwen';
+    process.env.PITH_WIKI_PROVIDER = 'qwen';
     process.env.QWEN_KEY = 'qwen-env';
     process.env.DEEPSEEK_KEY = 'deepseek-env';
     const cfg = loadConfig({
@@ -354,8 +354,8 @@ describe('multi-provider — loadConfig 端到端', () => {
     expect(cfg.model).toBe('deepseek-chat');
   });
 
-  it('env LLM_WIKI_PROVIDER 在没 CLI override 时被采用', () => {
-    process.env.LLM_WIKI_PROVIDER = 'qwen';
+  it('env PITH_WIKI_PROVIDER 在没 CLI override 时被采用', () => {
+    process.env.PITH_WIKI_PROVIDER = 'qwen';
     process.env.QWEN_KEY = 'qwen-from-env';
     const cfg = loadConfig({
       providers: {
@@ -373,7 +373,7 @@ describe('multi-provider — loadConfig 端到端', () => {
   });
 
   it('providers 空 + activeProvider 也空 → 完全 v0 行为（顶层默认）', () => {
-    delete process.env.LLM_WIKI_PROVIDER;
+    delete process.env.PITH_WIKI_PROVIDER;
     const cfg = loadConfig({});
     expect(cfg.activeProvider).toBeUndefined();
     expect(cfg.providers).toEqual({});
@@ -383,16 +383,16 @@ describe('multi-provider — loadConfig 端到端', () => {
 });
 
 /**
- * LLM_WIKI_CONFIG_PATH env 契约。
+ * PITH_WIKI_CONFIG_PATH env 契约。
  *
- * 这条 env 让 `loadFileConfig` 改读指定路径而不是默认的 `~/.llm-wiki/config.json`。
+ * 这条 env 让 `loadFileConfig` 改读指定路径而不是默认的 `~/.pith-wiki/config.json`。
  * 目的：测试隔离（让 npm test 在维护者机器上不被本地真实 config 污染）+ 嵌入场景的
  * 自定义配置文件路径。下面三个 case 把这条契约焊死，未来不会被无意改坏。
  *
- * 注：本文件顶部已经有 beforeAll 把 LLM_WIKI_CONFIG_PATH 指向不存在的路径；
+ * 注：本文件顶部已经有 beforeAll 把 PITH_WIKI_CONFIG_PATH 指向不存在的路径；
  * 下面三个 case 各自临时改写 env，afterEach 还原成那个不存在的"全文件 isolation 路径"。
  */
-describe('LLM_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
+describe('PITH_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -401,7 +401,7 @@ describe('LLM_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
 
   afterEach(() => {
     // 还原成文件级 isolation 设置的"不存在路径"。
-    process.env.LLM_WIKI_CONFIG_PATH = ISOLATED_CONFIG_PATH;
+    process.env.PITH_WIKI_CONFIG_PATH = ISOLATED_CONFIG_PATH;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -416,7 +416,7 @@ describe('LLM_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
         activeProvider: 'custom',
       }),
     );
-    process.env.LLM_WIKI_CONFIG_PATH = cfgFile;
+    process.env.PITH_WIKI_CONFIG_PATH = cfgFile;
 
     const cfg = loadConfig({});
     expect(cfg.activeProvider).toBe('custom');
@@ -425,7 +425,7 @@ describe('LLM_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
   });
 
   it('指向不存在的文件 → 等价于"没有 config"（silent fallback 到默认 + overrides）', () => {
-    process.env.LLM_WIKI_CONFIG_PATH = path.join(tmpDir, 'does-not-exist.json');
+    process.env.PITH_WIKI_CONFIG_PATH = path.join(tmpDir, 'does-not-exist.json');
 
     const cfg = loadConfig({});
     // 没有任何 provider 配置 → 顶层默认 baseURL
@@ -437,7 +437,7 @@ describe('LLM_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
   it('指向格式错误的 JSON → 抛带文件路径的可读错误', () => {
     const cfgFile = path.join(tmpDir, 'bad.json');
     fs.writeFileSync(cfgFile, '{ not valid json');
-    process.env.LLM_WIKI_CONFIG_PATH = cfgFile;
+    process.env.PITH_WIKI_CONFIG_PATH = cfgFile;
 
     expect(() => loadConfig({})).toThrow(/Failed to parse/);
     expect(() => loadConfig({})).toThrow(cfgFile);

@@ -7,9 +7,9 @@ import dotenv from 'dotenv';
 /**
  * 懒加载 `.env`，仅 CLI 入口（`loadConfigFromEnv`）会调用。
  *
- * 加载顺序：项目根 `.env` → `~/.llm-wiki/.env`（override: true，权威源）。
+ * 加载顺序：项目根 `.env` → `~/.pith-wiki/.env`（override: true，权威源）。
  * 设计意图：避免每个项目根都需要复制一份 .env；让 DEEPSEEK_API_KEY 这类
- * 跨工作区不变的密钥只放一份在 ~/.llm-wiki/.env。
+ * 跨工作区不变的密钥只放一份在 ~/.pith-wiki/.env。
  *
  * 幂等：第二次调用 no-op，避免覆盖测试或调用方在第一次 load 后手工改的 env。
  */
@@ -19,7 +19,7 @@ function loadDotenvOnce(): void {
   dotenvLoaded = true;
   dotenv.config();
   dotenv.config({
-    path: path.join(os.homedir(), '.llm-wiki', '.env'),
+    path: path.join(os.homedir(), '.pith-wiki', '.env'),
     override: true,
   });
 }
@@ -27,7 +27,7 @@ function loadDotenvOnce(): void {
 /**
  * 多 provider 配置：每个条目对应一个 OpenAI-compatible endpoint。
  *
- * 用法（在 ~/.llm-wiki/config.json 里）：
+ * 用法（在 ~/.pith-wiki/config.json 里）：
  *   {
  *     "providers": {
  *       "deepseek": { "baseURL": "https://api.deepseek.com", "model": "deepseek-chat", "apiKeyEnv": "DEEPSEEK_API_KEY" },
@@ -37,7 +37,7 @@ function loadDotenvOnce(): void {
  *     "activeProvider": "deepseek"
  *   }
  *
- * 优先级 activeProvider：CLI `--provider` > env `LLM_WIKI_PROVIDER` > 配置文件
+ * 优先级 activeProvider：CLI `--provider` > env `PITH_WIKI_PROVIDER` > 配置文件
  *
  * 字段：
  *   - apiKey:    字面 key（不推荐写在 config.json 里，会被签入 git）
@@ -88,7 +88,7 @@ const ConfigSchema = z.object({
   /**
    * REPL 启动时是否自动起队列 worker（`idleBehavior=wait`）。
    * true（默认）：进 REPL 自动开 worker，本会话内 wiki_queue_add 增的 job 立即被处理。
-   * 关掉的方式：CLI `--no-auto-queue`，或 ~/.llm-wiki/config.json 里写 false。
+   * 关掉的方式：CLI `--no-auto-queue`，或 ~/.pith-wiki/config.json 里写 false。
    */
   queueAutoStart: z.boolean(),
   /**
@@ -119,7 +119,7 @@ const ConfigSchema = z.object({
     .default([]),
   /**
    * REPL 启动时是否同时起 watcher（前提是 watchDirs 非空）。
-   * 关掉的方式：CLI `--no-auto-watch`，或 ~/.llm-wiki/config.json 里写 false。
+   * 关掉的方式：CLI `--no-auto-watch`，或 ~/.pith-wiki/config.json 里写 false。
    */
   watchAutoStart: z.boolean(),
   /**
@@ -144,8 +144,8 @@ const ConfigSchema = z.object({
   /**
    * SOUL.md 路径——显式指定时只读这一份，不再查默认位置。
    *
-   * 解析在 src/llm/soul.ts 内做：显式 > LLM_WIKI_SOUL env > 默认双层
-   *   (~/.llm-wiki/SOUL.md + <workspaceRoot>/SOUL.md)。
+   * 解析在 src/llm/soul.ts 内做：显式 > PITH_WIKI_SOUL env > 默认双层
+   *   (~/.pith-wiki/SOUL.md + <workspaceRoot>/SOUL.md)。
    * 内容拼到 Agent 的 system prompt 末尾作为 voice/style 层。
    */
   soulFile: z.string().optional(),
@@ -202,14 +202,14 @@ const DEFAULTS = {
 /**
  * 读取持久化 config 文件。
  *
- * 默认路径：`~/.llm-wiki/config.json`。
- * 测试 / 嵌入场景：通过 `LLM_WIKI_CONFIG_PATH` env 改向；指向不存在的文件等价于"没有 config"。
+ * 默认路径：`~/.pith-wiki/config.json`。
+ * 测试 / 嵌入场景：通过 `PITH_WIKI_CONFIG_PATH` env 改向；指向不存在的文件等价于"没有 config"。
  * 这条 env 主要给 vitest 用：让 `npm test` 在维护者本机不被真实 config 污染。
  *
  * 找不到文件不抛错（这是常态：用户没建过 config）；JSON 解析失败必须抛（用户写错了要立刻知道）。
  */
 function loadFileConfig(): Partial<Config> {
-  const file = process.env.LLM_WIKI_CONFIG_PATH ?? path.join(os.homedir(), '.llm-wiki', 'config.json');
+  const file = process.env.PITH_WIKI_CONFIG_PATH ?? path.join(os.homedir(), '.pith-wiki', 'config.json');
   if (!fs.existsSync(file)) return {};
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -254,17 +254,17 @@ export function parseReadPathsFromEnv(raw: string | undefined): string[] | undef
       parsed = JSON.parse(trimmed);
     } catch (err) {
       throw new Error(
-        `LLM_WIKI_READ_PATHS looks like JSON but failed to parse: ${(err as Error).message}`,
+        `PITH_WIKI_READ_PATHS looks like JSON but failed to parse: ${(err as Error).message}`,
       );
     }
     if (!Array.isArray(parsed)) {
       throw new Error(
-        `LLM_WIKI_READ_PATHS JSON value must be a string array, got ${typeof parsed}`,
+        `PITH_WIKI_READ_PATHS JSON value must be a string array, got ${typeof parsed}`,
       );
     }
     items = parsed.map((v) => {
       if (typeof v !== 'string') {
-        throw new Error(`LLM_WIKI_READ_PATHS array entry is not a string: ${JSON.stringify(v)}`);
+        throw new Error(`PITH_WIKI_READ_PATHS array entry is not a string: ${JSON.stringify(v)}`);
       }
       return v;
     });
@@ -277,7 +277,7 @@ export function parseReadPathsFromEnv(raw: string | undefined): string[] | undef
 }
 
 /**
- * CLI 入口的配置加载：读 `.env`、`~/.llm-wiki/config.json`（或 `LLM_WIKI_CONFIG_PATH` 指向的文件）、
+ * CLI 入口的配置加载：读 `.env`、`~/.pith-wiki/config.json`（或 `PITH_WIKI_CONFIG_PATH` 指向的文件）、
  * env 变量，再叠加显式 overrides，zod 校验后返回。
  */
 export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
@@ -285,30 +285,30 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
   const file = loadFileConfig();
   const cwd = process.cwd();
   const workspaceRoot =
-    overrides.workspaceRoot ?? process.env.LLM_WIKI_WORKSPACE ?? file.workspaceRoot ?? cwd;
-  // wikiRoot 默认放在 ~/.llm-wiki/wiki-data：与队列状态、命令历史、配置同源在
+    overrides.workspaceRoot ?? process.env.PITH_WIKI_WORKSPACE ?? file.workspaceRoot ?? cwd;
+  // wikiRoot 默认放在 ~/.pith-wiki/wiki-data：与队列状态、命令历史、配置同源在
   // 用户 home 下。这样多个 workspace 共享同一份 wiki，且 git 不会无意把数据
   // 提交进项目仓库（旧默认 <workspaceRoot>/wiki-data 容易误入版本控制）。
-  // 想把 wiki 跟 workspace 绑在一起的用户可设 LLM_WIKI_ROOT 或配置文件。
+  // 想把 wiki 跟 workspace 绑在一起的用户可设 PITH_WIKI_ROOT 或配置文件。
   const wikiRoot =
     overrides.wikiRoot ??
-    process.env.LLM_WIKI_ROOT ??
+    process.env.PITH_WIKI_ROOT ??
     file.wikiRoot ??
-    path.join(os.homedir(), '.llm-wiki', 'wiki-data');
+    path.join(os.homedir(), '.pith-wiki', 'wiki-data');
   const resolvedWikiRoot = path.resolve(wikiRoot);
 
   // additionalReadPaths：CLI flag > env > 配置文件 > 空数组。
   // 一旦提供，所有路径都先做 `~/` 展开，再规范化为绝对路径（相对路径相对 cwd）。
   const additionalReadPathsRaw =
     overrides.additionalReadPaths ??
-    parseReadPathsFromEnv(process.env.LLM_WIKI_READ_PATHS) ??
+    parseReadPathsFromEnv(process.env.PITH_WIKI_READ_PATHS) ??
     file.additionalReadPaths ??
     [];
   const additionalReadPaths = additionalReadPathsRaw.map((p) => path.resolve(expandHome(p)));
 
-  // 队列相关默认路径都在 ~/.llm-wiki/queue/ 下。
+  // 队列相关默认路径都在 ~/.pith-wiki/queue/ 下。
   // 优先级与其他字段一致：CLI flag > 配置文件 > 默认。env 暂不引入，避免接口表面过大。
-  const defaultQueueDir = path.join(os.homedir(), '.llm-wiki', 'queue');
+  const defaultQueueDir = path.join(os.homedir(), '.pith-wiki', 'queue');
   const queueStatePath = path.resolve(
     expandHome(
       overrides.queueStatePath ?? file.queueStatePath ?? path.join(defaultQueueDir, 'state.json'),
@@ -321,18 +321,18 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
   const merged = {
     apiKey: overrides.apiKey ?? process.env.DEEPSEEK_API_KEY ?? file.apiKey ?? '',
     baseURL:
-      overrides.baseURL ?? process.env.LLM_WIKI_BASE_URL ?? file.baseURL ?? DEFAULTS.baseURL,
-    model: overrides.model ?? process.env.LLM_WIKI_MODEL ?? file.model ?? DEFAULTS.model,
+      overrides.baseURL ?? process.env.PITH_WIKI_BASE_URL ?? file.baseURL ?? DEFAULTS.baseURL,
+    model: overrides.model ?? process.env.PITH_WIKI_MODEL ?? file.model ?? DEFAULTS.model,
     workspaceRoot: path.resolve(workspaceRoot),
     wikiRoot: resolvedWikiRoot,
     readOnly:
       overrides.readOnly ??
-      (process.env.LLM_WIKI_READ_ONLY === 'true' ? true : undefined) ??
+      (process.env.PITH_WIKI_READ_ONLY === 'true' ? true : undefined) ??
       file.readOnly ??
       false,
     maxToolPayloadBytes:
       overrides.maxToolPayloadBytes ?? file.maxToolPayloadBytes ?? DEFAULTS.maxToolPayloadBytes,
-    historyFile: path.join(os.homedir(), '.llm-wiki', 'history'),
+    historyFile: path.join(os.homedir(), '.pith-wiki', 'history'),
     additionalReadPaths,
     queueStatePath,
     queueLogDir,
@@ -366,12 +366,12 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     // SOUL.md：显式 CLI 覆盖 > env > file（指定 file 也算"explicit"，不再走默认双层）
     // 实际读盘 + ~/展开在 src/llm/soul.ts 内，避免 config schema 持有读盘副作用
     soulFile:
-      overrides.soulFile ?? process.env.LLM_WIKI_SOUL ?? file.soulFile ?? undefined,
+      overrides.soulFile ?? process.env.PITH_WIKI_SOUL ?? file.soulFile ?? undefined,
     // multi-provider：providers 表来自 file（不接受 env，结构复杂），activeProvider
     // 走 CLI > env > file。Zod 校验之后再 overlay 到顶层 apiKey/baseURL/model。
     providers: overrides.providers ?? file.providers ?? {},
     activeProvider:
-      overrides.activeProvider ?? process.env.LLM_WIKI_PROVIDER ?? file.activeProvider,
+      overrides.activeProvider ?? process.env.PITH_WIKI_PROVIDER ?? file.activeProvider,
   };
 
   const parsed = ConfigSchema.parse(merged);

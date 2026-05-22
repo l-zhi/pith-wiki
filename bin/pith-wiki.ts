@@ -45,7 +45,7 @@ program
   )
   .option(
     '--provider <name>',
-    'Use a named provider entry from config.providers (overrides LLM_WIKI_PROVIDER and config.activeProvider).',
+    'Use a named provider entry from config.providers (overrides PITH_WIKI_PROVIDER and config.activeProvider).',
   );
 
 const configFor = (extra: Partial<Config> = {}): Config => {

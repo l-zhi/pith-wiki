@@ -148,7 +148,7 @@ function WatchLines({ rows, extensions }: { rows: WatchRow[]; extensions: string
           </Text>
           <Text dimColor>  (no watch dirs configured)</Text>
         </Box>
-        <Text dimColor>       add one to ~/.llm-wiki/config.json → watchDirs[]</Text>
+        <Text dimColor>       add one to ~/.pith-wiki/config.json → watchDirs[]</Text>
       </Box>
     );
   }

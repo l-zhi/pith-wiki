@@ -3,13 +3,13 @@
  *
  * 测点：
  *   - 显式 soulFile（CLI/config）短路掉默认查找
- *   - LLM_WIKI_SOUL env 等价于 soulFile
- *   - 默认查找：~/.llm-wiki/SOUL.md + <workspaceRoot>/SOUL.md 叠加
+ *   - PITH_WIKI_SOUL env 等价于 soulFile
+ *   - 默认查找：~/.pith-wiki/SOUL.md + <workspaceRoot>/SOUL.md 叠加
  *   - 都不存在 → 空内容
  *   - 显式 soul 文件不存在 → 不退化到默认（语义清晰，避免 silent fallback）
  *   - composeSystemPrompt：空 soul → 原样；非空 → 追加 "## Voice and style" 段
  *
- * HOME 目录用 mkdtemp + monkey-patch os.homedir 隔离，避免污染真实 ~/.llm-wiki。
+ * HOME 目录用 mkdtemp + monkey-patch os.homedir 隔离，避免污染真实 ~/.pith-wiki。
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -29,24 +29,24 @@ beforeEach(() => {
   workspaceRoot = path.join(tmpRoot, 'project');
   fs.mkdirSync(fakeHome, { recursive: true });
   fs.mkdirSync(workspaceRoot, { recursive: true });
-  fs.mkdirSync(path.join(fakeHome, '.llm-wiki'), { recursive: true });
+  fs.mkdirSync(path.join(fakeHome, '.pith-wiki'), { recursive: true });
   origHomedir = os.homedir;
   os.homedir = () => fakeHome;
-  origEnv = process.env.LLM_WIKI_SOUL;
-  delete process.env.LLM_WIKI_SOUL;
+  origEnv = process.env.PITH_WIKI_SOUL;
+  delete process.env.PITH_WIKI_SOUL;
 });
 
 afterEach(() => {
   os.homedir = origHomedir;
-  if (origEnv === undefined) delete process.env.LLM_WIKI_SOUL;
-  else process.env.LLM_WIKI_SOUL = origEnv;
+  if (origEnv === undefined) delete process.env.PITH_WIKI_SOUL;
+  else process.env.PITH_WIKI_SOUL = origEnv;
   vi.restoreAllMocks();
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
 
 describe('loadSoul', () => {
   it('显式 soulFile：只读这一份，忽略默认位置', () => {
-    fs.writeFileSync(path.join(fakeHome, '.llm-wiki', 'SOUL.md'), 'default-user', 'utf8');
+    fs.writeFileSync(path.join(fakeHome, '.pith-wiki', 'SOUL.md'), 'default-user', 'utf8');
     fs.writeFileSync(path.join(workspaceRoot, 'SOUL.md'), 'default-project', 'utf8');
     const explicit = path.join(tmpRoot, 'custom.md');
     fs.writeFileSync(explicit, 'just me', 'utf8');
@@ -56,16 +56,16 @@ describe('loadSoul', () => {
   });
 
   it('显式 soulFile 不存在：返回空，不退化到默认', () => {
-    fs.writeFileSync(path.join(fakeHome, '.llm-wiki', 'SOUL.md'), 'default', 'utf8');
+    fs.writeFileSync(path.join(fakeHome, '.pith-wiki', 'SOUL.md'), 'default', 'utf8');
     const r = loadSoul({ soulFile: path.join(tmpRoot, 'missing.md'), workspaceRoot });
     expect(r.content).toBe('');
     expect(r.sources).toEqual([]);
   });
 
-  it('LLM_WIKI_SOUL env 等价于 soulFile', () => {
+  it('PITH_WIKI_SOUL env 等价于 soulFile', () => {
     const f = path.join(tmpRoot, 'env-soul.md');
     fs.writeFileSync(f, 'from env', 'utf8');
-    process.env.LLM_WIKI_SOUL = f;
+    process.env.PITH_WIKI_SOUL = f;
     const r = loadSoul({ workspaceRoot });
     expect(r.content).toBe('from env');
     expect(r.sources).toEqual([f]);
@@ -74,27 +74,27 @@ describe('loadSoul', () => {
   it('显式 soulFile 优先于 env', () => {
     fs.writeFileSync(path.join(tmpRoot, 'env.md'), 'env content', 'utf8');
     fs.writeFileSync(path.join(tmpRoot, 'explicit.md'), 'explicit content', 'utf8');
-    process.env.LLM_WIKI_SOUL = path.join(tmpRoot, 'env.md');
+    process.env.PITH_WIKI_SOUL = path.join(tmpRoot, 'env.md');
     const r = loadSoul({ soulFile: path.join(tmpRoot, 'explicit.md'), workspaceRoot });
     expect(r.content).toBe('explicit content');
   });
 
-  it('默认双层：~/.llm-wiki/SOUL.md + <workspaceRoot>/SOUL.md 都存在 → 顺序叠加', () => {
-    fs.writeFileSync(path.join(fakeHome, '.llm-wiki', 'SOUL.md'), 'user-base', 'utf8');
+  it('默认双层：~/.pith-wiki/SOUL.md + <workspaceRoot>/SOUL.md 都存在 → 顺序叠加', () => {
+    fs.writeFileSync(path.join(fakeHome, '.pith-wiki', 'SOUL.md'), 'user-base', 'utf8');
     fs.writeFileSync(path.join(workspaceRoot, 'SOUL.md'), 'project-override', 'utf8');
     const r = loadSoul({ workspaceRoot });
     expect(r.content).toBe('user-base\n\nproject-override');
     expect(r.sources).toEqual([
-      path.join(fakeHome, '.llm-wiki', 'SOUL.md'),
+      path.join(fakeHome, '.pith-wiki', 'SOUL.md'),
       path.join(workspaceRoot, 'SOUL.md'),
     ]);
   });
 
   it('默认双层：只有 user 存在 → 用 user', () => {
-    fs.writeFileSync(path.join(fakeHome, '.llm-wiki', 'SOUL.md'), 'only me', 'utf8');
+    fs.writeFileSync(path.join(fakeHome, '.pith-wiki', 'SOUL.md'), 'only me', 'utf8');
     const r = loadSoul({ workspaceRoot });
     expect(r.content).toBe('only me');
-    expect(r.sources).toEqual([path.join(fakeHome, '.llm-wiki', 'SOUL.md')]);
+    expect(r.sources).toEqual([path.join(fakeHome, '.pith-wiki', 'SOUL.md')]);
   });
 
   it('默认双层：只有 project 存在 → 用 project', () => {
@@ -111,7 +111,7 @@ describe('loadSoul', () => {
   });
 
   it('空白文件不算 source（避免给 prompt 加无意义段头）', () => {
-    fs.writeFileSync(path.join(fakeHome, '.llm-wiki', 'SOUL.md'), '   \n\t  ', 'utf8');
+    fs.writeFileSync(path.join(fakeHome, '.pith-wiki', 'SOUL.md'), '   \n\t  ', 'utf8');
     const r = loadSoul({ workspaceRoot });
     expect(r.content).toBe('');
     expect(r.sources).toEqual([]);

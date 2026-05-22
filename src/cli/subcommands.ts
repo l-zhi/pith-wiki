@@ -117,7 +117,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
           }
           console.error(
             chalk.gray(
-              'Add --read-path <dir> or set LLM_WIKI_READ_PATHS to include these locations.',
+              'Add --read-path <dir> or set PITH_WIKI_READ_PATHS to include these locations.',
             ),
           );
           process.exitCode = 1;
@@ -170,7 +170,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
             console.error(
               chalk.red(
                 `Error: ${absFile} lies outside the read sandbox.\n` +
-                  '       Add --read-path <dir> or LLM_WIKI_READ_PATHS to allow it.',
+                  '       Add --read-path <dir> or PITH_WIKI_READ_PATHS to allow it.',
               ),
             );
             process.exitCode = 1;

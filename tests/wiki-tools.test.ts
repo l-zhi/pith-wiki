@@ -232,7 +232,7 @@ describe('wiki_read_source', () => {
         error?: string;
       };
       expect(r.ok).toBe(false);
-      expect(r.error).toMatch(/sandbox|LLM_WIKI_READ_PATHS/);
+      expect(r.error).toMatch(/sandbox|PITH_WIKI_READ_PATHS/);
     } finally {
       fs.rmSync(outside, { recursive: true, force: true });
     }

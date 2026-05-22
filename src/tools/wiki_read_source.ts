@@ -58,7 +58,7 @@ export const wikiReadSourceTool: ToolDef<typeof params> = {
         ok: false,
         error:
           `${usingCache ? 'Cache sidecar' : 'Source path'} outside read sandbox: ${readPath}\n` +
-          `Add it to LLM_WIKI_READ_PATHS or run with --read-path to allow. (${(err as Error).message})`,
+          `Add it to PITH_WIKI_READ_PATHS or run with --read-path to allow. (${(err as Error).message})`,
       };
     }
 

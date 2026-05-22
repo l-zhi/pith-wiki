@@ -95,7 +95,7 @@ export function App({ config: initialConfig }: Props) {
   const [inFlight, setInFlight] = useState(false);
   const [usage, setUsage] = useState({ inputTokens: 0, outputTokens: 0 });
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
-  // 历史命令：启动时从 ~/.llm-wiki/history 加载最近 N 条；每次提交追加。
+  // 历史命令：启动时从 ~/.pith-wiki/history 加载最近 N 条；每次提交追加。
   const [history, setHistory] = useState<string[]>(() =>
     loadHistory(config.historyFile, HISTORY_LIMIT),
   );
@@ -211,7 +211,7 @@ export function App({ config: initialConfig }: Props) {
       logDir: config.queueLogDir,
       signal: ac.signal,
       // REPL 内 worker 不打控制台 log（会污染对话视图）。进度查 state.json 的
-      // events 环 + ~/.llm-wiki/queue/logs/<jobId>.log；崩溃会通过下面的 .catch
+      // events 环 + ~/.pith-wiki/queue/logs/<jobId>.log；崩溃会通过下面的 .catch
       // 走 system error message 显式提示用户。
       log: () => {},
       idleBehavior: 'wait',
@@ -476,9 +476,9 @@ export function App({ config: initialConfig }: Props) {
         append({
           role: 'system',
           text:
-            'No SOUL.md loaded.\nDrop one at ~/.llm-wiki/SOUL.md (user-global)\n' +
+            'No SOUL.md loaded.\nDrop one at ~/.pith-wiki/SOUL.md (user-global)\n' +
             'or ' + path.join(config.workspaceRoot, 'SOUL.md') + ' (project-local),\n' +
-            'or set LLM_WIKI_SOUL=<path>. Restart REPL to apply.',
+            'or set PITH_WIKI_SOUL=<path>. Restart REPL to apply.',
         });
       } else {
         append({
@@ -571,7 +571,7 @@ export function App({ config: initialConfig }: Props) {
         append({
           role: 'system',
           text:
-            'No providers configured. Add a "providers" map in ~/.llm-wiki/config.json. Example:\n' +
+            'No providers configured. Add a "providers" map in ~/.pith-wiki/config.json. Example:\n' +
             '  {\n' +
             '    "providers": {\n' +
             '      "deepseek": { "baseURL": "https://api.deepseek.com", "model": "deepseek-chat", "apiKeyEnv": "DEEPSEEK_API_KEY" },\n' +
