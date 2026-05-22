@@ -16,7 +16,7 @@ labels: ['feature']
 
 ```bash
 # e.g.
-llm-wiki rename old-id new-id   # updates all references in `links:` frontmatter
+pith-wiki rename old-id new-id   # updates all references in `links:` frontmatter
 ```
 
 ## Alternatives considered

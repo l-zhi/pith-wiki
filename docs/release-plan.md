@@ -49,7 +49,7 @@
 
 | # | 项 | 说明 |
 |---|---|---|
-| A1 | 修测试隔离 | [tests/config.test.ts:353](../tests/config.test.ts:353) 现在会读真实 `~/.llm-wiki/config.json`，外部 clone 立即红；引入 `LLM_WIKI_CONFIG_PATH` env 或 `configPath` 显式参数 |
+| A1 | 修测试隔离 | [tests/config.test.ts:353](../tests/config.test.ts:353) 现在会读真实 `~/.pith-wiki/config.json`，外部 clone 立即红；引入 `PITH_WIKI_CONFIG_PATH` env 或 `configPath` 显式参数 |
 | A2 | CI 加 `macos-latest` | 修 [.github/workflows/ci.yml](../.github/workflows/ci.yml) 的 matrix；跑了之后看实际暴露什么 bug 再决定是否阻塞首发 |
 | A3 | `CONTRIBUTING.md` | Node 版本 / `npm install` / 测试命令 / commit 风格（conventional commits）/ PR 流程 |
 | A4 | `SECURITY.md` | 按 Q7 草稿；GHSA + 邮箱备用 + best-effort；明确列出 scope 与 out-of-scope |
@@ -59,7 +59,7 @@
 | A8 | `docs/roadmap.md` 重写 | 按 Q5 三栏结构；删除原 v0.2/v0.3 计划（已变现实） |
 | A9 | `CHANGELOG.md` 收拢 | `[Unreleased]` 整块归到 0.3.0；按 Added / Changed / Fixed 整理；摘要不留实现细节 |
 | A10 | 提交 main 上 4 个未 commit 文件 | hydration.ts / queue/processJob.ts / queue/runner.ts / converters/builtin/eml.ts；先 review 一遍 |
-| A11 | 实现 `llm-wiki doctor` | 5 类检查 + `--json` + 非零 exit code（具体规格写在对应 issue 里） |
+| A11 | 实现 `pith-wiki doctor` | 5 类检查 + `--json` + 非零 exit code（具体规格写在对应 issue 里） |
 
 ### B 档 第一印象（不做能发但冷场）
 
@@ -84,8 +84,8 @@
 | # | 项 | 原 roadmap 阶段 |
 |---|---|---|
 | D1 | URL 抓取（`--url` 真发 HTTP + readability） | 老 v0.3 |
-| D3 | `llm-wiki update <id>`（重脱水保留 backlink） | 老 v0.3 |
-| D4 | `llm-wiki rename <old> <new>`（同步引用） | 老 v0.3 |
+| D3 | `pith-wiki update <id>`（重脱水保留 backlink） | 老 v0.3 |
+| D4 | `pith-wiki rename <old> <new>`（同步引用） | 老 v0.3 |
 | D5 | `[[concept-id]]` 自动建链补全 | 老 v0.2 |
 | D6 | `/save` `/load` 会话 | 老 v0.2 |
 | D2.5 | `doctor --fix` 自动修复 | 来自 Q2 推后 |
@@ -123,7 +123,7 @@ GIF 必须放在最后录 —— 录早了之后任何 UI 改动都得重录。
 需要在执行前填的三个具体信息：
 
 1. **A7 LICENSE 真名** —— 现在写的是 GitHub handle `l-zhi`，git config 里是 `lizhi fan`。要保留哪个？还是另起一个？
-2. **A4 SECURITY.md 收件邮箱** —— 建议起一个专用邮箱（如 `security@<你的域名>` 或 `<前缀>+llm-wiki.security@gmail.com`），不要混工作 / 私邮
+2. **A4 SECURITY.md 收件邮箱** —— 建议起一个专用邮箱（如 `security@<你的域名>` 或 `<前缀>+pith-wiki.security@gmail.com`），不要混工作 / 私邮
 3. **B2 英文 TL;DR 措辞** —— 草案见下，可以改：
 
    ```

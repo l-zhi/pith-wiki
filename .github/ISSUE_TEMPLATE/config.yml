@@ -4,8 +4,8 @@ blank_issues_enabled: false
 
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/l-zhi/llm-wiki/security/advisories/new
+    url: https://github.com/l-zhi/pith-wiki/security/advisories/new
     about: Please report security issues via GitHub Security Advisory (private). See SECURITY.md for details.
   - name: Roadmap
-    url: https://github.com/l-zhi/llm-wiki/blob/main/docs/roadmap.md
+    url: https://github.com/l-zhi/pith-wiki/blob/main/docs/roadmap.md
     about: Before opening a feature request, check what's already planned, deferred, or out of scope.

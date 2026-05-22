@@ -40,4 +40,4 @@ jobs:
         run: npm run build
 
       - name: Smoke check CLI
-        run: node dist/bin/llm-wiki.js --help
+        run: node dist/bin/pith-wiki.js --help

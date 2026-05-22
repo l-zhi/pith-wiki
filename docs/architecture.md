@@ -7,7 +7,7 @@
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                       入口（bin/）                          │
-│  llm-wiki.ts: commander 分流 → REPL or 子命令              │
+│  pith-wiki.ts: commander 分流 → REPL or 子命令              │
 └──────────────────────────────────────────────────────────┘
                 │                              │
                 ▼                              ▼
@@ -145,9 +145,9 @@ Agent.send()
 ```
 flag (--read-only/--model/--root)
    ▼
-env (DEEPSEEK_API_KEY, LLM_WIKI_*)
+env (DEEPSEEK_API_KEY, PITH_WIKI_*)
    ▼
-~/.llm-wiki/config.json
+~/.pith-wiki/config.json
    ▼
 代码内 DEFAULTS
    ▼

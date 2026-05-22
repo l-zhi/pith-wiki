@@ -3,7 +3,7 @@
 > This doc is for **contributors touching `src/tools/`**. For users reporting
 > vulnerabilities, see [SECURITY.md](../SECURITY.md) instead.
 
-llm-wiki gives an LLM real filesystem access through the `read_file` /
+pith-wiki gives an LLM real filesystem access through the `read_file` /
 `write_file` / `list_dir` tools. The promise to users is "the agent can't
 escape the workspace + wiki sandbox, and can't write anywhere without
 explicit approval." Every refactor under `src/tools/` has to preserve those
@@ -107,7 +107,7 @@ fight against):
   `--max-tool-payload-bytes` or by not feeding huge files.
 - Attacks requiring physical / root access to the user's machine.
 - Vulnerabilities in `node_modules` deps that aren't reachable from
-  llm-wiki code paths.
+  pith-wiki code paths.
 
 ## Before Refactoring `src/tools/`
 

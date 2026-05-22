@@ -1,8 +1,8 @@
-# llm-wiki —— 产品需求文档（PRD）
+# pith-wiki —— 产品需求文档（PRD）
 
 | 字段 | 内容 |
 | --- | --- |
-| 产品名 | llm-wiki |
+| 产品名 | pith-wiki |
 | 版本 | v0.1（脚手架版） |
 | 文档状态 | Draft |
 | 最近更新 | 2026-04-28 |
@@ -31,7 +31,7 @@
 
 ### 1.3 不做什么
 
-llm-wiki **不是**：
+pith-wiki **不是**：
 
 - 一个企业级知识库 / 团队协作 wiki（v0 单用户、单机）。
 - 一个搜索引擎或全文检索系统（不与 Algolia / ElasticSearch 竞争）。
@@ -80,9 +80,9 @@ llm-wiki **不是**：
 
 | # | 场景 | 触发动作 | 期望结果 |
 | --- | --- | --- | --- |
-| S1 | 沉淀一篇文章 | `llm-wiki ingest --collection paper --file foo.md` | 生成一条 < 400 字的 Markdown 词条 |
+| S1 | 沉淀一篇文章 | `pith-wiki ingest --collection paper --file foo.md` | 生成一条 < 400 字的 Markdown 词条 |
 | S2 | 边读边问 | 在 REPL 里粘贴一段文字，"帮我入库到 reading collection" | 模型调 `wiki_ingest`，确认后落盘 |
-| S3 | 检索回顾 | `llm-wiki query "agent 的容错设计"` | 输出拼好的 Markdown 上下文 + 引用 entry id |
+| S3 | 检索回顾 | `pith-wiki query "agent 的容错设计"` | 输出拼好的 Markdown 上下文 + 引用 entry id |
 | S4 | 写作辅助 | 在 REPL 里："基于我 wiki 里的笔记，帮我写一段关于 agent 重试的文字" | 模型先 `wiki_query`，再用上下文生成内容 |
 | S5 | 手工编辑 | 用 Obsidian 打开 `wiki-data/` 改某条 | 下次 `query` 自动反映改动，无需重建索引 |
 
@@ -132,7 +132,7 @@ query(text, maxTokens=4000) → { context, referencedEntries }
 
 ### 4.2 CLI 入口
 
-#### FR-4 交互式 REPL（`llm-wiki` 默认）
+#### FR-4 交互式 REPL（`pith-wiki` 默认）
 
 | 能力 | 说明 |
 | --- | --- |
@@ -140,7 +140,7 @@ query(text, maxTokens=4000) → { context, referencedEntries }
 | 工具调用循环 | OpenAI 风格 function calling，串行执行（p-queue concurrency=1） |
 | Ctrl+C 处理 | 第一次取消在飞调用，第二次（1.5s 内）退出 |
 | Slash 命令 | `/help` `/clear` `/reset` `/exit` |
-| 历史持久化 | `~/.llm-wiki/history`（行级） |
+| 历史持久化 | `~/.pith-wiki/history`（行级） |
 | Token 计量 | 每轮显示累计 in/out tokens |
 | 错误分类 | auth / rate_limit / network / model_error / tool_error，前两类自动重试 |
 
@@ -188,7 +188,7 @@ query(text, maxTokens=4000) → { context, referencedEntries }
 | **可移植** | 数据格式 = Markdown + YAML，可被 Obsidian / VS Code / Git 直接消费 |
 | **可观测** | 每次工具调用打印 `→ tool(args)` 与 `✓/✗ tool: result preview` |
 | **错误恢复** | 单条 entry 解析失败不影响其它；网络错误指数退避重试最多 2 次 |
-| **配置** | `flag > env > ~/.llm-wiki/config.json > defaults`，启动时 zod 校验 |
+| **配置** | `flag > env > ~/.pith-wiki/config.json > defaults`，启动时 zod 校验 |
 | **依赖** | 不引入向量库 / 数据库 / HTTP 框架 |
 
 ---
@@ -221,7 +221,7 @@ wiki-data/
 ├── reading/
 │   └── attention-paper.md
 └── docs/
-    └── llm-wiki-prd.md
+    └── pith-wiki-prd.md
 ```
 
 每个 `.md` 文件都是 frontmatter + body 的标准 Markdown，**可独立移动 / 拷贝 / 编辑**。
@@ -250,7 +250,7 @@ wiki-data/
 | Slug 冲突（同 collection 下 id 重名） | 后写覆盖前写 | v0 已知；v1 加 `--no-overwrite` flag |
 | 大量 entry 时 `linkIndex()` 全量扫描慢 | 启动延迟 | v0 假设 < 1k entry；v1 持久化 `.index.json` |
 | DeepSeek 限流 | 请求失败 | 已实现 429 指数退避（≤2 次） |
-| 用户改 frontmatter 时格式错 | 词条加载失败、被静默跳过 | v0 只跳过；v1 加诊断子命令 `llm-wiki doctor` |
+| 用户改 frontmatter 时格式错 | 词条加载失败、被静默跳过 | v0 只跳过；v1 加诊断子命令 `pith-wiki doctor` |
 | 关键词检索精度差 | 回答相关性低 | v1 加 BM25 / 同义词字典 |
 | 多语言查询（中英混合） | tokenize 简单切词不理想 | v0 接受，v1 接 jieba / segmenter |
 
@@ -263,7 +263,7 @@ wiki-data/
 **v0.1（已交付）**：核心三服务、Ink REPL、6 个工具、4 个子命令、沙箱 + 审批、16 个单元测试。
 
 **v0.2（短期，~2 周）**：
-- `llm-wiki doctor`：诊断格式错误的 entry。
+- `pith-wiki doctor`：诊断格式错误的 entry。
 - 写入前 diff 预览。
 - `[[concept-id]]` 自动建链补全。
 - `/save` `/load` 会话。
@@ -286,7 +286,7 @@ wiki-data/
 v0 视为达成 G1-G5 当且仅当：
 
 - [x] `npm run build && npm test` 全部通过（≥ 16 测试用例）
-- [x] `node dist/bin/llm-wiki.js --help` 正确打印 6 个子命令
+- [x] `node dist/bin/pith-wiki.js --help` 正确打印 6 个子命令
 - [x] 无 API key 时 `list` / `query` / `get` 仍可用
 - [x] REPL 内 Ctrl+C 单击取消、双击退出
 - [x] `write_file` 触发审批弹窗，`--read-only` 全局禁写

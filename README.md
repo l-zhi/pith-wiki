@@ -1,4 +1,4 @@
-# llm-wiki
+# pith-wiki
 
 > **English TL;DR** — A terminal-native LLM wiki, Karpathy-style: don't shove
 > raw docs into a vector DB and pray. Hydrate them into dense Markdown entries;
@@ -16,7 +16,7 @@
 > 把它捞回来。用 LLM 把原文 _脱水（hydrate）_ 成高密度的 Markdown 词条，
 > 检索时靠关键词 + 链接遍历，简单直接，肉眼可读。
 
-交互式 REPL + 子命令（`llm-wiki`、`llm-wiki ingest` 等），见下方 [安装](#安装) 与 [使用](#使用)。
+交互式 REPL + 子命令（`pith-wiki`、`pith-wiki ingest` 等），见下方 [安装](#安装) 与 [使用](#使用)。
 
 **平台支持**：Linux 与 macOS 一等公民，CI 矩阵两个都跑（Node 20 / 22）。Windows
 理论可用但**不在 CI 覆盖范围**——`fs.rename` 原子性、chokidar fs-event、`path.delimiter`
@@ -28,12 +28,12 @@
 
 ```bash
 npm install
-mkdir -p ~/.llm-wiki && cp .env.example ~/.llm-wiki/.env && chmod 600 ~/.llm-wiki/.env
-# 编辑 ~/.llm-wiki/.env，填入 DEEPSEEK_API_KEY
+mkdir -p ~/.pith-wiki && cp .env.example ~/.pith-wiki/.env && chmod 600 ~/.pith-wiki/.env
+# 编辑 ~/.pith-wiki/.env，填入 DEEPSEEK_API_KEY
 npm run build
 ```
 
-`.env` 默认从 `~/.llm-wiki/.env` 读取（跨 workspace 共用一份密钥）。
+`.env` 默认从 `~/.pith-wiki/.env` 读取（跨 workspace 共用一份密钥）。
 若 workspace 根目录里也存在 `.env`，会被先加载作为 fallback，但
 home 里的同名变量优先级更高（`override: true`）。
 
@@ -42,9 +42,9 @@ home 里的同名变量优先级更高（`override: true`）。
 交互式 REPL（基于 Ink 的富终端 UI）：
 
 ```bash
-npm run dev            # 等价于 tsx bin/llm-wiki.ts
+npm run dev            # 等价于 tsx bin/pith-wiki.ts
 # 构建后也可以直接：
-llm-wiki
+pith-wiki
 ```
 
 进 REPL 后**一个进程同时干三件事**：
@@ -85,54 +85,54 @@ REPL 启动 flag：
 
 ```bash
 # 单文件脱水入库（按扩展名自动选转换器：.md/.txt/.pdf/.docx/.html）
-llm-wiki ingest --collection tech --file ./paper.md
-llm-wiki ingest --collection tech --file ./paper.pdf      # 走 pdf-parse
-llm-wiki ingest --collection tech --file ./report.docx    # 走 mammoth
+pith-wiki ingest --collection tech --file ./paper.md
+pith-wiki ingest --collection tech --file ./paper.pdf      # 走 pdf-parse
+pith-wiki ingest --collection tech --file ./report.docx    # 走 mammoth
 # 或从 stdin（不进转换器，直接当 markdown 喂 hydrator）：
-cat paper.md | llm-wiki ingest --collection tech
+cat paper.md | pith-wiki ingest --collection tech
 
 # 批量入库：glob 模式（fast-glob 语法）
-llm-wiki ingest --collection tech --batch 'papers/**/*.md'
+pith-wiki ingest --collection tech --batch 'papers/**/*.md'
 
 # 批量入库：递归整个目录（任何已注册扩展名都能被批量解析）
-llm-wiki ingest --collection tech --dir ./papers/
+pith-wiki ingest --collection tech --dir ./papers/
 # 默认并发 3、自动 429 退避、源路径已入库会跳过；--force 强制重脱水覆盖
-llm-wiki ingest --collection tech --dir ./papers/ --force --concurrency 5
+pith-wiki ingest --collection tech --dir ./papers/ --force --concurrency 5
 
 # 强指定转换器（绕过扩展名）；--no-cache 跳过 .cache/converters/ 调试用
-llm-wiki ingest --collection tech --file ./readme.unknown --converter markdown-passthrough
-llm-wiki ingest --collection tech --file ./paper.pdf --no-cache
+pith-wiki ingest --collection tech --file ./readme.unknown --converter markdown-passthrough
+pith-wiki ingest --collection tech --file ./paper.pdf --no-cache
 
 # 列出当前 build 注册的所有转换器（包括 host 自定义）
-llm-wiki converters
+pith-wiki converters
 ```
 
 ### 持久化队列（异步，可中断、可查进度、异常重试）
 
 ```bash
 # 入队（不立即处理；deriveJobId 基于路径+collection，重复 add 自动去重）
-llm-wiki queue add --collection reading --file ./paper.md
-llm-wiki queue add --collection reading --batch 'inbox/**/*.md'
-llm-wiki queue add --collection reading --dir ~/notes/inbox      # 配 --read-path
-llm-wiki queue add --collection reading --dir ~/notes/inbox --force  # 重新入库
+pith-wiki queue add --collection reading --file ./paper.md
+pith-wiki queue add --collection reading --batch 'inbox/**/*.md'
+pith-wiki queue add --collection reading --dir ~/notes/inbox      # 配 --read-path
+pith-wiki queue add --collection reading --dir ~/notes/inbox --force  # 重新入库
 
 # 起前台 worker（占锁；Ctrl+C 安全退出，下次自动续跑）
-llm-wiki queue run
-llm-wiki queue run --concurrency 4   # 临时覆盖 queueConcurrency 配置
+pith-wiki queue run
+pith-wiki queue run --concurrency 4   # 临时覆盖 queueConcurrency 配置
 
 # 任意时刻查进度（无锁；与 worker 并存）
-llm-wiki queue status                # 人类可读：counts + running + 最近 10 条事件
-llm-wiki queue status --json | jq '.counts'
+pith-wiki queue status                # 人类可读：counts + running + 最近 10 条事件
+pith-wiki queue status --json | jq '.counts'
 
 # 失败 job 处理：每个异常都重试 maxAttempts 次（默认 3，含 5s/30s/2min 退避），
 # 用尽后归档为 dead，等手动复位
-llm-wiki queue retry <jobId> ...     # 复位指定 jobId
-llm-wiki queue retry --all-dead      # 复位所有 dead
+pith-wiki queue retry <jobId> ...     # 复位指定 jobId
+pith-wiki queue retry --all-dead      # 复位所有 dead
 
 # 清理（不删 log 文件）
-llm-wiki queue clear                 # 默认清 completed
-llm-wiki queue clear --dead
-llm-wiki queue clear --all           # 含 pending！谨慎
+pith-wiki queue clear                 # 默认清 completed
+pith-wiki queue clear --dead
+pith-wiki queue clear --all           # 含 pending！谨慎
 ```
 
 REPL 里也有同名工具：`wiki_queue_add`、`wiki_queue_status`，用自然语言指挥 LLM
@@ -148,7 +148,7 @@ worker 的并存模型见下文 [多终端协作](#多终端协作)。
 ### 目录监听 watcher（自动入队）
 
 不想每次手动 `queue add`？配 `watchDirs` 让 chokidar 监听一棵笔记目录，
-add/change 自动入队，worker 自动消化。在 `~/.llm-wiki/config.json` 里：
+add/change 自动入队，worker 自动消化。在 `~/.pith-wiki/config.json` 里：
 
 ```jsonc
 {
@@ -163,7 +163,7 @@ add/change 自动入队，worker 自动消化。在 `~/.llm-wiki/config.json` �
 }
 ```
 
-启动 `llm-wiki`，REPL 底部会显示 `watch N`；从此往 vault 加 `工作/笔记.md`
+启动 `pith-wiki`，REPL 底部会显示 `watch N`；从此往 vault 加 `工作/笔记.md`
 就自动落进 `<wikiRoot>/工作/<id>.md`。
 
 要点：
@@ -177,24 +177,24 @@ add/change 自动入队，worker 自动消化。在 `~/.llm-wiki/config.json` �
   ```
 - **沙箱**：watch 路径必须落在 `workspaceRoot ∪ wikiRoot ∪ additionalReadPaths`
   之内，且**不能与 wikiRoot 重叠**（否则 wiki 写入会触发 watcher 自我循环；启动
-  期 fail-fast）。如果 vault 在 home 之外，把它加进 `LLM_WIKI_READ_PATHS`。
+  期 fail-fast）。如果 vault 在 home 之外，把它加进 `PITH_WIKI_READ_PATHS`。
 - **自动 ignored**：`.obsidian/`、`.git/`、`.DS_Store`、`.icloud`、任意层级的
   `wiki/` / `outputs/` / `node_modules/`。Obsidian vault 的 plugin 数据不会污染队列。
 - **change 事件**：检测到已 ingest 文件变动 → 自动 reset 队列里的对应 job 为
   `force=true`，worker 重跑覆盖原 entry（同 id，无 `-2` 后缀）。
-- **`--no-auto-watch`** 临时关掉，或写到 `~/.llm-wiki/config.json` 里 `"watchAutoStart": false`。
+- **`--no-auto-watch`** 临时关掉，或写到 `~/.pith-wiki/config.json` 里 `"watchAutoStart": false`。
 
 CLI 独立运行：
 
 ```bash
 # 临时配一条 watcher（不进 config）
-llm-wiki watch --dir ~/notes/inbox --collection reading --initial-scan
+pith-wiki watch --dir ~/notes/inbox --collection reading --initial-scan
 
 # 用 collectionFromSubdir
-llm-wiki watch --dir ~/.../vault --collection-from-subdir --fallback-collection misc
+pith-wiki watch --dir ~/.../vault --collection-from-subdir --fallback-collection misc
 
 # 读 config.watchDirs（前台运行；Ctrl-C 关闭）
-llm-wiki watch
+pith-wiki watch
 ```
 
 watcher 自身**不取队列锁**——可以和 REPL（自动起的 worker）/ `queue run` 并行；
@@ -204,30 +204,30 @@ watcher 自身**不取队列锁**——可以和 REPL（自动起的 worker）/ 
 
 ```bash
 # 查看一个词条
-llm-wiki get llm-agent-design
+pith-wiki get llm-agent-design
 
 # 装配上下文（无 LLM 调用，纯本地检索）
-llm-wiki query "agent 的重试逻辑应该怎么设计"
+pith-wiki query "agent 的重试逻辑应该怎么设计"
 
 # 列出全部 / 某个 collection 的词条
-llm-wiki list --collection tech
+pith-wiki list --collection tech
 ```
 
-### 诊断：`llm-wiki doctor`（不需要 API key）
+### 诊断：`pith-wiki doctor`（不需要 API key）
 
 对积攒到几十上百条之后的 wiki 做一次体检，把"格式坏掉、引用错位、id 撞名"
 这类不会被 LibraryService 静默跳过却真实存在的问题摊出来。仅报告，不动数据。
 
 ```bash
 # 默认人类可读输出；有问题时 exit 1，便于 CI 钩进 pre-commit
-llm-wiki doctor
+pith-wiki doctor
 
 # 机器可读，喂给 jq / 监控系统都方便
-llm-wiki doctor --json
+pith-wiki doctor --json
 
 # 只跑某一类（默认全跑，五类排序：frontmatter / orphan-link / duplicate-id
 # / illegal-source / dangling-concept）
-llm-wiki doctor --check orphan-link,dangling-concept
+pith-wiki doctor --check orphan-link,dangling-concept
 ```
 
 五类 check：
@@ -251,9 +251,9 @@ llm-wiki doctor --check orphan-link,dangling-concept
 
 ### 多 provider 切换
 
-llm-wiki 走的是 OpenAI-compatible 协议——任何同协议的服务（DeepSeek / Qwen
+pith-wiki 走的是 OpenAI-compatible 协议——任何同协议的服务（DeepSeek / Qwen
 DashScope / OpenAI / Moonshot Kimi / Zhipu GLM / OpenRouter / Groq / 本地
-Ollama …）都能直接接入。在 `~/.llm-wiki/config.json` 里并列声明多条：
+Ollama …）都能直接接入。在 `~/.pith-wiki/config.json` 里并列声明多条：
 
 ```jsonc
 {
@@ -273,8 +273,8 @@ Ollama …）都能直接接入。在 `~/.llm-wiki/config.json` 里并列声明�
 切换方式（优先级从高到低）：
 
 ```bash
-llm-wiki --provider qwen                  # 仅当前命令
-LLM_WIKI_PROVIDER=qwen llm-wiki           # 当前 shell session
+pith-wiki --provider qwen                  # 仅当前命令
+PITH_WIKI_PROVIDER=qwen pith-wiki           # 当前 shell session
 # config.json 里 "activeProvider": "qwen" → 持久默认
 ```
 
@@ -290,29 +290,29 @@ agent loop 卡死，缺后者 `wiki_ingest` / `/digest` 失败。
 
 ## 多终端协作
 
-队列状态 (`~/.llm-wiki/queue/state.json`) 是**单一真相**；worker 通过
+队列状态 (`~/.pith-wiki/queue/state.json`) 是**单一真相**；worker 通过
 `state.json.lock` 文件保证**同一时刻只有一个进程在消费**。可以这么协作：
 
 ```bash
 # 终端 A：REPL（自动起 worker，持锁）
-llm-wiki
+pith-wiki
 
 # 终端 B：随时往队列里塞，不抢 worker
-llm-wiki queue add --collection ... --dir ...
-llm-wiki queue status        # 任何时候看进度都行
+pith-wiki queue add --collection ... --dir ...
+pith-wiki queue status        # 任何时候看进度都行
 
 # 终端 C：千万别再起 worker
-llm-wiki queue run           # ❌ 会报 "queue is already running (pid=...)"
+pith-wiki queue run           # ❌ 会报 "queue is already running (pid=...)"
 ```
 
 如果想把 worker 留在另一个独立终端：
 
 ```bash
 # 终端 A：REPL，关掉自动 worker（QueueIndicator 仍展示状态）
-llm-wiki chat --no-auto-queue
+pith-wiki chat --no-auto-queue
 
 # 终端 B：worker 在这边
-llm-wiki queue run
+pith-wiki queue run
 ```
 
 **崩溃恢复**：worker 异常退出（kill -9 / 断电）时，`state.json` 上残留的
@@ -334,8 +334,8 @@ REPL 默认把每次 session 写到 `<wikiRoot>/output/transcripts/<sessionTs>.m
 # Chat Session 2026-04-30T08:15:32.100Z
 
 - model: `deepseek-chat`
-- workspaceRoot: `/Users/.../llm-wiki`
-- wikiRoot: `/Users/.../llm-wiki/wiki-data`
+- workspaceRoot: `/Users/.../pith-wiki`
+- wikiRoot: `/Users/.../pith-wiki/wiki-data`
 
 ---
 
@@ -362,7 +362,7 @@ REPL 默认把每次 session 写到 `<wikiRoot>/output/transcripts/<sessionTs>.m
 
 每次回合的**所有工具调用与结果**都会保留，方便复盘 LLM 的决策路径。
 用 `appendFileSync` 同步落盘——REPL 异常退出也不会丢内容。
-关掉：CLI 加 `--no-transcript`，或在 `~/.llm-wiki/config.json` 里
+关掉：CLI 加 `--no-transcript`，或在 `~/.pith-wiki/config.json` 里
 `"transcriptEnabled": false`。
 
 ### `/digest` —— 把对话整理成 wiki 条目
@@ -395,7 +395,7 @@ digest saved: agent-retry-policy (collection=output)
   path: /Users/.../wiki-data/output/agent-retry-policy.md
 
 > /digest research-notes        # 落到指定 collection
-> llm-wiki get agent-retry-policy   # 验证保存的内容
+> pith-wiki get agent-retry-policy   # 验证保存的内容
 ```
 
 注意：
@@ -487,25 +487,25 @@ compressionRatio: 0.12
 
 ## 配置
 
-优先级：命令行 flag > 环境变量 > `~/.llm-wiki/config.json` > 默认值。
+优先级：命令行 flag > 环境变量 > `~/.pith-wiki/config.json` > 默认值。
 
 需要一份能直接 copy 的完整 `config.json` 示例？看 [docs/config.example.json](docs/config.example.json) ——
 多 provider + watchDirs + queue + 自定义路径全字段都有，对照下面的字段表挑你
-要的部分粘到 `~/.llm-wiki/config.json` 就行。
+要的部分粘到 `~/.pith-wiki/config.json` 就行。
 
 | 字段 | 环境变量 | 默认 |
 | --- | --- | --- |
 | `apiKey` | `DEEPSEEK_API_KEY` | _必填_（仅 ingest 与 REPL 需要；多 provider 模式下被 active entry 覆盖） |
-| `baseURL` | `LLM_WIKI_BASE_URL` | `https://api.deepseek.com` |
-| `model` | `LLM_WIKI_MODEL` | `deepseek-chat` |
+| `baseURL` | `PITH_WIKI_BASE_URL` | `https://api.deepseek.com` |
+| `model` | `PITH_WIKI_MODEL` | `deepseek-chat` |
 | `providers` | _（无 env，复杂结构）_ | `{}`（详见 [多 provider 切换](#多-provider-切换)） |
-| `activeProvider` | `LLM_WIKI_PROVIDER` | _未设_（CLI `--provider` 优先） |
-| `wikiRoot` | `LLM_WIKI_ROOT` | `~/.llm-wiki/wiki-data` |
-| `workspaceRoot` | `LLM_WIKI_WORKSPACE` | `<cwd>` |
-| `readOnly` | `LLM_WIKI_READ_ONLY` | `false` |
-| `additionalReadPaths` | `LLM_WIKI_READ_PATHS`（用 `:` / `;` 分隔多条） | `[]` |
-| `queueStatePath` | _（无 env）_ | `~/.llm-wiki/queue/state.json` |
-| `queueLogDir` | _（无 env）_ | `~/.llm-wiki/queue/logs` |
+| `activeProvider` | `PITH_WIKI_PROVIDER` | _未设_（CLI `--provider` 优先） |
+| `wikiRoot` | `PITH_WIKI_ROOT` | `~/.pith-wiki/wiki-data` |
+| `workspaceRoot` | `PITH_WIKI_WORKSPACE` | `<cwd>` |
+| `readOnly` | `PITH_WIKI_READ_ONLY` | `false` |
+| `additionalReadPaths` | `PITH_WIKI_READ_PATHS`（用 `:` / `;` 分隔多条） | `[]` |
+| `queueStatePath` | _（无 env）_ | `~/.pith-wiki/queue/state.json` |
+| `queueLogDir` | _（无 env）_ | `~/.pith-wiki/queue/logs` |
 | `queueConcurrency` | _（无 env）_ | `2` |
 | `queueMaxAttempts` | _（无 env）_ | `3` |
 | `queueAutoStart` | _（无 env）_ | `true`（CLI `--no-auto-queue` 关） |
@@ -522,33 +522,33 @@ compressionRatio: 0.12
 
 ```bash
 # CLI flag（可重复）
-llm-wiki --read-path ~/notes --read-path ~/research/papers
+pith-wiki --read-path ~/notes --read-path ~/research/papers
 
 # 环境变量 / .env —— 推荐 JSON 数组写法，~ 自动展开
-LLM_WIKI_READ_PATHS=["~/notes", "~/research/papers"]
+PITH_WIKI_READ_PATHS=["~/notes", "~/research/papers"]
 
 # 环境变量也支持分隔符串（POSIX `:` / Windows `;`）
-LLM_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers
+PITH_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers
 
-# ~/.llm-wiki/config.json
+# ~/.pith-wiki/config.json
 { "additionalReadPaths": ["/Users/me/notes", "/Users/me/research/papers"] }
 ```
 
 **两层效果**：
 
 1. **读扩展**：`read_file` / `list_dir` 工具能读到这些目录；`write_file` 仍只锁在 `workspaceRoot ∪ wikiRoot`。
-2. **入库门槛**：`llm-wiki ingest --file <p>` 与 `--batch` / `--dir` 模式都强制要求源文件落在
+2. **入库门槛**：`pith-wiki ingest --file <p>` 与 `--batch` / `--dir` 模式都强制要求源文件落在
    `workspaceRoot ∪ wikiRoot ∪ additionalReadPaths` 之内。从沙箱外的路径 ingest 会立即报错并拒绝。
-   这避免了"`llm-wiki ingest --file /etc/passwd`"这种意外把任意系统文件 wiki 化的可能。
+   这避免了"`pith-wiki ingest --file /etc/passwd`"这种意外把任意系统文件 wiki 化的可能。
 
 所有路径都经 `realpath` 归一化，符号链接逃逸到沙箱外仍会被拒绝。
 
 ## 文件落在哪
 
-所有 llm-wiki 的本地数据都在 `~/.llm-wiki/` 下，**不沾染任何 workspace**：
+所有 pith-wiki 的本地数据都在 `~/.pith-wiki/` 下，**不沾染任何 workspace**：
 
 ```
-~/.llm-wiki/
+~/.pith-wiki/
 ├── .env                                 # 默认 .env 加载位置（mode 600）
 ├── config.json                          # 可选用户配置
 ├── history                              # REPL 上下键的命令历史（最近 N 条）
@@ -570,31 +570,31 @@ LLM_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers
 > **从早期版本升级**：
 >
 > v0.1～v0.2 把 wiki 默认放在 `<workspaceRoot>/wiki-data/`、`.env` 放在
-> 项目根，两者都容易被误提交进项目仓库。当前默认全部挪到 `~/.llm-wiki/`：
+> 项目根，两者都容易被误提交进项目仓库。当前默认全部挪到 `~/.pith-wiki/`：
 >
 > ```bash
 > # 1. wiki 数据
-> mv ./wiki-data ~/.llm-wiki/wiki-data
+> mv ./wiki-data ~/.pith-wiki/wiki-data
 >
 > # 2. .env 密钥（如果原来在项目根）
-> mv ./.env ~/.llm-wiki/.env && chmod 600 ~/.llm-wiki/.env
+> mv ./.env ~/.pith-wiki/.env && chmod 600 ~/.pith-wiki/.env
 >
-> # 想保留 wiki 在原位置：在 ~/.llm-wiki/config.json 里写
-> #   { "wikiRoot": "/Users/me/code/llm-wiki/wiki-data" }
-> # 或 export LLM_WIKI_ROOT=$PWD/wiki-data
+> # 想保留 wiki 在原位置：在 ~/.pith-wiki/config.json 里写
+> #   { "wikiRoot": "/Users/me/code/pith-wiki/wiki-data" }
+> # 或 export PITH_WIKI_ROOT=$PWD/wiki-data
 > ```
 >
 > 项目根的 `.env` 仍会作为 fallback 加载（首次 setup 仍可 cp .env.example .env），
-> 但 `~/.llm-wiki/.env` 里的同名变量优先级更高。
+> 但 `~/.pith-wiki/.env` 里的同名变量优先级更高。
 
 ## 典型 day-to-day 工作流
 
 ```bash
 # 1. 早上：把昨天攒的笔记入队
-llm-wiki queue add --collection reading --dir ~/Dropbox/notes/inbox
+pith-wiki queue add --collection reading --dir ~/Dropbox/notes/inbox
 
 # 2. 进 REPL：一边跟 LLM 聊，一边后台 ingest
-llm-wiki
+pith-wiki
 > 队列还剩多少？                  # → wiki_queue_status
 > 帮我看下 wiki 里关于 RLHF 的条目，对比 PPO 和 DPO   # → wiki_query
 > 把这段日志加进 tech：<贴日志>   # → wiki_ingest

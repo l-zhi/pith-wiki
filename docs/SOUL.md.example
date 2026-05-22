@@ -2,9 +2,9 @@
 
 Drop this at one of:
 
-- `~/.llm-wiki/SOUL.md` (user-global, applies across all workspaces)
+- `~/.pith-wiki/SOUL.md` (user-global, applies across all workspaces)
 - `<workspaceRoot>/SOUL.md` (project-local, applies only when REPL is launched there)
-- Or set `LLM_WIKI_SOUL=<path>` / config `soulFile: <path>` for an explicit override
+- Or set `PITH_WIKI_SOUL=<path>` / config `soulFile: <path>` for an explicit override
 
 Both default locations are loaded and concatenated (user-global first, then project-local) so
 you can keep a personal baseline and refine it per project. Restart the REPL to pick up edits.

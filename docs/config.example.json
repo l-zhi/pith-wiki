@@ -24,7 +24,7 @@
 
   "activeProvider": "deepseek",
 
-  "wikiRoot": "~/.llm-wiki/wiki-data",
+  "wikiRoot": "~/.pith-wiki/wiki-data",
   "workspaceRoot": "~/code/my-project",
 
   "additionalReadPaths": [
@@ -50,13 +50,13 @@
   "queueMaxAttempts": 3,
   "queueAutoStart": true,
 
-  "outputDir": "~/.llm-wiki/wiki-data/output/transcripts",
+  "outputDir": "~/.pith-wiki/wiki-data/output/transcripts",
   "transcriptEnabled": true,
   "digestCollection": "output",
 
   "cacheConverted": true,
 
-  "soulFile": "~/.llm-wiki/SOUL.md",
+  "soulFile": "~/.pith-wiki/SOUL.md",
 
   "maxToolPayloadBytes": 100000
 }

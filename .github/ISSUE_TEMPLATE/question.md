@@ -20,4 +20,4 @@ labels: ['question']
 ## Context
 
 <!-- Just enough about your use case so the answer can be specific.
-     What are you trying to build with llm-wiki? -->
+     What are you trying to build with pith-wiki? -->

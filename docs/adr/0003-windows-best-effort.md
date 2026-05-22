@@ -10,7 +10,7 @@
 |---|---|
 | `LibraryService` 的原子写（`.tmp + rename`） | Windows `rename` 在目标存在时抛 EEXIST，需要先 unlink 或用 `fs.renameSync` 的不同语义 |
 | watcher（chokidar） | Windows 默认走 polling fallback，事件模型与 inotify / FSEvents 不同 |
-| `path.delimiter` 用于解析 `LLM_WIKI_READ_PATHS` | Windows 是 `;`，POSIX 是 `:` |
+| `path.delimiter` 用于解析 `PITH_WIKI_READ_PATHS` | Windows 是 `;`，POSIX 是 `:` |
 | 文件名大小写敏感性 | Windows NTFS 默认 case-insensitive，影响 entry id 冲突检测 |
 | 路径分隔符 | `\` vs `/`；现有代码用 `path.join` 但 string match 可能漏 |
 

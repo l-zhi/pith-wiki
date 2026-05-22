@@ -17,7 +17,7 @@ anyone resurrecting a very old `wiki-data/` directory.
 
 ## When to ignore
 
-- You started using llm-wiki at 0.3.0 or later.
+- You started using pith-wiki at 0.3.0 or later.
 - Your `wiki-data/` was created by the current `LibraryService.put` / converter pipeline.
 
 ## When to run

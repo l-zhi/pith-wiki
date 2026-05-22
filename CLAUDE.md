@@ -15,13 +15,13 @@ npm run typecheck   # tsc --noEmit
 
 Run a single test: `npx vitest run tests/library.test.ts` (or `-t "<name>"` to filter by test name).
 
-Subcommands during development: prefix with `npm run dev --` instead of `llm-wiki`, e.g. `npm run dev -- list --collection tech`. Stdin piping works (`cat foo.md | npm run dev -- ingest --collection tech`).
+Subcommands during development: prefix with `npm run dev --` instead of `pith-wiki`, e.g. `npm run dev -- list --collection tech`. Stdin piping works (`cat foo.md | npm run dev -- ingest --collection tech`).
 
 `DEEPSEEK_API_KEY` (in `.env`) is required for `ingest` and the REPL; `get` / `list` / `query` work without it.
 
 ## Architecture
 
-`bin/llm-wiki.ts` uses commander to dispatch either to subcommands (`src/cli/subcommands.ts`) or the default Ink REPL (`src/cli/App.tsx`). Both paths instantiate the same three services in `src/wiki/` — there is no parallel implementation for the LLM-tool route.
+`bin/pith-wiki.ts` uses commander to dispatch either to subcommands (`src/cli/subcommands.ts`) or the default Ink REPL (`src/cli/App.tsx`). Both paths instantiate the same three services in `src/wiki/` — there is no parallel implementation for the LLM-tool route.
 
 **Three core services** (`src/wiki/`):
 
@@ -37,7 +37,7 @@ Subcommands during development: prefix with `npm run dev --` instead of `llm-wik
 
 **Approval flow**: in REPL mode, every new write path triggers an approval prompt. Answers: `y` (this path only), `a` (whole session — added to `approvedWritePaths`), `n` (refuse). Subcommands bypass this (no UI).
 
-**Config precedence** (`src/config.ts`): CLI flag > env (`DEEPSEEK_API_KEY`, `LLM_WIKI_*`) > `~/.llm-wiki/config.json` > built-in defaults. Parsed through zod — invalid config is fail-fast at startup.
+**Config precedence** (`src/config.ts`): CLI flag > env (`DEEPSEEK_API_KEY`, `PITH_WIKI_*`) > `~/.pith-wiki/config.json` > built-in defaults. Parsed through zod — invalid config is fail-fast at startup.
 
 ## Conventions worth knowing
 
@@ -51,7 +51,7 @@ Subcommands during development: prefix with `npm run dev --` instead of `llm-wik
 
 ### Issue tracker
 
-Issues and PRDs live as GitHub issues at `l-zhi/llm-wiki`. Use the `gh` CLI.
+Issues and PRDs live as GitHub issues at `l-zhi/pith-wiki`. Use the `gh` CLI.
 See `docs/agents/issue-tracker.md`.
 
 ### Triage labels

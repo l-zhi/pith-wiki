@@ -15,7 +15,7 @@ labels: ['bug']
 
 ```bash
 # e.g.
-llm-wiki ingest --collection demo --file ./paper.pdf
+pith-wiki ingest --collection demo --file ./paper.pdf
 ```
 
 ## Expected vs actual
@@ -25,7 +25,7 @@ llm-wiki ingest --collection demo --file ./paper.pdf
 
 ## Environment
 
-- llm-wiki version: <!-- `node dist/bin/llm-wiki.js --version` or branch + commit -->
+- pith-wiki version: <!-- `node dist/bin/pith-wiki.js --version` or branch + commit -->
 - Node version: <!-- `node --version` -->
 - OS: <!-- macOS 14.x / Ubuntu 22.04 / etc. (Windows = best-effort, expect rough edges) -->
 - LLM provider + model: <!-- e.g. DeepSeek deepseek-chat / OpenAI gpt-4o-mini / local Ollama -->

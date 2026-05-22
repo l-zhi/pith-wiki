@@ -1,4 +1,4 @@
-# Contributing to llm-wiki
+# Contributing to pith-wiki
 
 Thanks for poking around. This is a solo-maintained project with limited
 bandwidth, but small contributions are welcome. Big ones — please open a
@@ -34,14 +34,14 @@ discussion issue first so we can scope-check before you sink hours into it.
 # Requires Node ≥ 20 (check `engines` in package.json). Use nvm if needed:
 nvm use   # reads .nvmrc
 
-git clone https://github.com/l-zhi/llm-wiki.git
-cd llm-wiki
+git clone https://github.com/l-zhi/pith-wiki.git
+cd pith-wiki
 npm install
 
 # Provide an API key only if you're running ingest / REPL. List/query/doctor
 # work without one.
-mkdir -p ~/.llm-wiki && cp .env.example ~/.llm-wiki/.env && chmod 600 ~/.llm-wiki/.env
-# edit ~/.llm-wiki/.env and fill DEEPSEEK_API_KEY (or your provider's key)
+mkdir -p ~/.pith-wiki && cp .env.example ~/.pith-wiki/.env && chmod 600 ~/.pith-wiki/.env
+# edit ~/.pith-wiki/.env and fill DEEPSEEK_API_KEY (or your provider's key)
 
 npm run build
 ```
@@ -80,9 +80,9 @@ vitest is the only test framework. **Every behavioral change needs a test**:
   suite must stay green
 
 Tests live in [`tests/`](tests/) — flat, one file per concern. Use tmpdirs
-(`fs.mkdtempSync(os.tmpdir() + 'llm-wiki-...-')`) for filesystem fixtures
-and clean up in `afterEach`. **Never** read from `~/.llm-wiki/` in tests —
-set `LLM_WIKI_CONFIG_PATH` to a sandbox path (see how `tests/config.test.ts`
+(`fs.mkdtempSync(os.tmpdir() + 'pith-wiki-...-')`) for filesystem fixtures
+and clean up in `afterEach`. **Never** read from `~/.pith-wiki/` in tests —
+set `PITH_WIKI_CONFIG_PATH` to a sandbox path (see how `tests/config.test.ts`
 does it).
 
 ## Commit Style
