@@ -1,5 +1,14 @@
 # llm-wiki
 
+> **English TL;DR** — A terminal-native LLM wiki, Karpathy-style: don't shove
+> raw docs into a vector DB and pray. Hydrate them into dense Markdown entries;
+> retrieve by keyword + link traversal. Local, file-based, works with any
+> OpenAI-compatible LLM endpoint.
+>
+> 中文完整文档见下方。 README in Chinese below.
+
+---
+
 一个仿 Claude Code 风格的命令行工具，用于搭建 **Karpathy 风格** 的 LLM 知识库。
 默认模型：**DeepSeek**（`deepseek-chat`）。默认存储：一个装 Markdown 文件的文件夹。
 
