@@ -11,6 +11,13 @@ import { HydrationService } from '../wiki/hydration.js';
 import { ContextAssembler } from '../wiki/assembler.js';
 import { runBatch } from '../wiki/batch.js';
 import { buildConverterPipeline } from '../wiki/converters/index.js';
+import {
+  runDoctor,
+  formatDoctorReportHuman,
+  formatDoctorReportJSON,
+  ALL_CHECKS,
+  type DoctorCheck,
+} from '../wiki/doctor.js';
 import { formatConvertersTable } from './converterFormat.js';
 import { collectDashboardData, formatDashboard } from './dashboardData.js';
 import { resolveSafePath, SafetyError } from '../tools/safety.js';
@@ -304,6 +311,52 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
         cacheConverted: config.cacheConverted,
       });
       console.log(formatConvertersTable(registry));
+    });
+
+  program
+    .command('doctor')
+    .description(
+      'Scan the wiki for malformed frontmatter, orphan links, duplicate IDs, illegal source paths, dangling [[concept-id]] markers. Report-only (no --fix).',
+    )
+    .option('--json', 'Output structured JSON instead of human-readable text.')
+    .option(
+      '--check <checks>',
+      `Comma-separated subset of checks to run (default: all). Valid: ${ALL_CHECKS.join(', ')}.`,
+    )
+    .action((opts) => {
+      const config = args.configFor();
+      let checks: readonly DoctorCheck[] | undefined;
+      if (opts.check) {
+        const requested = (opts.check as string).split(',').map((s) => s.trim()).filter(Boolean);
+        const unknown = requested.filter(
+          (c): c is string => !(ALL_CHECKS as readonly string[]).includes(c),
+        );
+        if (unknown.length) {
+          console.error(
+            chalk.red(`Unknown check name(s): ${unknown.join(', ')}.`),
+            chalk.gray(`Valid: ${ALL_CHECKS.join(', ')}`),
+          );
+          process.exitCode = 2;
+          return;
+        }
+        checks = requested as DoctorCheck[];
+      }
+      const report = runDoctor({
+        wikiRoot: config.wikiRoot,
+        checks,
+        sandbox: {
+          workspaceRoot: config.workspaceRoot,
+          additionalReadPaths: config.additionalReadPaths,
+        },
+      });
+      if (opts.json) {
+        console.log(formatDoctorReportJSON(report));
+      } else {
+        console.log(formatDoctorReportHuman(report));
+      }
+      if (report.summary.problemsFound > 0) {
+        process.exitCode = 1;
+      }
     });
 
   program

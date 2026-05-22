@@ -198,6 +198,38 @@ llm-wiki query "agent 的重试逻辑应该怎么设计"
 llm-wiki list --collection tech
 ```
 
+### 诊断：`llm-wiki doctor`（不需要 API key）
+
+对积攒到几十上百条之后的 wiki 做一次体检，把"格式坏掉、引用错位、id 撞名"
+这类不会被 LibraryService 静默跳过却真实存在的问题摊出来。仅报告，不动数据。
+
+```bash
+# 默认人类可读输出；有问题时 exit 1，便于 CI 钩进 pre-commit
+llm-wiki doctor
+
+# 机器可读，喂给 jq / 监控系统都方便
+llm-wiki doctor --json
+
+# 只跑某一类（默认全跑，五类排序：frontmatter / orphan-link / duplicate-id
+# / illegal-source / dangling-concept）
+llm-wiki doctor --check orphan-link,dangling-concept
+```
+
+五类 check：
+
+| 名 | 严重度 | 抓什么 |
+|---|---|---|
+| `frontmatter` | error | YAML 语法坏 / `EntrySchema` 校验不过（id 不是 kebab-case、tags 超 6 个、updated 不是 ISO 时间等） |
+| `orphan-link` | warning | `links: [foo]` 但库里没有 `foo` 这条 entry |
+| `duplicate-id` | error | 同一 id 在两个或更多 collection 出现 —— 按 id 查询会歧义 |
+| `illegal-source` | warning | `source.type=file` 但 `source.value` 落在沙箱外（`workspaceRoot ∪ wikiRoot ∪ additionalReadPaths`）—— `wiki_read_source` 会读不到 |
+| `dangling-concept` | warning | 正文 `[[id]]` 标注但目标不存在，或目标存在但没登记到 `links:` 字段 |
+
+每条 problem 自带 `suggestion`，告诉你具体改哪个文件的哪个字段。结构化 JSON
+输出 schema 见 [src/wiki/doctor.ts](src/wiki/doctor.ts) 顶部的 `DoctorReport` 类型。
+
+> 计划中的 `doctor --fix`（自动修复）单独跟踪在后续 issue —— 当前版本明确只读。
+
 ### 全局开关
 
 `--read-only`（禁用一切写入）、`--model <name>`、`--root <dir>`、`--read-path <dir>`（可重复）、`--provider <name>`。
