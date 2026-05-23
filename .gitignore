@@ -51,9 +51,8 @@ desktop.ini
 # 设回项目 cwd 的用户兜底。
 /output/
 
-# Per-user history & local config（兼容老 .llm-wiki/ 名字以防有人本机还没跑迁移脚本）
+# Per-user history & local config
 .pith-wiki/
-.llm-wiki/
 
 # --- Claude Code local artifacts ---
 .claude/

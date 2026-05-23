@@ -32,13 +32,6 @@ mkdir -p ~/.pith-wiki && cp .env.example ~/.pith-wiki/.env && chmod 600 ~/.pith-
 npm run build
 ```
 
-> **从老版 `llm-wiki` 升级？** 项目在 v0.3.0 改名为 `pith-wiki`。如果你本机有
-> `~/.llm-wiki/` 旧数据，跑一次迁移脚本：
-> ```bash
-> node scripts/migrations/migrate-from-llm-wiki.mjs          # 预览
-> node scripts/migrations/migrate-from-llm-wiki.mjs --apply  # 真改
-> ```
-
 ## 这工具能干啥
 
 **1. 脱水**（Hydrate）—— 把原始文档（markdown / PDF / DOCX / HTML / email）压缩成

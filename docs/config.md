@@ -108,12 +108,6 @@ PITH_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers
 └── index.json                           # LibraryService 持久化 entry 索引（冷启动加速）
 ```
 
-> **从老版 `llm-wiki` 升级？** 跑一次迁移脚本：
-> ```bash
-> node scripts/migrations/migrate-from-llm-wiki.mjs --apply
-> ```
-> 详见 [scripts/migrations/README.md](../scripts/migrations/README.md)。
-
 > **想把 wiki 跟 workspace 绑在一起？** 在 `~/.pith-wiki/config.json` 里写
 > `"wikiRoot": "/Users/me/code/myproject/wiki-data"`，或 export `PITH_WIKI_ROOT`。
 > `.gitignore` 里加 `/wiki-data/` 防止误提交。
