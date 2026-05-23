@@ -5,13 +5,15 @@
 ## 1. 装
 
 ```bash
-git clone https://github.com/l-zhi/pith-wiki.git
-cd pith-wiki
-npm install
-npm run build
+npm install -g pith-wiki   # 全局；后续命令直接叫 `pith-wiki`
+# 或不想全局污染：
+# npx pith-wiki <subcommand>
 ```
 
 需要 **Node ≥ 20**。
+
+> 想跑源码 / 改代码？看 [README §开发者](../README.md#开发者从源码构建) 那一段，
+> 用 `git clone` + `npm run build` 走开发者路径。本文以已装好 `pith-wiki` 命令为前提。
 
 ## 2. 拿个 API key
 
@@ -21,7 +23,7 @@ $0.27 / 1M tokens）。注册拿 key，写到 home 配置：
 
 ```bash
 # 一行建好 ~/.pith-wiki/ + .env 模板 + chmod 600：
-node dist/bin/pith-wiki.js init
+pith-wiki init
 
 # 然后编辑 ~/.pith-wiki/.env 填入：
 # DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
@@ -30,7 +32,7 @@ node dist/bin/pith-wiki.js init
 或者直接非交互一行（CI / 自动化友好）：
 
 ```bash
-node dist/bin/pith-wiki.js init --force --api-key sk-xxxxxxxxxxxxxxxx
+pith-wiki init --force --api-key sk-xxxxxxxxxxxxxxxx
 ```
 
 > 想用别的 provider（Qwen / OpenAI / 本地 Ollama …）？看
@@ -42,7 +44,7 @@ node dist/bin/pith-wiki.js init --force --api-key sk-xxxxxxxxxxxxxxxx
 管道送进 `ingest`：
 
 ```bash
-cat ./some-article.md | node dist/bin/pith-wiki.js ingest --collection reading
+cat ./some-article.md | pith-wiki ingest --collection reading
 ```
 
 或者 `--file ./some-article.md`。成功会输出新 entry 的 id；库默认落在 `~/.pith-wiki/wiki-data/`：
@@ -64,13 +66,13 @@ cat ~/.pith-wiki/wiki-data/reading/my-article-title.md
 
 ```bash
 # 装配上下文（无 LLM 调用，纯本地关键词检索）
-node dist/bin/pith-wiki.js query "你刚 ingest 那篇文章的核心观点"
+pith-wiki query "你刚 ingest 那篇文章的核心观点"
 
 # 或者列全部 entries
-node dist/bin/pith-wiki.js list --collection reading
+pith-wiki list --collection reading
 
 # 或者交互式 REPL（一边问，一边让 LLM 自动调 wiki_query）
-node dist/bin/pith-wiki.js
+pith-wiki
 ```
 
 REPL 里直接用自然语言聊。例如："基于我 reading collection 里的笔记，对比一下
@@ -92,7 +94,7 @@ REPL 里直接用自然语言聊。例如："基于我 reading collection 里的
 | 现象 | 多半是 |
 |---|---|
 | `Error: API key required` | `~/.pith-wiki/.env` 没建好，或 key 名字写错（DeepSeek 用 `DEEPSEEK_API_KEY`） |
-| `command not found: pith-wiki` | 没 `npm link` 或直接用 `node dist/bin/pith-wiki.js` |
+| `command not found: pith-wiki` | 没全局装；要么 `npm install -g pith-wiki`，要么用 `npx pith-wiki <subcommand>` 替代。源码开发者用 `node dist/bin/pith-wiki.js` 或先 `npm link` |
 | `tsc` 报一堆类型错 | Node 版本太低，需要 ≥ 20。`node --version` 看一下 |
 | `Failed to parse ~/.pith-wiki/config.json` | `config.json` 写错了，删掉这个文件让默认值兜底，再按 README §配置 重写 |
 | ingest 卡很久 | 大概率正常 —— DeepSeek 在 hydrate 一篇 5KB 文章要 5-15 秒。看不到进度可以另开终端 `pith-wiki status` |

@@ -23,16 +23,54 @@
 
 ## 安装
 
-> 5 分钟从 0 跑通第一条入库 → [docs/quickstart.md](docs/quickstart.md)。下面是简版。
+> 5 分钟从 0 跑通第一条入库 → [docs/quickstart.md](docs/quickstart.md)。
+
+### 用户：装来用
 
 ```bash
-npm install && npm run build
-node dist/bin/pith-wiki.js init   # 建 ~/.pith-wiki/、写 .env 模板、chmod 600
-# 编辑 ~/.pith-wiki/.env 填 DEEPSEEK_API_KEY；或者一行 setup：
-# node dist/bin/pith-wiki.js init --force --api-key sk-xxxxxxxxxxxxxxxx
+# 从 npm 装到全局（v0.3.0 发布后可用）
+npm install -g pith-wiki
+
+# 一次性初始化：建 ~/.pith-wiki/、写 .env 模板、chmod 600
+pith-wiki init
+
+# 编辑 ~/.pith-wiki/.env 填 DEEPSEEK_API_KEY；或者一行非交互 setup：
+pith-wiki init --force --api-key sk-xxxxxxxxxxxxxxxx
+
+# 进 REPL
+pith-wiki
 ```
 
-> 装到全局 (`npm i -g .` 之后) 命令名是 `pith-wiki init`。
+不想全局装？直接 `npx` 也行（每次重新拉，慢一点但零污染）：
+
+```bash
+npx pith-wiki init
+npx pith-wiki
+```
+
+### 开发者：从源码构建
+
+想改代码 / 贡献 PR / 跑没发布的 main 分支：
+
+```bash
+git clone https://github.com/l-zhi/pith-wiki.git
+cd pith-wiki
+npm install
+npm run build
+node dist/bin/pith-wiki.js init       # 建 ~/.pith-wiki/、写 .env 模板
+node dist/bin/pith-wiki.js            # 跑 REPL
+```
+
+开发期常用脚本：
+
+```bash
+npm run dev        # tsx 直接跑 bin/pith-wiki.ts，免 build
+npm test           # vitest 一次性
+npm run typecheck  # tsc --noEmit
+npm run lint       # eslint . （0 errors 通过）
+```
+
+详细贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 这工具能干啥
 
