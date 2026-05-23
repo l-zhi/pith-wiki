@@ -41,13 +41,6 @@ pith-wiki init --force --api-key sk-xxxxxxxxxxxxxxxx
 pith-wiki
 ```
 
-不想全局装？直接 `npx` 也行（每次重新拉，慢一点但零污染）：
-
-```bash
-npx pith-wiki init
-npx pith-wiki
-```
-
 ### 开发者：从源码构建
 
 想改代码 / 贡献 PR / 跑没发布的 main 分支：
@@ -56,20 +49,11 @@ npx pith-wiki
 git clone https://github.com/l-zhi/pith-wiki.git
 cd pith-wiki
 npm install
-npm run build
-node dist/bin/pith-wiki.js init       # 建 ~/.pith-wiki/、写 .env 模板
-node dist/bin/pith-wiki.js            # 跑 REPL
+npm run dev -- init     # 建 ~/.pith-wiki/、写 .env 模板（tsx 直接编译执行，免 build）
+npm run dev             # 跑 REPL
 ```
 
-开发期常用脚本：
-
-```bash
-npm run dev        # tsx 直接跑 bin/pith-wiki.ts，免 build
-npm test           # vitest 一次性
-npm run typecheck  # tsc --noEmit
-npm run lint       # eslint . （0 errors 通过）
-```
-
+其它开发期脚本：`npm test` / `npm run typecheck` / `npm run lint` / `npm run build`。
 详细贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 这工具能干啥
