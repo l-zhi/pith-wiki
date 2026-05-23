@@ -228,6 +228,5 @@
 
 - 完整产品规格视角的 PRD：[docs/PRD.md](./PRD.md)
 - 架构设计：[docs/architecture.md](./architecture.md)
-- API 与 CLI 契约：[docs/api.md](./api.md)
 - Roadmap：[docs/roadmap.md](./roadmap.md)
 - 项目根 README：[README.md](../README.md)

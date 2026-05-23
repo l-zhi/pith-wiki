@@ -6,7 +6,7 @@
 | 版本 | v0.1（脚手架版） |
 | 文档状态 | Draft |
 | 最近更新 | 2026-04-28 |
-| 关联文档 | [README.md](../README.md) · [架构](./architecture.md) · [API 设计](./api.md) · [Roadmap](./roadmap.md) |
+| 关联文档 | [README.md](../README.md) · [架构](./architecture.md) · [Roadmap](./roadmap.md) |
 
 ---
 

@@ -1,6 +1,6 @@
 # 架构设计
 
-> 配套文档：[PRD](./PRD.md) · [API 设计](./api.md) · [Roadmap](./roadmap.md)
+> 配套文档：[PRD](./PRD.md) · [Roadmap](./roadmap.md)
 
 ## 1. 整体分层
 
