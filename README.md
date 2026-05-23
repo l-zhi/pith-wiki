@@ -26,11 +26,13 @@
 > 5 分钟从 0 跑通第一条入库 → [docs/quickstart.md](docs/quickstart.md)。下面是简版。
 
 ```bash
-npm install
-mkdir -p ~/.pith-wiki && cp .env.example ~/.pith-wiki/.env && chmod 600 ~/.pith-wiki/.env
-# 编辑 ~/.pith-wiki/.env，填入 DEEPSEEK_API_KEY
-npm run build
+npm install && npm run build
+node dist/bin/pith-wiki.js init   # 建 ~/.pith-wiki/、写 .env 模板、chmod 600
+# 编辑 ~/.pith-wiki/.env 填 DEEPSEEK_API_KEY；或者一行 setup：
+# node dist/bin/pith-wiki.js init --force --api-key sk-xxxxxxxxxxxxxxxx
 ```
+
+> 装到全局 (`npm i -g .` 之后) 命令名是 `pith-wiki init`。
 
 ## 这工具能干啥
 
@@ -54,6 +56,7 @@ inbox folder）有变动就自动入队，后台 worker 自动消化。`pith-wik
 
 | 命令 | 一句话 |
 |---|---|
+| `pith-wiki init [--force] [--api-key <k>]` | 一次性初始化 `~/.pith-wiki/`（建目录 + 写 .env 模板 + chmod） |
 | `pith-wiki` | 进 REPL（chat + 自动 worker + 自动 transcript） |
 | `pith-wiki ingest --collection <c> --file <p>` | 单文件脱水入库 |
 | `pith-wiki ingest --collection <c> --dir <d>` | 目录批量入库 |

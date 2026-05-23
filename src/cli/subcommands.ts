@@ -23,12 +23,29 @@ import { collectDashboardData, formatDashboard } from './dashboardData.js';
 import { resolveSafePath, SafetyError } from '../tools/safety.js';
 import { Source } from '../wiki/types.js';
 import { buildQueueCommands, buildWatchCommand } from './queueCommands.js';
+import { runInit, formatInitResult } from './initCommand.js';
 
 interface BuildArgs {
   configFor: (overrides?: Partial<Config>) => Config;
 }
 
 export function buildSubcommands(program: Command, args: BuildArgs): void {
+  program
+    .command('init')
+    .description(
+      'Initialize ~/.pith-wiki/: create the home dir, seed .env from template, chmod 600. Run once after install.',
+    )
+    .option('--force', 'Overwrite existing .env (backs it up to .env.pre-init.bak first).')
+    .option(
+      '--api-key <key>',
+      'Inline DEEPSEEK_API_KEY value (writes it into the .env directly; useful for CI / scripted setup).',
+    )
+    .action((opts) => {
+      const result = runInit({ force: !!opts.force, apiKey: opts.apiKey });
+      console.log(formatInitResult(result, { force: !!opts.force, apiKey: opts.apiKey }));
+      if (!result.wrote) process.exitCode = 1;
+    });
+
   program
     .command('ingest')
     .description('Hydrate raw text into a wiki entry and store it.')

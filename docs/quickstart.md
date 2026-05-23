@@ -20,12 +20,17 @@ pith-wiki 走 OpenAI-compatible 协议，任何同协议的服务都能用。最
 $0.27 / 1M tokens）。注册拿 key，写到 home 配置：
 
 ```bash
-mkdir -p ~/.pith-wiki
-cp .env.example ~/.pith-wiki/.env
-chmod 600 ~/.pith-wiki/.env
+# 一行建好 ~/.pith-wiki/ + .env 模板 + chmod 600：
+node dist/bin/pith-wiki.js init
 
-# 编辑 ~/.pith-wiki/.env，填入：
+# 然后编辑 ~/.pith-wiki/.env 填入：
 # DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx
+```
+
+或者直接非交互一行（CI / 自动化友好）：
+
+```bash
+node dist/bin/pith-wiki.js init --force --api-key sk-xxxxxxxxxxxxxxxx
 ```
 
 > 想用别的 provider（Qwen / OpenAI / 本地 Ollama …）？看

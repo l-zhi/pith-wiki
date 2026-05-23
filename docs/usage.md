@@ -3,6 +3,7 @@
 详细的 CLI 命令、REPL 用法、各子系统的开关。新用户先看 [quickstart](quickstart.md)，
 回到这里查具体命令。
 
+- [初始化 init](#初始化-init)
 - [REPL](#repl)
 - [同步 ingest](#同步-ingest)
 - [持久化队列](#持久化队列)
@@ -11,6 +12,29 @@
 - [诊断 doctor](#诊断-doctor)
 - [多 provider 切换](#多-provider-切换)
 - [全局开关](#全局开关)
+
+---
+
+## 初始化 init
+
+一次性建好 `~/.pith-wiki/`（创建目录 + 写 `.env` 模板 + `chmod 600`）。**装完跑一遍**：
+
+```bash
+pith-wiki init                                # 默认：建目录，提示用户编辑 .env
+pith-wiki init --force                        # 强制覆盖已存在 .env（自动备份到 .env.pre-init.bak）
+pith-wiki init --api-key sk-xxxxxxxxxxxxxxxx  # 把 DEEPSEEK_API_KEY 直接写进去（CI / 自动化）
+pith-wiki init --force --api-key sk-xxx       # 两个一起：覆盖 + 内联 key
+```
+
+行为：
+
+- **幂等**：`.env` 已存在时默认拒绝（exit 1），保护用户已填的真 key
+- **`--force`**：先把现有 `.env` 备份到 `.env.pre-init.bak` 再覆盖
+- **`--api-key`**：模板里的 `DEEPSEEK_API_KEY=sk-xxxxxxxxxxxxxxxx` 占位符被替换；
+  其它 provider 的 key 仍是占位符，按需编辑
+
+模板里默认只启用 DeepSeek（最便宜的 OpenAI-compatible 服务）；其它 provider 的
+环境变量（Qwen / OpenAI / Moonshot / Zhipu / OpenRouter / Groq）都注释了，按需取消注释。
 
 ---
 
