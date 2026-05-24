@@ -22,6 +22,10 @@ let fakeHome: string;
 let workspaceRoot: string;
 let origHomedir: typeof os.homedir;
 let origEnv: string | undefined;
+// 也要劫持 PITH_WIKI_HOME：pithWikiHome() 先看 env、再 fallback 到 os.homedir()。
+// 开发者本机如果在 shell 里 export 了 PITH_WIKI_HOME（比如 dev/test 工作流），
+// 单纯 monkey-patch os.homedir 不够，soul.ts 还是会去读那个真实路径。
+let origHomeEnv: string | undefined;
 
 beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-wiki-soul-'));
@@ -34,12 +38,16 @@ beforeEach(() => {
   os.homedir = () => fakeHome;
   origEnv = process.env.PITH_WIKI_SOUL;
   delete process.env.PITH_WIKI_SOUL;
+  origHomeEnv = process.env.PITH_WIKI_HOME;
+  delete process.env.PITH_WIKI_HOME;
 });
 
 afterEach(() => {
   os.homedir = origHomedir;
   if (origEnv === undefined) delete process.env.PITH_WIKI_SOUL;
   else process.env.PITH_WIKI_SOUL = origEnv;
+  if (origHomeEnv === undefined) delete process.env.PITH_WIKI_HOME;
+  else process.env.PITH_WIKI_HOME = origHomeEnv;
   vi.restoreAllMocks();
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });

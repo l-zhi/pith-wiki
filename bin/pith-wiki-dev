@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Dev twin of `pith-wiki`. Use this when iterating on the local clone:
+#   1) keep the npm-installed `pith-wiki` pointing at the published release;
+#   2) `npm run build` (or `tsc -w`) in the repo;
+#   3) run `pith-wiki-dev` to exercise the freshly built code against a
+#      parallel data dir (~/.pith-wiki-dev/) so you don't pollute prod.
+#
+# Install (one-time):
+#   ln -sf "$(pwd)/bin/pith-wiki-dev" "$(npm prefix -g)/bin/pith-wiki-dev"
+#   # or: ln -sf "$(pwd)/bin/pith-wiki-dev" /usr/local/bin/pith-wiki-dev
+#
+# Override PITH_WIKI_HOME on the command line if you want a one-off run
+# against another data dir, e.g.:
+#   PITH_WIKI_HOME=/tmp/wiki-scratch pith-wiki-dev
+set -euo pipefail
+
+# Resolve this script through any symlinks so we can find the sibling dist/.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  TARGET="$(readlink "$SOURCE")"
+  case "$TARGET" in
+    /*) SOURCE="$TARGET" ;;
+    *)  SOURCE="$(cd -P "$(dirname "$SOURCE")" && pwd)/$TARGET" ;;
+  esac
+done
+REPO_DIR="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+ENTRY="$REPO_DIR/dist/bin/pith-wiki.js"
+
+if [ ! -f "$ENTRY" ]; then
+  echo "pith-wiki-dev: $ENTRY missing — run 'npm run build' first" >&2
+  exit 1
+fi
+
+export PITH_WIKI_HOME="${PITH_WIKI_HOME:-$HOME/.pith-wiki-dev}"
+exec node "$ENTRY" "$@"

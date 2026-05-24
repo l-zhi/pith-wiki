@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pithWikiHome } from '../paths.js';
 
 /**
  * SOUL.md 加载器。
@@ -47,9 +48,9 @@ export interface LoadedSoul {
   sources: string[];
 }
 
-/** ~/.pith-wiki/SOUL.md 的绝对路径。懒求值，便于测试 monkey-patch os.homedir。 */
+/** `<pithWikiHome>/SOUL.md` 绝对路径。懒求值，便于测试 monkey-patch env / homedir。 */
 function userDefaultPath(): string {
-  return path.join(os.homedir(), '.pith-wiki', 'SOUL.md');
+  return path.join(pithWikiHome(), 'SOUL.md');
 }
 
 export const SOUL_PROMPT_HEADER = '## Voice and style';

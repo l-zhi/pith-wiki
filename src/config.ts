@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import dotenv from 'dotenv';
+import { pithWikiHome } from './paths.js';
 
 /**
  * 懒加载 `.env`，仅 CLI 入口（`loadConfigFromEnv`）会调用。
@@ -19,7 +20,7 @@ function loadDotenvOnce(): void {
   dotenvLoaded = true;
   dotenv.config();
   dotenv.config({
-    path: path.join(os.homedir(), '.pith-wiki', '.env'),
+    path: path.join(pithWikiHome(), '.env'),
     override: true,
   });
 }
@@ -209,7 +210,7 @@ const DEFAULTS = {
  * 找不到文件不抛错（这是常态：用户没建过 config）；JSON 解析失败必须抛（用户写错了要立刻知道）。
  */
 function loadFileConfig(): Partial<Config> {
-  const file = process.env.PITH_WIKI_CONFIG_PATH ?? path.join(os.homedir(), '.pith-wiki', 'config.json');
+  const file = process.env.PITH_WIKI_CONFIG_PATH ?? path.join(pithWikiHome(), 'config.json');
   if (!fs.existsSync(file)) return {};
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -294,7 +295,7 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     overrides.wikiRoot ??
     process.env.PITH_WIKI_ROOT ??
     file.wikiRoot ??
-    path.join(os.homedir(), '.pith-wiki', 'wiki-data');
+    path.join(pithWikiHome(), 'wiki-data');
   const resolvedWikiRoot = path.resolve(wikiRoot);
 
   // additionalReadPaths：CLI flag > env > 配置文件 > 空数组。
@@ -308,7 +309,7 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
 
   // 队列相关默认路径都在 ~/.pith-wiki/queue/ 下。
   // 优先级与其他字段一致：CLI flag > 配置文件 > 默认。env 暂不引入，避免接口表面过大。
-  const defaultQueueDir = path.join(os.homedir(), '.pith-wiki', 'queue');
+  const defaultQueueDir = path.join(pithWikiHome(), 'queue');
   const queueStatePath = path.resolve(
     expandHome(
       overrides.queueStatePath ?? file.queueStatePath ?? path.join(defaultQueueDir, 'state.json'),
@@ -332,7 +333,7 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
       false,
     maxToolPayloadBytes:
       overrides.maxToolPayloadBytes ?? file.maxToolPayloadBytes ?? DEFAULTS.maxToolPayloadBytes,
-    historyFile: path.join(os.homedir(), '.pith-wiki', 'history'),
+    historyFile: path.join(pithWikiHome(), 'history'),
     additionalReadPaths,
     queueStatePath,
     queueLogDir,
