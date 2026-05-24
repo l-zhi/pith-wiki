@@ -3,6 +3,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# `npm pack` 产物（release-check 用）。不该入库。
+pith-wiki-*.tgz
+
 # --- secrets & local config ---
 .env
 .env.*
