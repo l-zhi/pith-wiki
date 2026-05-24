@@ -8,8 +8,6 @@ organized into three sections: **Likely next** (might land in the next minor
 version), **Maybe someday** (longer-term, contingent on real signal), and
 **Won't do** (kept here to prevent scope creep).
 
-> Decision mechanism in detail: [ADR-0002](adr/0002-issue-driven-roadmap.md).
-
 ---
 
 ## Likely next

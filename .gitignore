@@ -65,3 +65,11 @@ desktop.ini
 .agents/
 skills-lock.json
 plans/
+
+# --- internal-only docs / design artifacts (not for GitHub) ---
+# Whole standalone TUI mockups, large HTML prototypes — not user-facing.
+design/
+# ADRs and agent skill notes are internal product context, kept out of the
+# public repo. The user-facing docs in docs/*.md and docs/screenshots/ stay.
+docs/adr/
+docs/agents/

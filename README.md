@@ -6,6 +6,14 @@ A terminal-native LLM wiki, Karpathy-style: don't shove raw documents into a
 vector DB and pray. Hydrate them into dense Markdown entries, retrieve by keyword
 + link traversal. Local, file-based, works with any OpenAI-compatible LLM endpoint.
 
+![pith-wiki REPL dashboard](docs/screenshots/pith-wiki.gif)
+
+*Live dashboard: watching a notes folder, hydrating files into collections as they appear.*
+
+![Obsidian vault + pith-wiki side by side](docs/screenshots/Obsidian-pithwiki.jpg)
+
+*Drop a note into your Obsidian vault — pith-wiki auto-ingests it on the right.*
+
 Current input formats: `.docx` `.eml` `.htm` `.html` `.markdown` `.md` `.pdf`
 `.text` `.txt`.
 
@@ -21,7 +29,7 @@ Current input formats: `.docx` `.eml` `.htm` `.html` `.markdown` `.md` `.pdf`
 **Platforms**: Linux and macOS, both covered by CI (Node 20 / 22). Windows is
 theoretically usable but **not in CI** — `fs.rename` atomicity, chokidar
 fs-events, `path.delimiter` all differ from POSIX. PRs welcome; not a launch
-priority. See [ADR-0003](docs/adr/0003-windows-best-effort.md).
+priority.
 
 ## Install
 

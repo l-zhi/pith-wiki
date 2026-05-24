@@ -6,6 +6,14 @@
 把电脑上任意目录 / 文件夹里的文档整理成可快速检索的知识库，跟大模型对话，
 同时把对话本身脱水成新的文档输回库里。
 
+![pith-wiki REPL dashboard](docs/screenshots/pith-wiki.gif)
+
+*实时 dashboard：监听本地笔记目录，新增文件自动 hydrate 进各 collection。*
+
+![Obsidian vault + pith-wiki 并排](docs/screenshots/Obsidian-pithwiki.jpg)
+
+*往 Obsidian vault 里加笔记，右边 pith-wiki 立刻自动入库。*
+
 目前支持：`.docx` `.eml` `.htm` `.html` `.markdown` `.md` `.pdf` `.text` `.txt`。
 
 > **最佳实践**：把本地 Obsidian 目录配进 `watchDirs`——往 Obsidian 加任何文档都会
@@ -17,8 +25,7 @@
 
 **平台支持**：Linux 与 macOS，CI 矩阵两个都跑（Node 20 / 22）。Windows
 理论可用但**不在 CI 覆盖范围**——`fs.rename` 原子性、chokidar fs-event、`path.delimiter`
-都跟 POSIX 不一样；社区 PR 欢迎，但首发不投入这部分工程量。详见
-[ADR-0003](docs/adr/0003-windows-best-effort.md)。
+都跟 POSIX 不一样；社区 PR 欢迎，但首发不投入这部分工程量。
 
 ## 安装
 
