@@ -25,21 +25,6 @@ priority. See [ADR-0003](docs/adr/0003-windows-best-effort.md).
 
 ## Install
 
-> Five minutes from zero to first ingest → [docs/quickstart.md](docs/quickstart.md).
-
-### Users: install + run
-
-```bash
-# Not yet published to npm. For now, install from a local tarball:
-git clone https://github.com/l-zhi/pith-wiki.git
-cd pith-wiki
-npm install && npm run build
-npm pack                                # produces pith-wiki-x.y.z.tgz
-npm install -g ./pith-wiki-*.tgz        # global install
-```
-
-Once on npm (planned for `v0.3.0`):
-
 ```bash
 npm install -g pith-wiki
 ```
@@ -64,6 +49,8 @@ pith-wiki
 `init` writes a minimal `~/.pith-wiki/.env` (single API-key line, `chmod 600`)
 and — only if you picked a non-default provider or set a watch dir —
 a minimal `~/.pith-wiki/config.json`.
+
+> Five minutes from zero to first ingest → [docs/quickstart.md](docs/quickstart.md).
 
 ### Developers: build from source
 

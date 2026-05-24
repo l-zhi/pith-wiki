@@ -22,21 +22,6 @@
 
 ## 安装
 
-> 5 分钟从 0 跑通第一条入库 → [docs/quickstart.zh-CN.md](docs/quickstart.zh-CN.md)。
-
-### 用户：装来用
-
-```bash
-# 还没发布到 npm。当前从本地 tarball 装：
-git clone https://github.com/l-zhi/pith-wiki.git
-cd pith-wiki
-npm install && npm run build
-npm pack                                # 生成 pith-wiki-x.y.z.tgz
-npm install -g ./pith-wiki-*.tgz        # 全局装
-```
-
-未来 `v0.3.0` 发到 npm 后：
-
 ```bash
 npm install -g pith-wiki
 ```
@@ -61,6 +46,8 @@ pith-wiki
 `init` 会写一个最小化的 `~/.pith-wiki/.env`（只放一行 API key，`chmod 600`）。
 只有当你**选了非默认 provider**或者**设了 watch 目录**时，才会再写一份最小的
 `~/.pith-wiki/config.json`。
+
+> 5 分钟从 0 跑通第一条入库 → [docs/quickstart.zh-CN.md](docs/quickstart.zh-CN.md)。
 
 ### 开发者：从源码构建
 
