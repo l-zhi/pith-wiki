@@ -23,7 +23,8 @@ import { collectDashboardData, formatDashboard } from './dashboardData.js';
 import { resolveSafePath, SafetyError } from '../tools/safety.js';
 import { Source } from '../wiki/types.js';
 import { buildQueueCommands, buildWatchCommand } from './queueCommands.js';
-import { runInit, formatInitResult } from './initCommand.js';
+import { runInit, formatInitResult, PROVIDER_CATALOG, type InitOptions } from './initCommand.js';
+import { promptInitOptions } from './initInteractive.js';
 
 interface BuildArgs {
   configFor: (overrides?: Partial<Config>) => Config;
@@ -33,17 +34,53 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
   program
     .command('init')
     .description(
-      'Initialize ~/.pith-wiki/: create the home dir, seed .env from template, chmod 600. Run once after install.',
+      'Initialize ~/.pith-wiki/: prompt for provider + API key + optional watch dir, write a minimal .env (+ config.json if needed), chmod 600. Run once after install.',
     )
-    .option('--force', 'Overwrite existing .env (backs it up to .env.pre-init.bak first).')
+    .option('--force', 'Overwrite existing .env / config.json (each gets a .pre-init.bak backup).')
+    .option(
+      '--provider <id>',
+      `Provider id (skips the interactive picker). One of: ${PROVIDER_CATALOG.map((p) => p.id).join(', ')}.`,
+    )
     .option(
       '--api-key <key>',
-      'Inline DEEPSEEK_API_KEY value (writes it into the .env directly; useful for CI / scripted setup).',
+      "Inline API key for the chosen provider's env var (skips the prompt; useful for CI).",
     )
-    .action((opts) => {
-      const result = runInit({ force: !!opts.force, apiKey: opts.apiKey });
-      console.log(formatInitResult(result, { force: !!opts.force, apiKey: opts.apiKey }));
-      if (!result.wrote) process.exitCode = 1;
+    .option(
+      '--watch-dir <path>',
+      'Auto-watch directory to write into config.json.watchDirs (skips the prompt). ~/ is expanded.',
+    )
+    .option(
+      '--no-initial-scan',
+      'For --watch-dir: do NOT enqueue existing files on first REPL start (default is to scan once).',
+    )
+    .option(
+      '--no-prompt',
+      'Skip interactive prompts even on a TTY. Use defaults + whatever flags you passed.',
+    )
+    .action(async (opts, cmd) => {
+      // commander 把 `--no-prompt` 映射到 `opts.prompt = false`。TTY 检测在
+      // promptInitOptions 里再做一层兜底，这里只决定"该不该尝试问"。
+      //
+      // `--provider` 同时存在于 program 顶层（用于运行时切 active provider）
+      // 和 init 子命令（用于初始化时选模板）。commander 在两层都声明同名选项时，
+      // 顶层定义会优先吃掉这个 token——所以子命令的 opts.provider 可能是 undefined
+      // 而 token 实际去了 cmd.parent.opts().provider。用 ?? 兜底两边都接住。
+      const parentProvider = (cmd.parent?.opts()?.provider as string | undefined) ?? undefined;
+      const base: InitOptions = {
+        force: !!opts.force,
+        provider: opts.provider ?? parentProvider,
+        apiKey: opts.apiKey,
+        watchDir: opts.watchDir,
+        // commander 把 `--no-initial-scan` 映射到 `opts.initialScan = false`。
+        // 用户没传 flag → opts.initialScan === true（commander 的负向 flag 默认值）。
+        // 这跟 runInit 里 `opts.initialScan ?? true` 的兜底保持一致。
+        initialScan: opts.initialScan,
+      };
+      const final = opts.prompt === false ? base : await promptInitOptions(base);
+      const result = runInit(final);
+      console.log(formatInitResult(result, final));
+      // exit code 非 0 只在 .env 真的没写 *且* config.json 也没写时——避免脚本误判
+      if (!result.wrote && !result.wroteConfig) process.exitCode = 1;
     });
 
   program
