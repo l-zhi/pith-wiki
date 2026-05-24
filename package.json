@@ -37,6 +37,10 @@
   "engines": {
     "node": ">=20"
   },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
   "scripts": {
     "dev": "tsx bin/pith-wiki.ts",
     "build": "tsc && chmod +x dist/bin/pith-wiki.js",
