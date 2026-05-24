@@ -1,56 +1,63 @@
-# REPL 工作流
+# REPL workflow
 
-REPL + 持久化队列 + watcher + transcript 配合在一起的玩法。一句话说就是：
-**让脱水入库变成默认会发生的事，不用每次手敲命令**。
+> 中文版 → [repl-workflow.zh-CN.md](./repl-workflow.zh-CN.md)
 
-- [多终端协作](#多终端协作)
-- [自动 transcript](#自动-transcript)
-- [`/digest` —— 对话回灌 wiki](#digest--对话回灌-wiki)
-- [典型 day-to-day 工作流](#典型-day-to-day-工作流)
+How the REPL, the persistent queue, the watcher, and transcripts compose. In
+one sentence: **make hydration-into-the-library a thing that happens by
+default — you stop typing commands.**
+
+- [Multi-terminal coordination](#multi-terminal-coordination)
+- [Auto transcripts](#auto-transcripts)
+- [`/digest` — feed the conversation back into the wiki](#digest--feed-the-conversation-back-into-the-wiki)
+- [A typical day-to-day loop](#a-typical-day-to-day-loop)
 
 ---
 
-## 多终端协作
+## Multi-terminal coordination
 
-队列状态 (`~/.pith-wiki/queue/state.json`) 是**单一真相**；worker 通过
-`state.json.lock` 文件保证**同一时刻只有一个进程在消费**。可以这么协作：
+The queue state (`~/.pith-wiki/queue/state.json`) is the **single source of
+truth**; the worker holds `state.json.lock` to guarantee **at most one consumer
+process at a time**. The pattern:
 
 ```bash
-# 终端 A：REPL（自动起 worker，持锁）
+# Terminal A: REPL (auto-starts the worker, takes the lock)
 pith-wiki
 
-# 终端 B：随时往队列里塞，不抢 worker
+# Terminal B: enqueue any time, no competition for the worker
 pith-wiki queue add --collection ... --dir ...
-pith-wiki queue status        # 任何时候看进度都行
+pith-wiki queue status        # check progress whenever you want
 
-# 终端 C：千万别再起 worker
-pith-wiki queue run           # ❌ 会报 "queue is already running (pid=...)"
+# Terminal C: don't start a second worker
+pith-wiki queue run           # ❌ "queue is already running (pid=...)"
 ```
 
-如果想把 worker 留在另一个独立终端：
+To keep the worker in a separate terminal:
 
 ```bash
-# 终端 A：REPL，关掉自动 worker（QueueIndicator 仍展示状态）
+# Terminal A: REPL, but with the auto-worker disabled
+# (QueueIndicator still shows status)
 pith-wiki --no-auto-queue
 
-# 终端 B：worker 在这边
+# Terminal B: worker lives here
 pith-wiki queue run
 ```
 
-**崩溃恢复**：worker 异常退出（kill -9 / 断电）时，`state.json` 上残留的
-`running` job 会在下次 `queue run` 启动时被自动重置为 `pending`，attempts 不变；
-锁文件中的 pid 已不存在时也会被自动接管。
+**Crash recovery**: if the worker dies hard (kill -9 / power loss), any
+`running` jobs left in `state.json` are automatically reset to `pending` on the
+next `queue run`, with `attempts` preserved. If the lock file's pid no longer
+exists, the lock is automatically taken over.
 
 ---
 
-## 自动 transcript
+## Auto transcripts
 
-REPL 默认把每次 session 写到 `<wikiRoot>/output/transcripts/<sessionTs>.md`。
-路径选在 `<wikiRoot>` 下是有意为之——和数字化的 wiki 条目共享同一棵树根，
-但用 `transcripts/` 子目录屏蔽 `LibraryService` 的 collection 扫描（它只读
-`<wikiRoot>/<collection>/*.md` 一层，子目录被忽略）。
+The REPL writes every session to
+`<wikiRoot>/output/transcripts/<sessionTs>.md`. Putting it under `<wikiRoot>`
+is deliberate — it shares the wiki tree's root, but the `transcripts/` subdir
+is invisible to `LibraryService`'s collection scan (which only reads
+`<wikiRoot>/<collection>/*.md` one level deep; subdirs are ignored).
 
-内容是规整的 markdown，按时间顺序：
+The content is clean chronological markdown:
 
 ```md
 # Chat Session 2026-04-30T08:15:32.100Z
@@ -63,7 +70,7 @@ REPL 默认把每次 session 写到 `<wikiRoot>/output/transcripts/<sessionTs>.m
 
 ## 🧑 User · 2026-04-30T08:15:42.500Z
 
-把 inbox 里的 md 加到 reading 队列
+Add everything in inbox to the `reading` queue.
 
 ### → tool: wiki_queue_add · 2026-04-30T08:15:43.500Z
 ```json
@@ -77,81 +84,89 @@ REPL 默认把每次 session 写到 `<wikiRoot>/output/transcripts/<sessionTs>.m
 
 ## 🤖 Assistant · 2026-04-30T08:15:45.800Z
 
-已经把 12 个文件加到 reading 队列了…
+Added 12 files to the `reading` queue…
 
 ---
 ```
 
-每次回合的**所有工具调用与结果**都会保留，方便复盘 LLM 的决策路径。
-用 `appendFileSync` 同步落盘——REPL 异常退出也不会丢内容。
-关掉：CLI 加 `--no-transcript`，或在 `~/.pith-wiki/config.json` 里
-`"transcriptEnabled": false`。
+**Every tool call and result** is preserved — useful for retracing the LLM's
+decisions. Written via `appendFileSync` synchronously, so a REPL crash never
+loses content. Disable with `--no-transcript` on the command line, or
+`"transcriptEnabled": false` in `~/.pith-wiki/config.json`.
 
 ---
 
-## `/digest` —— 对话回灌 wiki
+## `/digest` — feed the conversation back into the wiki
 
-raw transcript 是逐字对话记录，没有压缩、没有结构化。`/digest` 在 REPL 里把
-**自上次 `/reset` 起的全部对话**喂给 `HydrationService`（用专门的
-`CONVERSATION_SYSTEM_PROMPT`，不是文档脱水那套），产出一条规整的高密度
-wiki entry，落到 `<wikiRoot>/<digestCollection>/`（默认 collection 名 `output`）。
-从此这条对话的精华就成了可被 `query` / `wiki_query` 检索的正式条目，下次
-聊天 LLM 都能用 `wiki_query` 把它捞回来——一个 *write-around-read* 的反馈环。
+The raw transcript is a verbatim log — no compression, no structure.
+`/digest` takes **everything since the last `/reset`** and feeds it to
+`HydrationService` (using a dedicated `CONVERSATION_SYSTEM_PROMPT`, not the
+document-hydration one), producing a single dense wiki entry under
+`<wikiRoot>/<digestCollection>/` (default `output`). From that point on, the
+distilled conversation is a first-class entry that `query` / `wiki_query` can
+retrieve — next conversation, the LLM can `wiki_query` and pull it back in.
+A *write-around-read* feedback loop.
 
-**Conversation 模式 vs 文档模式**：[hydration.ts](../src/wiki/hydration.ts) 暴露两套
-prompt。文档模式（`ingest` / `wiki_ingest` / 队列 worker）把输入当源材料压缩，
-丢第一人称、丢转场词。**对话模式（`/digest` 专用）强制保留用户提问的视角**，
-title / summary 必须反映用户问的角度而不是仅总结答案：
+**Conversation mode vs document mode**:
+[hydration.ts](../src/wiki/hydration.ts) exposes two prompts. Document mode
+(`ingest` / `wiki_ingest` / queue worker) compresses input as source material —
+strips first person, drops transition words. **Conversation mode (used by
+`/digest`) forcibly preserves the user's framing**: title / summary must
+reflect the angle the user asked from, not just summarize the answer.
 
-> 反例：用户问"成长**和低谷期**"，digest 不能笼统压成"成长经历"——
-> 必须保留"低谷期"这个用户主动选择的对比维度。
+> Counter-example: user asks about "growth **and the rough patch**"; the
+> digest must not flatten it to "growth story" — it must keep "rough patch"
+> as the comparison axis the user explicitly chose.
 
-`content` 用 `## Q: ...` 段按对话顺序排列，多个独立话题不被合并；tags 同时覆盖
-"用户问的角度"和"答案的领域"。
+`content` is structured as `## Q: ...` sections in conversational order;
+multiple independent topics aren't merged. Tags cover both "the angle the user
+asked from" and "the domain of the answer".
 
 ```
-> /digest                       # 默认落到 output collection
+› /digest                       # default → `output` collection
 digesting current conversation into collection "output"…
 digest saved: agent-retry-policy (collection=output)
-  title: Agent 重试逻辑设计
+  title: Designing Agent Retry Logic
   tags: agent, retry, reliability
   links: error-handling
   path: /Users/.../wiki-data/output/agent-retry-policy.md
 
-> /digest research-notes        # 落到指定 collection
-> pith-wiki get agent-retry-policy   # 验证保存的内容
+› /digest research-notes        # write to a named collection
+› pith-wiki get agent-retry-policy   # confirm what was saved
 ```
 
-注意：
+Notes:
 
-- 只压缩 user / assistant 文本和 `tool_calls`（名字 + 参数），原始 tool 返回的
-  长 byte-blob 不进 digest，免得稀释。
-- digest 不会 reset agent，摘要后还能继续聊。
-- 如果对生成结果不满意，直接 `rm <wikiRoot>/<collection>/<id>.md` 即可
-  （或重新 `/digest` 让 LLM 再压一遍，可能产出不同 id）。
+- Only user / assistant text and `tool_calls` (name + args) are compressed.
+  Raw tool-return byte blobs are excluded — they'd dilute the signal.
+- `/digest` doesn't reset the agent; you can keep chatting after digesting.
+- Unhappy with the result? `rm <wikiRoot>/<collection>/<id>.md`, or
+  `/digest` again for a fresh attempt (may produce a different id).
 
 ---
 
-## 典型 day-to-day 工作流
+## A typical day-to-day loop
 
 ```bash
-# 1. 早上：把昨天攒的笔记入队
+# 1. Morning: enqueue yesterday's notes
 pith-wiki queue add --collection reading --dir ~/Dropbox/notes/inbox
 
-# 2. 进 REPL：一边跟 LLM 聊，一边后台 ingest
+# 2. Open the REPL: chat with the LLM while ingestion runs in the background
 pith-wiki
-> 队列还剩多少？                  # → wiki_queue_status
-> 帮我看下 wiki 里关于 RLHF 的条目，对比 PPO 和 DPO   # → wiki_query
-> 把这段日志加进 tech：<贴日志>   # → wiki_ingest
-                                  # 同时底部 worker 数字一直在跳
-> /digest                         # 这一轮的精华灌回 wiki，下次能查到
+› How many jobs are left?                          # → wiki_queue_status
+› Compare PPO and DPO based on my wiki's notes on RLHF.  # → wiki_query
+› Add this log snippet to `tech`: <paste>          # → wiki_ingest
+                                                   # Worker counts tick along at the bottom
+› /digest                         # Distill today's chat back into the wiki
 
-# 3. 退出 REPL（worker 跟着停；在飞 hydrate 下次启动崩溃恢复路径捡回来）
-> /exit
+# 3. Quit the REPL (the worker stops; in-flight hydrate is picked up next start
+#    via crash-recovery)
+› /exit
 
-# 4. 复盘：output/transcripts/ 里就是今天对话的完整 markdown
+# 4. Retro: today's full chat lives as markdown in output/transcripts/
 ls ~/.pith-wiki/wiki-data/output/transcripts/
 ```
 
-如果你不想每天手动 `queue add`，[配 watcher](usage.md#目录监听-watcher) 让笔记目录的新增 / 修改
-自动入队，REPL 自动消化。
+If you don't want to `queue add` by hand every day,
+[configure the watcher](usage.md#directory-watcher) so adds / changes in your
+notes folder enqueue automatically and the REPL hydrates them.

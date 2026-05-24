@@ -1,18 +1,18 @@
-# 架构设计
+# Architecture
 
-> 配套文档：[PRD](./PRD.md) · [Roadmap](./roadmap.md)
+> Companion docs: [PRD](./PRD.md) · [Roadmap](./roadmap.md)
 
-## 1. 整体分层
+## 1. Layering overview
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                       入口（bin/）                          │
-│  pith-wiki.ts: commander 分流 → REPL or 子命令              │
+│                        Entry (bin/)                       │
+│  pith-wiki.ts: commander dispatches → REPL or subcommand  │
 └──────────────────────────────────────────────────────────┘
                 │                              │
                 ▼                              ▼
    ┌────────────────────────┐    ┌────────────────────────┐
-   │   src/cli/（Ink UI）   │    │ src/cli/subcommands.ts │
+   │   src/cli/  (Ink UI)   │    │ src/cli/subcommands.ts │
    │  App.tsx               │    │  ingest / get / list   │
    │  ChatView / InputBox   │    │  / query               │
    │  ToolApproval          │    └────────────────────────┘
@@ -20,8 +20,8 @@
                 │                              │
                 ▼                              │
    ┌────────────────────────┐                 │
-   │     src/llm/agent.ts    │                 │
-   │ 对话循环 + tool 分发      │                 │
+   │     src/llm/agent.ts   │                 │
+   │ chat loop + tool dispatch                │
    └────────────────────────┘                 │
                 │                              │
                 ▼                              │
@@ -34,62 +34,62 @@
                 └──────────────┬───────────────┘
                                ▼
    ┌────────────────────────────────────────────────────┐
-   │             src/wiki/（核心服务）                   │
-   │  hydration.ts  ─►  调 LLM JSON 模式                │
-   │  library.ts    ─►  文件 CRUD + 链接索引             │
-   │  assembler.ts  ─►  tokenize + score + BFS + 预算    │
+   │             src/wiki/  (core services)              │
+   │  hydration.ts  ─►  LLM in JSON mode                 │
+   │  library.ts    ─►  file CRUD + link index           │
+   │  assembler.ts  ─►  tokenize + score + BFS + budget  │
    └────────────────────────────────────────────────────┘
                                │
                                ▼
    ┌────────────────────────────────────────────────────┐
    │   wiki-data/<collection>/<id>.md                    │
-   │   (frontmatter YAML + Markdown body)                │
+   │   (YAML frontmatter + Markdown body)                │
    └────────────────────────────────────────────────────┘
 ```
 
-## 2. 核心数据流
+## 2. Core data flows
 
-### 2.1 入库流（Ingest）
+### 2.1 Ingest
 
 ```
-原文 (raw text)
+raw text
    │
    ▼
 HydrationService.hydrate()
-   │  ├─ 注入候选 links（autoLink=true 时）
-   │  ├─ DeepSeek JSON mode 调用
+   │  ├─ inject link candidates (when autoLink=true)
+   │  ├─ DeepSeek JSON-mode call
    │  └─ HydrationOutputSchema.parse()
    ▼
-Entry 对象（含 metadata）
+Entry object (with metadata)
    │
    ▼
 LibraryService.put()
-   │  ├─ 原子写：.tmp → rename
-   │  └─ invalidate() 链接索引
+   │  ├─ atomic write: .tmp → rename
+   │  └─ invalidate() link index
    ▼
 wiki-data/<collection>/<id>.md
 ```
 
-### 2.2 检索流（Query）
+### 2.2 Query
 
 ```
-用户查询字符串
+user query string
    │
    ▼
 ContextAssembler.query()
-   │  ├─ tokenize 查询
-   │  ├─ 全量遍历 entry 评分（无外部索引）
-   │  ├─ 取 top 5 种子
-   │  ├─ linkIndex() → BFS depth=1
-   │  └─ 按 token 预算拼接
+   │  ├─ tokenize query
+   │  ├─ score every entry (no external index)
+   │  ├─ take top-5 seeds
+   │  ├─ linkIndex() → BFS depth = 1
+   │  └─ pack to token budget
    ▼
 { context: Markdown, referencedEntries: id[] }
 ```
 
-### 2.3 REPL 工具调用循环
+### 2.3 REPL tool-call loop
 
 ```
-用户输入
+user input
    │
    ▼
 Agent.send()
@@ -97,76 +97,76 @@ Agent.send()
    ├─► OpenAI.chat.completions.create({ tools, tool_choice: 'auto' })
    │
    ├─► response.tool_calls.length > 0?
-   │      ├─ 是：串行执行 tools[].handler()，回填 messages，loop
-   │      └─ 否：append assistant text，break
+   │      ├─ yes: serially exec tools[].handler(), append to messages, loop
+   │      └─ no:  append assistant text, break
    │
-   └─► onAssistantText / onToolCall / onToolResult / onUsage 事件
+   └─► onAssistantText / onToolCall / onToolResult / onUsage events
 ```
 
-## 3. 关键模块
+## 3. Key modules
 
-### 3.1 LibraryService（[src/wiki/library.ts](../src/wiki/library.ts)）
+### 3.1 LibraryService ([src/wiki/library.ts](../src/wiki/library.ts))
 
-- **存储约定**：`<wikiRoot>/<collection>/<id>.md`，YAML frontmatter + Markdown body。
-- **链接索引**：模块级 `Map<id, { forward, backward }>`，懒加载、写时失效。
-- **原子写**：`fs.writeFileSync(tmp) → fs.renameSync(tmp, target)`，避免半写文件被读到。
-- **macOS 兼容**：`/var` → `/private/var` 符号链接通过 `realpath` 归一化。
+- **Storage layout**: `<wikiRoot>/<collection>/<id>.md`, YAML frontmatter + Markdown body.
+- **Link index**: module-level `Map<id, { forward, backward }>`, lazy, invalidated on write.
+- **Atomic write**: `fs.writeFileSync(tmp) → fs.renameSync(tmp, target)`; readers never see partial files.
+- **macOS quirk**: `/var → /private/var` symlinks normalized via `realpath`.
 
-### 3.2 HydrationService（[src/wiki/hydration.ts](../src/wiki/hydration.ts)）
+### 3.2 HydrationService ([src/wiki/hydration.ts](../src/wiki/hydration.ts))
 
-- **提示词**：内联在源文件，强制 Markdown 列表 + 剔除修饰 + `[[concept-id]]` 标注。
-- **JSON 模式**：`response_format: { type: 'json_object' }`，**不**与 tools 共存。
-- **AutoLink**：把已有 entry 的 `{id, title, summary}` 注入提示词作为可选链接候选。
-- **不直接落盘**：返回 Entry 给调用方决定。
+- **Prompt**: inline in the source file; forces Markdown bullets, no fluff, `[[concept-id]]` tagging.
+- **JSON mode**: `response_format: { type: 'json_object' }`. **Mutually exclusive with `tools`** on the OpenAI-compatible API.
+- **AutoLink**: injects existing entries' `{id, title, summary}` into the prompt as candidate links.
+- **Doesn't write to disk**: returns the Entry; the caller decides.
 
-### 3.3 ContextAssembler（[src/wiki/assembler.ts](../src/wiki/assembler.ts)）
+### 3.3 ContextAssembler ([src/wiki/assembler.ts](../src/wiki/assembler.ts))
 
-- **评分公式**：`2*titleHits + 2*tagHits + summaryHits + 0.5*contentHits`
-- **BFS 深度 = 1**：保证种子内容必入选；扩展节点按种子分排序。
-- **Token 预算**：`maxTokens × 4 chars/token × 0.7`，留 30% 余量给后续对话。
-- **截断策略**：单条超预算时不收录；至少保留种子第一条。
+- **Score formula**: `2 * titleHits + 2 * tagHits + summaryHits + 0.5 * contentHits`.
+- **BFS depth = 1**: seed content is guaranteed in; expanded nodes are sorted by seed score.
+- **Token budget**: `maxTokens × 4 chars/token × 0.7` — leaves 30% headroom for the rest of the conversation.
+- **Truncation**: an entry that alone exceeds the budget is skipped; at least the top seed is preserved.
 
-### 3.4 Agent（[src/llm/agent.ts](../src/llm/agent.ts)）
+### 3.4 Agent ([src/llm/agent.ts](../src/llm/agent.ts))
 
-- **循环条件**：`tool_calls.length > 0`，**不信任** `finish_reason`。
-- **串行执行**：p-queue concurrency=1，简化错误传播。
-- **AbortController**：注入到 OpenAI 客户端，Ctrl+C 触发 `abort()`。
-- **错误分类**：auth / rate_limit / network / model_error / tool_error。
+- **Loop condition**: `tool_calls.length > 0`. **Don't trust `finish_reason`.**
+- **Serial execution**: p-queue concurrency 1; simplifies error propagation.
+- **AbortController**: injected into the OpenAI client; Ctrl+C triggers `abort()`.
+- **Error taxonomy**: auth / rate_limit / network / model_error / tool_error.
 
-### 3.5 SafetyLayer（[src/tools/safety.ts](../src/tools/safety.ts)）
+### 3.5 SafetyLayer ([src/tools/safety.ts](../src/tools/safety.ts))
 
-- **沙箱根**：`workspaceRoot ∪ wikiRoot`。
-- **Realpath 归一化**：写文件时父目录可能不存在，沿目录树向上找已存在的根再 realpath。
-- **Symlink 拒绝**：realpath 后再次校验。
-- **Payload 截断**：`truncatePayload` 给读工具用，限制返回给 LLM 的字节数。
+- **Sandbox roots**: `workspaceRoot ∪ wikiRoot`.
+- **Realpath normalization**: for write paths whose parent doesn't exist yet, walk up to the first existing ancestor, realpath that, then re-attach the tail.
+- **Symlink rejection**: revalidated after realpath.
+- **Payload truncation**: `truncatePayload` for read tools, byte-level cap on what the LLM sees.
 
-## 4. 配置层
+## 4. Configuration layer
 
 ```
-flag (--read-only/--model/--root)
+flag (--read-only / --model / --root)
    ▼
 env (DEEPSEEK_API_KEY, PITH_WIKI_*)
    ▼
 ~/.pith-wiki/config.json
    ▼
-代码内 DEFAULTS
+in-code DEFAULTS
    ▼
-zod.parse → Config 对象（启动失败立即 fail-fast）
+zod.parse → Config object (fail-fast at startup on invalid config)
 ```
 
-## 5. 可扩展点
+## 5. Extension points
 
-| 扩展点 | 接口 | v1+ 候选实现 |
+| Slot | Interface | Candidate v1+ implementations |
 | --- | --- | --- |
-| 存储后端 | `LibraryService` 类 | SQLite / Git 远程仓库 |
-| 检索算法 | `ContextAssembler` 类 | BM25 / embedding 混合 |
+| Storage backend | `LibraryService` class | SQLite / Git remote |
+| Retrieval algorithm | `ContextAssembler` class | BM25 / embedding hybrid |
 | LLM provider | `createClient(config)` | Anthropic / OpenAI / Ollama |
-| 工具集 | `ALL_TOOLS` 数组 | shell exec / web fetch / git |
-| 入口形态 | `src/cli/*` | HTTP REST / SDK 包 |
+| Tool set | `ALL_TOOLS` array | shell exec / web fetch / git |
+| Entry mode | `src/cli/*` | HTTP REST / SDK package |
 
-## 6. 已知限制（v0）
+## 6. Known limitations (v0)
 
-- 单进程读写；多进程并发可能踩到索引缓存。
-- 没有锁机制：用户在 Obsidian 编辑同时 CLI 写入会产生 last-write-wins。
-- 链接索引扫描是 O(n)，n > 5000 时启动会慢。
-- Tokenization 是简单 `\W+` 切分，对中文不友好（中文按整段当作一个 token）。
+- Single-process read/write; concurrent processes may stale the in-memory index.
+- No locking: a user editing in Obsidian while the CLI writes produces last-write-wins.
+- Link index scan is O(n); with n > 5000 entries, startup gets slow.
+- Tokenization is a naive `\W+` split — unfriendly to Chinese (an entire sentence becomes one token).

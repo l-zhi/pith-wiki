@@ -1,117 +1,145 @@
 # pith-wiki
 
-> **English TL;DR** — A terminal-native LLM wiki, Karpathy-style: don't shove
-> raw docs into a vector DB and pray. Hydrate them into dense Markdown entries;
-> retrieve by keyword + link traversal. Local, file-based, works with any
-> OpenAI-compatible LLM endpoint.
->
-> 中文完整文档见下方。 README in Chinese below.
+> 中文版 → [README.zh-CN.md](./README.zh-CN.md)
 
----
+A terminal-native LLM wiki, Karpathy-style: don't shove raw documents into a
+vector DB and pray. Hydrate them into dense Markdown entries, retrieve by keyword
++ link traversal. Local, file-based, works with any OpenAI-compatible LLM endpoint.
 
-一个 CLI 命令行工具，用于搭建 **Karpathy 风格** 的 LLM 知识库。
-把电脑上任意目录 / 文件夹里的文档整理成可快速检索的知识库，跟大模型对话，
-同时把对话本身脱水成新的文档输回库里。
-目前支持：`.docx` `.eml` `.htm` `.html` `.markdown` `.md` `.pdf` `.text` `.txt`。
+Current input formats: `.docx` `.eml` `.htm` `.html` `.markdown` `.md` `.pdf`
+`.text` `.txt`.
 
-> **最佳实践**：把本地 Obsidian 目录配进 `watchDirs`——往 Obsidian 加任何文档都会
-> 自动建索引，供大模型在对话时引用。
+> **Best practice**: point `watchDirs` at your Obsidian vault — every new
+> document is automatically hydrated into an entry the LLM can pull from
+> mid-conversation.
 
-> 设计哲学：**数据工程 > 检索算法。** 不要把原始文档塞进库里、再指望 embedding
-> 把它捞回来。用 LLM 把原文 _脱水（hydrate）_ 成高密度的 Markdown 词条，
-> 检索时靠关键词 + 链接遍历，简单直接，肉眼可读。
+> **Design philosophy: data engineering > retrieval algorithms.** Don't dump raw
+> docs into a store and hope embedding will pull them back. Use an LLM to
+> _hydrate_ each source into a high-density Markdown entry, then retrieve by
+> keyword + link traversal. Simple, file-based, human-readable.
 
-**平台支持**：Linux 与 macOS，CI 矩阵两个都跑（Node 20 / 22）。Windows
-理论可用但**不在 CI 覆盖范围**——`fs.rename` 原子性、chokidar fs-event、`path.delimiter`
-都跟 POSIX 不一样；社区 PR 欢迎，但首发不投入这部分工程量。详见
-[ADR-0003](docs/adr/0003-windows-best-effort.md)。
+**Platforms**: Linux and macOS, both covered by CI (Node 20 / 22). Windows is
+theoretically usable but **not in CI** — `fs.rename` atomicity, chokidar
+fs-events, `path.delimiter` all differ from POSIX. PRs welcome; not a launch
+priority. See [ADR-0003](docs/adr/0003-windows-best-effort.md).
 
-## 安装
+## Install
 
-> 5 分钟从 0 跑通第一条入库 → [docs/quickstart.md](docs/quickstart.md)。
+> Five minutes from zero to first ingest → [docs/quickstart.md](docs/quickstart.md).
 
-### 用户：装来用
+### Users: install + run
 
 ```bash
-# 从 npm 装到全局（v0.3.0 发布后可用）
-npm install -g pith-wiki
+# Not yet published to npm. For now, install from a local tarball:
+git clone https://github.com/l-zhi/pith-wiki.git
+cd pith-wiki
+npm install && npm run build
+npm pack                                # produces pith-wiki-x.y.z.tgz
+npm install -g ./pith-wiki-*.tgz        # global install
+```
 
-# 一次性初始化：建 ~/.pith-wiki/、写 .env 模板、chmod 600
+Once on npm (planned for `v0.3.0`):
+
+```bash
+npm install -g pith-wiki
+```
+
+Then:
+
+```bash
+# Interactive one-shot setup — pick provider, paste API key, set a watch dir.
+# All prompts are skippable; press Enter to accept defaults.
 pith-wiki init
 
-# 编辑 ~/.pith-wiki/.env 填 DEEPSEEK_API_KEY；或者一行非交互 setup：
-pith-wiki init --force --api-key sk-xxxxxxxxxxxxxxxx
+# Or non-interactive (for scripts / CI):
+pith-wiki init --provider deepseek \
+               --api-key sk-xxxxxxxxxxxxxxxx \
+               --watch-dir ~/Obsidian \
+               --no-prompt
 
-# 进 REPL
+# Enter the REPL
 pith-wiki
 ```
 
-### 开发者：从源码构建
+`init` writes a minimal `~/.pith-wiki/.env` (single API-key line, `chmod 600`)
+and — only if you picked a non-default provider or set a watch dir —
+a minimal `~/.pith-wiki/config.json`.
 
-想改代码 / 贡献 PR / 跑没发布的 main 分支：
+### Developers: build from source
+
+Want to change code, contribute, or run `main`:
 
 ```bash
 git clone https://github.com/l-zhi/pith-wiki.git
 cd pith-wiki
 npm install
-npm run dev -- init     # 建 ~/.pith-wiki/、写 .env 模板（tsx 直接编译执行，免 build）
-npm run dev             # 跑 REPL
+npm run dev -- init      # tsx compiles + runs without `npm run build`
+npm run dev              # launch REPL
 ```
 
-其它开发期脚本：`npm test` / `npm run typecheck` / `npm run lint` / `npm run build`。
-详细贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+Other dev scripts: `npm test` / `npm run typecheck` / `npm run lint` /
+`npm run build` / `npm run release:check`.
 
-## 这工具能干啥
+For a side-by-side dev/prod setup (so production data isn't disturbed while you
+iterate), see the `bin/pith-wiki-dev` shim and the `PITH_WIKI_HOME` env var.
+Detailed contributor flow in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-**1. 脱水**（Hydrate）—— 把原始文档（markdown / PDF / DOCX / HTML / email）压缩成
-~30% 大小的高密度词条，扔掉口水话和修饰词，只留信号。LLM 直接读得动。
+## What it does
 
-**2. 检索**（Retrieve）—— 没 embedding、没向量库。关键词加权（title × 2、
-tags × 2、summary × 1、content × 0.5）+ BFS 链接遍历，简单到不可能出错。
-词条本身就是 markdown，Obsidian / VS Code / Git 都能直接用。
+**1. Hydrate** — compress raw documents (markdown / PDF / DOCX / HTML / email)
+into Markdown entries roughly 30% of the original size. Strip filler, keep
+signal. LLMs read these directly.
 
-**3. 对话**（Chat）—— REPL agent 通过 8 个工具（read / write / list_dir +
-wiki_ingest / wiki_get / wiki_query / wiki_list / wiki_read_source）跟你的库
-聊天。每次回合自动写 transcript，`/digest` 把对话精华回灌成 wiki 条目，
-形成 "聊 → 落库 → 下次能查到" 的反馈环。
+**2. Retrieve** — no embeddings, no vector DB. Weighted keyword search (title × 2,
+tags × 2, summary × 1, content × 0.5) + BFS link traversal. Boring on purpose.
+Entries are plain Markdown; Obsidian, VS Code, and Git all open them natively.
 
-**4. 自动入库**（Ingest）—— 配 `watchDirs` 之后，你的笔记目录（Obsidian vault /
-inbox folder）有变动就自动入队，后台 worker 自动消化。`pith-wiki doctor` 定期
-检查库的健康度（孤儿链接、坏 frontmatter、id 撞名）。
+**3. Chat** — the REPL agent talks to your library through 8 tools
+(`read_file` / `write_file` / `list_dir` / `wiki_ingest` / `wiki_get` /
+`wiki_query` / `wiki_list` / `wiki_read_source`). Every turn writes a transcript;
+`/digest` distills the conversation back into a wiki entry, closing the loop
+chat → store → retrieve.
 
-## 命令速览
+**4. Auto-ingest** — configure `watchDirs` and changes in your notes folder
+(Obsidian vault, inbox, etc.) are auto-enqueued. A background worker hydrates
+them. `pith-wiki doctor` periodically checks library health (orphan links,
+broken frontmatter, ID collisions).
 
-| 命令 | 一句话 |
+## Command cheatsheet
+
+| Command | One-liner |
 |---|---|
-| `pith-wiki init [--force] [--api-key <k>]` | 一次性初始化 `~/.pith-wiki/`（建目录 + 写 .env 模板 + chmod） |
-| `pith-wiki` | 进 REPL（chat + 自动 worker + 自动 transcript） |
-| `pith-wiki ingest --collection <c> --file <p>` | 单文件脱水入库 |
-| `pith-wiki ingest --collection <c> --dir <d>` | 目录批量入库 |
-| `pith-wiki queue add\|status\|run\|retry\|clear` | 持久化队列管理 |
-| `pith-wiki watch` | 启动目录监听 |
-| `pith-wiki get <id>` / `list` / `query "..."` | 检索（不需要调用 LLM） |
-| `pith-wiki doctor [--json] [--check ...]` | 库健康度体检（不需要调用 LLM） |
-| `pith-wiki converters` / `status` | 列转换器 / 启动 dashboard |
-| `pith-wiki --help` | 全部子命令 |
+| `pith-wiki init [--force] [--provider <id>] [--api-key <k>] [--watch-dir <p>] [--no-initial-scan] [--no-prompt]` | Interactive (or flagged) one-shot setup of `~/.pith-wiki/` |
+| `pith-wiki` | Enter REPL (chat + auto worker + auto transcript) |
+| `pith-wiki ingest --collection <c> --file <p>` | Hydrate a single file into the library |
+| `pith-wiki ingest --collection <c> --dir <d>` | Recursively ingest a directory |
+| `pith-wiki queue add\|status\|run\|retry\|clear` | Manage the persistent ingest queue |
+| `pith-wiki watch` | Start the directory watcher (REPL does this automatically) |
+| `pith-wiki get <id>` / `list` / `query "..."` | Retrieve (no LLM call needed) |
+| `pith-wiki doctor [--json] [--check ...]` | Library health check (no LLM call needed) |
+| `pith-wiki converters` / `status` | List converters / open the dashboard |
+| `pith-wiki --help` | All subcommands |
 
-每条命令的详细 flag、REPL 内的 slash 命令、watcher / queue 配置见 [docs/usage.md](docs/usage.md)。
+Detailed flags, REPL slash commands, watcher / queue configuration:
+[docs/usage.md](docs/usage.md).
 
-## 完整文档
+## Full documentation
 
-| 文档 | 看这个的时机 |
+| Document | When to read it |
 |---|---|
-| [docs/quickstart.md](docs/quickstart.md) | 5 分钟入门，从安装到第一条入库 |
-| [docs/usage.md](docs/usage.md) | 详细 CLI 命令 + REPL + queue + watcher + doctor + 多 provider |
-| [docs/repl-workflow.md](docs/repl-workflow.md) | 多终端协作、transcript、`/digest`、日常工作流 |
-| [docs/config.md](docs/config.md) | 配置字段表、`additionalReadPaths`、文件落在哪 |
-| [docs/config.example.json](docs/config.example.json) | 完整 `~/.pith-wiki/config.json` 示例（多 provider + watchDirs + queue） |
-| [docs/entry-format.md](docs/entry-format.md) | 词条文件 YAML frontmatter 格式 |
-| [docs/architecture.md](docs/architecture.md) | 三件套核心服务 + 数据流图 |
-| [docs/security-model.md](docs/security-model.md) | 沙箱不变量（贡献者必读） |
-| [docs/roadmap.md](docs/roadmap.md) | Likely next / Maybe someday / 明确不做 |
-| [SECURITY.md](SECURITY.md) | 漏洞上报渠道 |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献流程 |
-| [CHANGELOG.md](CHANGELOG.md) | 版本变更 |
+| [docs/quickstart.md](docs/quickstart.md) | Five-minute zero-to-first-ingest |
+| [docs/usage.md](docs/usage.md) | All CLI commands, REPL, queue, watcher, doctor, multi-provider |
+| [docs/repl-workflow.md](docs/repl-workflow.md) | Multi-terminal workflow, transcripts, `/digest`, daily routine |
+| [docs/config.md](docs/config.md) | Configuration field reference, `additionalReadPaths`, on-disk layout |
+| [docs/config.example.json](docs/config.example.json) | Full `~/.pith-wiki/config.json` example (multi-provider + watchDirs + queue) |
+| [docs/entry-format.md](docs/entry-format.md) | YAML frontmatter spec for entries |
+| [docs/architecture.md](docs/architecture.md) | Three core services + data-flow diagram |
+| [docs/security-model.md](docs/security-model.md) | Sandbox invariants (required reading for contributors) |
+| [docs/release.md](docs/release.md) | Release checklist + historical regressions |
+| [docs/roadmap.md](docs/roadmap.md) | Likely next / maybe someday / explicit non-goals |
+| [SECURITY.md](SECURITY.md) | Vulnerability reporting |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution flow |
+| [CHANGELOG.md](CHANGELOG.md) | Version history |
 
 ## License
 

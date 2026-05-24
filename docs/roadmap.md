@@ -1,109 +1,129 @@
 # Roadmap
 
-pith-wiki 是 solo dev 维护的开源工具，**没有承诺过的时间表**。
+pith-wiki is a solo-dev open-source tool. **No committed timeline.**
 
-按 [issue](https://github.com/l-zhi/pith-wiki/issues) 上的 reaction count 与
-讨论质量决定优先级。本文件分三栏：**Likely next**（短期内可能动手）、
-**Maybe someday**（中长期，等真实信号）、**明确不做**（避免 scope creep）。
+Priorities are set by reaction counts and discussion quality on the
+[issue tracker](https://github.com/l-zhi/pith-wiki/issues). This file is
+organized into three sections: **Likely next** (might land in the next minor
+version), **Maybe someday** (longer-term, contingent on real signal), and
+**Won't do** (kept here to prevent scope creep).
 
-> 决策机制详见 [ADR-0002](adr/0002-issue-driven-roadmap.md)。
+> Decision mechanism in detail: [ADR-0002](adr/0002-issue-driven-roadmap.md).
 
 ---
 
 ## Likely next
 
-短期内可能进入下一个 minor 版本的方向。如果你想推动其中某条，去对应 issue
-+1，或开 issue 描述你的具体用例 —— 真实需求会被优先做。
+Directions that might make it into the next minor version. To push for any of
+these, +1 the corresponding issue or open one with your specific use-case —
+concrete demand gets prioritized.
 
-| 主题 | 一句话 | tracking issue |
+| Topic | One-liner | Tracking issue |
 |---|---|---|
-| URL 抓取 | `--url` 真正发 HTTP 拉网页，配 readability 提取正文（目前仅做 source 字段标记） | _未开 — 想推请开 issue_ |
-| `pith-wiki update <id>` | 用新原文重新脱水覆盖旧 entry，保留 backlinks | _未开_ |
-| `pith-wiki rename <old> <new>` | 改 id 时同步修改所有 `links:` 字段里的引用 | _未开_ |
-| `[[concept-id]]` 自动建链补全 | 扫描正文里的 `[[xxx]]` 标记，与 `links` 字段对账并自动补齐（目前由 `doctor` 仅报错不修） | _未开_ |
-| `/save <name>` / `/load <name>` | REPL 对话存档与恢复 | _未开_ |
-| `doctor --fix` | 当前的 `doctor` 只读；增加自动修复模式（per-problem 审批，沿用 `write_file` 的 `[y/N/a]`） | _未开_ |
+| URL fetching | `--url` actually issues HTTP, runs readability to extract main text (currently it only tags the source field) | _none — open one to push_ |
+| `pith-wiki update <id>` | Re-hydrate from new raw text, overwrite the entry, preserve backlinks | _none_ |
+| `pith-wiki rename <old> <new>` | When renaming an id, also fix every `links:` reference across the wiki | _none_ |
+| Auto-fill `[[concept-id]]` links | Scan body for `[[xxx]]` markers, reconcile with the `links:` field, auto-add missing ones (today `doctor` only reports, doesn't fix) | _none_ |
+| `/save <name>` / `/load <name>` | Persist + resume REPL conversations | _none_ |
+| `doctor --fix` | Today's `doctor` is read-only; add an interactive fix mode (per-problem approval, same `[y/N/a]` UX as `write_file`) | _none_ |
 
-> 这些是维护者觉得"最可能下一步动手"的方向，但**没有承诺时间**。等
-> 真有 issue 讨论 / +1 / 用户 PR 出现，再确定哪个先做。
+> These are what the maintainer considers most likely to be the next step,
+> but **no timeline is committed.** Wait for issue discussion / +1s / user PRs
+> before any priority is locked in.
 
 ---
 
 ## Maybe someday
 
-长期方向。一般不主动做，除非用户用真实场景驱动 —— 解释下为什么这么保守：
+Long-term directions. Generally not actively pursued unless a real use-case
+drives them — explanations for the conservatism follow each item.
 
-### HTTP REST 接口
+### HTTP REST interface
 
-让 pith-wiki 能被远程服务调用（VS Code 插件 / Web 前端 / 其它语言客户端）。
-设计上不难（Fastify / Hono 套一层），但**会改变项目定位**：从"个人 CLI"
-变成"可部署服务"，工程量翻倍（鉴权、TLS、并发、日志、监控）。
+Letting pith-wiki be called by remote services (VS Code plugin, web frontend,
+clients in other languages). Not hard to design (wrap with Fastify / Hono),
+but **it changes the project positioning**: from "personal CLI" to "deployable
+service" doubles engineering scope (auth, TLS, concurrency, logging, monitoring).
 
-**触发条件**：有人明确说"我要在 X 用例里远程调用 pith-wiki"且讨论清楚需求。
+**Trigger**: someone clearly says "I want to call pith-wiki remotely in use-case
+X" and the requirements are nailed down in an issue.
 
-### BM25 评分模式
+### BM25 scoring
 
-当前检索是 `2*title + 2*tags + summary + 0.5*content` 的关键词加权 + BFS 链接
-展开。BM25 在大库（5000+ entries）下精度更好。
+Today's retrieval is `2*title + 2*tags + summary + 0.5*content` keyword
+weighting + BFS link expansion. BM25 is more precise on large libraries (5000+
+entries).
 
-**触发条件**：有人用 1k+ entries 报告检索精度问题，且 issue 里能给出
-"BM25 会改善哪条具体 query"的反例。
+**Trigger**: someone with a 1k+ entry library reports a retrieval-precision
+issue, and the issue gives a concrete counter-example of "BM25 would fix this
+specific query".
 
-### 同义词字典
+### Synonym dictionary
 
-`<wikiRoot>/.synonyms.yml`，把"agent / 智能体 / agent loop"归到一组。tokenize
-阶段做替换。
+`<wikiRoot>/.synonyms.yml` to group "agent / 智能体 / agent loop" together.
+Substitution happens at tokenize time.
 
-**触发条件**：BM25 之后还没解决精度问题；或中英混合检索有人报告卡顿。
+**Trigger**: BM25 hasn't solved a remaining precision problem, or someone reports
+mixed Chinese/English retrieval issues.
 
-### Embedding 混合检索（明确克制）
+### Embedding hybrid retrieval (deliberate restraint)
 
-向量检索 + 关键词 + 链接遍历的三路合并。但项目哲学（PRD §1.2）明确是
-"脱水到 Markdown 后关键词足够"——加 embedding 等于自打嘴巴。
+Vector retrieval + keyword + link traversal, merged three ways. But the project
+philosophy (PRD §1.2) is explicitly "after hydration to Markdown, keywords are
+enough" — adding embeddings contradicts that.
 
-**触发条件**：用户用真实库（不是 toy demo）证明"关键词怎么调都查不准这条"，
-且 embedding 能查到。不是"理论上更好"的论证。
+**Trigger**: someone shows on a real library (not a toy demo) that "no keyword
+tweak finds this entry" but embedding does. Not a "theoretically better" argument.
 
-### Web UI（不取代 CLI）
+### Web UI (does not replace the CLI)
 
-只读的 entry 浏览器 + 图谱视图，挂在本地 HTTP 服务上。**不**做编辑（编辑去
-Obsidian / VS Code）、**不**做 chat（chat 去 REPL）。
+A read-only entry browser + graph view, served on a local HTTP endpoint.
+**Not** for editing (Obsidian / VS Code stay the editors), **not** for chat
+(REPL stays the chat).
 
-**触发条件**：图谱视图是个真实需求被反复提到 ≥3 次。
+**Trigger**: graph view is a real request raised ≥ 3 times.
 
-### 团队协作
+### Team collaboration
 
-多用户 RBAC、Git 后端、collection 命名空间。会让整个架构脱形（v0 是单机
-单用户文件系统模型）。
+Multi-user RBAC, Git backend, collection namespacing. Would deform the entire
+architecture (v0 is a single-machine single-user filesystem model).
 
-**触发条件**：有团队场景的具体提案，且作者愿意维护这部分长期功能。
-
----
-
-## 明确不做（Won't do）
-
-不会接受这类方向的 PR，避免 scope creep 浪费贡献者时间：
-
-- ❌ **取代 Notion / Obsidian** —— 它们有完整 GUI + 插件生态，没法竞争，
-  也不该竞争。pith-wiki 跟 Obsidian 是**互补**（Obsidian 编辑 + pith-wiki 脱水检索）。
-- ❌ **AI 自动写作平台** —— pith-wiki 是知识库，不是内容生成器。
-- ❌ **企业知识库** —— 合规、SSO、审计这些需求会让架构脱形。
-- ❌ **通用 RAG 框架** —— 项目哲学跟"通用 RAG"反着来。要通用 RAG 用
-  LangChain / LlamaIndex。
-- ❌ **GUI 客户端** —— Electron / Tauri 客户端，跨平台维护成本太高，没收益。
-- ❌ **多语言 SDK** —— Python / Go / Rust 客户端。CLI + 持久化文件格式
-  足够当跨语言协议；想要语言 binding 直接 fork。
+**Trigger**: a concrete team use-case with a maintainer willing to own the
+ongoing burden.
 
 ---
 
-## 想推动某个方向？
+## Won't do
 
-[开 issue](https://github.com/l-zhi/pith-wiki/issues/new?template=feature.md) 描述：
+PRs in these directions won't be accepted, to avoid wasting contributors' time:
 
-- 你的具体用例（不是"功能上更全"）
-- 现在的 workaround 和它的痛点
-- 提议的 CLI / API 形态
+- ❌ **Replace Notion / Obsidian** — they have full GUIs + plugin ecosystems
+  that can't be matched and shouldn't be. pith-wiki is **complementary** to
+  Obsidian (Obsidian for editing, pith-wiki for hydration + retrieval).
+- ❌ **AI-driven writing platform** — pith-wiki is a knowledge base, not a
+  content generator.
+- ❌ **Enterprise knowledge base** — compliance / SSO / audit requirements
+  would deform the architecture.
+- ❌ **Generic RAG framework** — the project philosophy runs opposite to
+  "general RAG". For general RAG use LangChain / LlamaIndex.
+- ❌ **GUI client** — Electron / Tauri clients. Cross-platform maintenance
+  cost too high for the benefit.
+- ❌ **Multi-language SDKs** — Python / Go / Rust clients. The CLI + the
+  persistent file format already work as a cross-language protocol; fork
+  for language bindings.
 
-或者，在已有 issue 上 +1 + 留言补充你的场景 —— 真实信号会被优先做。
+---
 
-[Bug reports](https://github.com/l-zhi/pith-wiki/issues/new?template=bug.md) 永远走快道。
+## Want to push a direction?
+
+[Open an issue](https://github.com/l-zhi/pith-wiki/issues/new?template=feature.md) with:
+
+- Your specific use-case (not "the feature would be more complete")
+- Your current workaround and its pain points
+- A proposed CLI / API shape
+
+Or comment on an existing issue with +1 and your specific scenario — real
+signals get prioritized.
+
+[Bug reports](https://github.com/l-zhi/pith-wiki/issues/new?template=bug.md)
+always get fast-tracked.
