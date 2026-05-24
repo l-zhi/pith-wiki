@@ -13,6 +13,7 @@ import {
 import { ZodError } from 'zod';
 import { buildSubcommands } from '../src/cli/subcommands.js';
 import { App } from '../src/cli/App.js';
+import { readPackageVersion } from '../src/version.js';
 
 interface GlobalOpts {
   readOnly?: boolean;
@@ -33,7 +34,7 @@ const program = new Command();
 program
   .name('pith-wiki')
   .description('Karpathy-style LLM knowledge base CLI — hydrate docs into dense Markdown entries, retrieve by keyword + link traversal.')
-  .version('0.1.0')
+  .version(readPackageVersion())
   .option('--read-only', 'Disable file writes.')
   .option('--model <name>', 'Override the LLM model.')
   .option('--root <dir>', 'Override the wiki storage root.')
