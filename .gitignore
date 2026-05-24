@@ -73,3 +73,6 @@ design/
 # public repo. The user-facing docs in docs/*.md and docs/screenshots/ stay.
 docs/adr/
 docs/agents/
+# Dev guide for Claude Code working inside this repo. References docs/agents/
+# + docs/adr/ paths that don't exist on the public side, so we keep it local-only.
+CLAUDE.md
