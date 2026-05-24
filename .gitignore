@@ -6,6 +6,9 @@ dist/
 # `npm pack` 产物（release-check 用）。不该入库。
 pith-wiki-*.tgz
 
+# 偶尔有人误用 bun 跑命令会生成这个；项目用 npm，bun.lock 不入库。
+bun.lock
+
 # --- secrets & local config ---
 .env
 .env.*
