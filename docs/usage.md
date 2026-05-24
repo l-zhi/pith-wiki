@@ -217,7 +217,7 @@ watcher 自身**不取队列锁**——可以和 REPL（自动起的 worker）/ 
 
 ## 检索
 
-不需要 API key 的本地操作：
+不需要调用 LLM 的本地操作：
 
 ```bash
 # 查看一个词条
@@ -236,7 +236,7 @@ pith-wiki list --collection tech
 
 对积攒到几十上百条之后的 wiki 做一次体检，把"格式坏掉、引用错位、id 撞名"
 这类不会被 LibraryService 静默跳过却真实存在的问题摊出来。仅报告，不动数据。
-不需要 API key。
+不需要调用 LLM。
 
 ```bash
 # 默认人类可读输出；有问题时 exit 1，便于 CI 钩进 pre-commit

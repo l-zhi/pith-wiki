@@ -9,14 +9,19 @@
 
 ---
 
-一个仿 Claude Code 风格的命令行工具，用于搭建 **Karpathy 风格** 的 LLM 知识库。
-默认模型：**DeepSeek**（`deepseek-chat`）。默认存储：一个装 Markdown 文件的文件夹。
+一个 CLI 命令行工具，用于搭建 **Karpathy 风格** 的 LLM 知识库。
+把电脑上任意目录 / 文件夹里的文档整理成可快速检索的知识库，跟大模型对话，
+同时把对话本身脱水成新的文档输回库里。
+目前支持：`.docx` `.eml` `.htm` `.html` `.markdown` `.md` `.pdf` `.text` `.txt`。
+
+> **最佳实践**：把本地 Obsidian 目录配进 `watchDirs`——往 Obsidian 加任何文档都会
+> 自动建索引，供大模型在对话时引用。
 
 > 设计哲学：**数据工程 > 检索算法。** 不要把原始文档塞进库里、再指望 embedding
 > 把它捞回来。用 LLM 把原文 _脱水（hydrate）_ 成高密度的 Markdown 词条，
 > 检索时靠关键词 + 链接遍历，简单直接，肉眼可读。
 
-**平台支持**：Linux 与 macOS 一等公民，CI 矩阵两个都跑（Node 20 / 22）。Windows
+**平台支持**：Linux 与 macOS，CI 矩阵两个都跑（Node 20 / 22）。Windows
 理论可用但**不在 CI 覆盖范围**——`fs.rename` 原子性、chokidar fs-event、`path.delimiter`
 都跟 POSIX 不一样；社区 PR 欢迎，但首发不投入这部分工程量。详见
 [ADR-0003](docs/adr/0003-windows-best-effort.md)。
@@ -84,8 +89,8 @@ inbox folder）有变动就自动入队，后台 worker 自动消化。`pith-wik
 | `pith-wiki ingest --collection <c> --dir <d>` | 目录批量入库 |
 | `pith-wiki queue add\|status\|run\|retry\|clear` | 持久化队列管理 |
 | `pith-wiki watch` | 启动目录监听 |
-| `pith-wiki get <id>` / `list` / `query "..."` | 检索（不需要 API key） |
-| `pith-wiki doctor [--json] [--check ...]` | 库健康度体检（不需要 API key） |
+| `pith-wiki get <id>` / `list` / `query "..."` | 检索（不需要调用 LLM） |
+| `pith-wiki doctor [--json] [--check ...]` | 库健康度体检（不需要调用 LLM） |
 | `pith-wiki converters` / `status` | 列转换器 / 启动 dashboard |
 | `pith-wiki --help` | 全部子命令 |
 
