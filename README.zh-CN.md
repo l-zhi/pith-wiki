@@ -8,6 +8,8 @@
 
 ![pith-wiki REPL dashboard](docs/screenshots/pith-wiki.gif)
 
+![pith-wiki 词条图谱 + 链接遍历](docs/screenshots/nodes.gif)
+
 *实时 dashboard：监听本地笔记目录，新增文件自动 hydrate 进各 collection。*
 
 ![Obsidian vault + pith-wiki 并排](docs/screenshots/Obsidian-pithwiki.jpg)

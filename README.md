@@ -8,6 +8,8 @@ vector DB and pray. Hydrate them into dense Markdown entries, retrieve by keywor
 
 ![pith-wiki REPL dashboard](docs/screenshots/pith-wiki.gif)
 
+![pith-wiki entry graph + link traversal](docs/screenshots/nodes.gif)
+
 *Live dashboard: watching a notes folder, hydrating files into collections as they appear.*
 
 ![Obsidian vault + pith-wiki side by side](docs/screenshots/Obsidian-pithwiki.jpg)
