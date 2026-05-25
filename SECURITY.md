@@ -16,7 +16,7 @@ Two channels, in order of preference:
    <https://github.com/l-zhi/pith-wiki/security/advisories/new>. This gives
    us a private threaded conversation, optional CVE assignment, and a
    coordinated-disclosure timer.
-2. **Email backup** — `lizhi.fan+pith-wiki.security@gmail.com`. Use this only
+2. **Email backup** — `569171010@qq.com`. Use this only
    if GHSA is unavailable or you don't have a GitHub account. Plain text is
    fine; PGP not required.
 
