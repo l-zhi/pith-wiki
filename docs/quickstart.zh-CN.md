@@ -4,22 +4,13 @@
 
 从 0 到第一条入库 entry。完整文档去 [README.md](../README.md)；这里只走主路。
 
-## 1. 装
-
-还没发布到 npm（计划 `v0.3.0` 上）。当前从本地构建装：
+## 1. 安装
 
 ```bash
-git clone https://github.com/l-zhi/pith-wiki.git
-cd pith-wiki
-npm install && npm run build
-npm pack                          # 生成 pith-wiki-x.y.z.tgz
-npm install -g ./pith-wiki-*.tgz
+npm install -g pith-wiki
 ```
 
 需要 **Node ≥ 20**。
-
-> 想跑源码 / 改代码？看 [README §开发者](../README.md#开发者从源码构建) 那一段，
-> 用 `npm run dev` 走开发者路径。本文以已装好 `pith-wiki` 命令为前提。
 
 ## 2. 拿个 API key
 
