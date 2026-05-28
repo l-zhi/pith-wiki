@@ -18,6 +18,8 @@ import type { Entry } from '../src/wiki/types.js';
 interface MockCall {
   systemPrompt: string;
   userMessage: string;
+  // 整个入参 —— 让断言"是否传了 response_format"这类外围参数也能 cover
+  params: Record<string, unknown>;
 }
 
 /**
@@ -30,7 +32,7 @@ function makeMockClient(responses: string[]): { client: OpenAI; calls: MockCall[
   const create = vi.fn(async (params: { messages: Array<{ role: string; content: string }> }) => {
     const sys = params.messages.find((m) => m.role === 'system')?.content ?? '';
     const usr = params.messages.find((m) => m.role === 'user')?.content ?? '';
-    calls.push({ systemPrompt: sys, userMessage: usr });
+    calls.push({ systemPrompt: sys, userMessage: usr, params: params as Record<string, unknown> });
     const text = responses[i++] ?? responses[responses.length - 1];
     return {
       choices: [{ message: { content: text, role: 'assistant' }, finish_reason: 'stop', index: 0 }],
@@ -317,5 +319,65 @@ describe('hydrate — id 工程化覆盖（文件源走 filename 派生）', () 
     });
 
     expect(entry.id).toBe('成长与低谷期反思');
+  });
+});
+
+describe('hydrate — supportsJsonMode 开关', () => {
+  it('默认（4th arg 省略）→ 传 response_format=json_object', async () => {
+    const { client, calls } = makeMockClient([validOutput]);
+    const hydrator = new HydrationService(client, 'test-model', lib);
+
+    await hydrator.hydrate({
+      rawContent: 'x',
+      source: { type: 'inline' },
+      collectionId: 'tech',
+    });
+
+    expect(calls[0].params.response_format).toEqual({ type: 'json_object' });
+  });
+
+  it('supportsJsonMode=false → 完全不传 response_format（给 doubao coding endpoint 类）', async () => {
+    const { client, calls } = makeMockClient([validOutput]);
+    const hydrator = new HydrationService(client, 'test-model', lib, false);
+
+    await hydrator.hydrate({
+      rawContent: 'x',
+      source: { type: 'inline' },
+      collectionId: 'tech',
+    });
+
+    expect(calls[0].params).not.toHaveProperty('response_format');
+  });
+
+  it('supportsJsonMode=false 时 plan pass 也不传 response_format', async () => {
+    // 长文 + 默认 document 模式 → 触发 plan
+    const planResp = JSON.stringify({ outline: ['a', 'b'], target_chars: 600 });
+    const { client, calls } = makeMockClient([planResp, validOutput]);
+    const hydrator = new HydrationService(client, 'test-model', lib, false);
+
+    await hydrator.hydrate({
+      rawContent: 'long '.repeat(700),
+      source: { type: 'inline' },
+      collectionId: 'tech',
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0].params).not.toHaveProperty('response_format'); // plan call
+    expect(calls[1].params).not.toHaveProperty('response_format'); // write call
+  });
+
+  it('supportsJsonMode=false 下，LLM 包 markdown fence 的输出仍能被 extractJson 救出', async () => {
+    // 模拟非严格 JSON mode 下模型的典型输出：套上 ```json ... ```
+    const fenced = '好的，这是结果：\n```json\n' + validOutput + '\n```';
+    const { client } = makeMockClient([fenced]);
+    const hydrator = new HydrationService(client, 'test-model', lib, false);
+
+    const out = await hydrator.hydrate({
+      rawContent: 'x',
+      source: { type: 'inline' },
+      collectionId: 'tech',
+    });
+
+    expect(out.id).toBe('test-entry'); // extractJson 剥 fence 成功
   });
 });

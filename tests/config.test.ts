@@ -205,7 +205,12 @@ describe('multi-provider — resolveProviderEntry', () => {
       model: 'm',
       apiKey: 'literal-key',
     });
-    expect(r).toEqual({ apiKey: 'literal-key', baseURL: 'https://api.example.com', model: 'm' });
+    expect(r).toEqual({
+      apiKey: 'literal-key',
+      baseURL: 'https://api.example.com',
+      model: 'm',
+      supportsJsonMode: true, // 缺省视为支持
+    });
   });
 
   it('apiKeyEnv → 从 process.env 取值', () => {
@@ -243,6 +248,20 @@ describe('multi-provider — resolveProviderEntry', () => {
   it('两者都没给 → 空串（让 require API key 在调用时报错）', () => {
     const r = resolveProviderEntry({ baseURL: 'https://api.example.com', model: 'm' });
     expect(r.apiKey).toBe('');
+  });
+
+  it('supportsJsonMode 缺省 → true', () => {
+    const r = resolveProviderEntry({ baseURL: 'https://api.example.com', model: 'm' });
+    expect(r.supportsJsonMode).toBe(true);
+  });
+
+  it('supportsJsonMode 显式 false 透传（doubao coding endpoint 类）', () => {
+    const r = resolveProviderEntry({
+      baseURL: 'https://api.example.com',
+      model: 'm',
+      supportsJsonMode: false,
+    });
+    expect(r.supportsJsonMode).toBe(false);
   });
 });
 
@@ -298,6 +317,33 @@ describe('multi-provider — applyActiveProvider', () => {
     expect(result.model).toBe('qwen-plus');
     // 非 provider 字段保持
     expect(result.workspaceRoot).toBe('/tmp/ws');
+  });
+
+  it('entry 声明 supportsJsonMode=false → 折到顶层 config.supportsJsonMode', () => {
+    const cfg = baseConfig({
+      providers: {
+        doubao: {
+          baseURL: 'https://ark.cn-beijing.volces.com/api/coding/v3',
+          model: 'DeepSeek-V4-Flash',
+          apiKey: 'k',
+          supportsJsonMode: false,
+        },
+      },
+      activeProvider: 'doubao',
+    });
+    const result = applyActiveProvider(cfg);
+    expect(result.supportsJsonMode).toBe(false);
+  });
+
+  it('entry 不声明 supportsJsonMode → 顶层默认 true', () => {
+    const cfg = baseConfig({
+      providers: {
+        qwen: { baseURL: 'https://x.example.com', model: 'q', apiKey: 'k' },
+      },
+      activeProvider: 'qwen',
+    });
+    const result = applyActiveProvider(cfg);
+    expect(result.supportsJsonMode).toBe(true);
   });
 
   it('activeProvider 指向不存在的 entry → 抛错（避免静默用顶层 fallback）', () => {

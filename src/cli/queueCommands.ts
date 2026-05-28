@@ -237,7 +237,7 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
 
       const client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
       const library = new LibraryService(config.wikiRoot);
-      const hydrator = new HydrationService(client, config.model, library);
+      const hydrator = new HydrationService(client, config.model, library, config.supportsJsonMode);
 
       const ac = new AbortController();
       const onSignal = (sig: string) => () => {
