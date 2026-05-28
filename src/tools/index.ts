@@ -73,7 +73,7 @@ export function buildContext(
 ): ToolContext {
   const lib = library ?? new LibraryService(config.wikiRoot);
   const assembler = new ContextAssembler(lib);
-  const hydrator = new HydrationService(client, config.model, lib);
+  const hydrator = new HydrationService(client, config.model, lib, config.supportsJsonMode);
   let registry: ConverterRegistry;
   let cache: ConverterCache;
   if (extras.converterRegistry && extras.converterCache) {

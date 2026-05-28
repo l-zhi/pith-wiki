@@ -55,6 +55,19 @@ const ProviderSchema = z.object({
   model: z.string().min(1),
   apiKey: z.string().optional(),
   apiKeyEnv: z.string().optional(),
+  /**
+   * 该 provider 的 endpoint 是否支持 `response_format: { type: 'json_object' }`。
+   * 缺省视为 true（DeepSeek 官方 / OpenAI / Qwen 等主流 chat endpoint 都支持）。
+   *
+   * 已知需要设 false 的场景：
+   *   - 火山引擎 Ark `/api/coding/v3` 端点（DeepSeek-V4-Flash 等）—— 直接返回 HTTP 400，
+   *     连参数都不接受
+   *   - 部分本地推理框架（llama.cpp server / 旧版 vllm）
+   *
+   * 关掉后 HydrationService 不再传 `response_format`，靠 hydration.ts 内的 extractJson
+   * 三级抢救 (直 parse → 剥 markdown fence → 找首{...末}) 兜底解析非严格 JSON 输出。
+   */
+  supportsJsonMode: z.boolean().optional(),
 });
 export type ProviderConfig = z.infer<typeof ProviderSchema>;
 
@@ -62,6 +75,12 @@ const ConfigSchema = z.object({
   apiKey: z.string().default(''),
   baseURL: z.string().url(),
   model: z.string().min(1),
+  /**
+   * 当前 active provider 是否支持 `response_format: json_object`。默认 true。
+   * 由 applyActiveProvider 从 ProviderSchema.supportsJsonMode 折下来；缺省即 true。
+   * 顶层（无 provider）的 v0 用法也走默认 true（DeepSeek 官方端点支持）。
+   */
+  supportsJsonMode: z.boolean().default(true),
   /** Multi-provider map（可选）。空 → 走顶层 apiKey/baseURL/model（v0 行为）。 */
   providers: z.record(z.string(), ProviderSchema).default({}),
   /** 当前激活的 provider key（必须出现在 providers 里）。空 → 不切换。 */
@@ -368,6 +387,10 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     // 实际读盘 + ~/展开在 src/llm/soul.ts 内，避免 config schema 持有读盘副作用
     soulFile:
       overrides.soulFile ?? process.env.PITH_WIKI_SOUL ?? file.soulFile ?? undefined,
+    // 顶层 supportsJsonMode 仅在没用 provider map 的 v0 场景下直接生效；
+    // 用了 activeProvider 时会被 applyActiveProvider 用 entry 的同名字段覆盖。
+    // 这里走 file 字段（无 CLI/env 入口，结构小且改动频率低）。
+    supportsJsonMode: file.supportsJsonMode,
     // multi-provider：providers 表来自 file（不接受 env，结构复杂），activeProvider
     // 走 CLI > env > file。Zod 校验之后再 overlay 到顶层 apiKey/baseURL/model。
     providers: overrides.providers ?? file.providers ?? {},
@@ -401,10 +424,13 @@ export function resolveProviderEntry(entry: ProviderConfig): {
   apiKey: string;
   baseURL: string;
   model: string;
+  supportsJsonMode: boolean;
 } {
   const fromEnv = entry.apiKeyEnv ? (process.env[entry.apiKeyEnv] ?? '') : '';
   const apiKey = entry.apiKey && entry.apiKey.length > 0 ? entry.apiKey : fromEnv;
-  return { apiKey, baseURL: entry.baseURL, model: entry.model };
+  // entry 未声明视为支持 —— 主流 chat endpoint 都支持，关掉是例外不是默认
+  const supportsJsonMode = entry.supportsJsonMode ?? true;
+  return { apiKey, baseURL: entry.baseURL, model: entry.model, supportsJsonMode };
 }
 
 /**
@@ -430,6 +456,7 @@ export function applyActiveProvider(parsed: Config): Config {
     apiKey: resolved.apiKey,
     baseURL: resolved.baseURL,
     model: resolved.model,
+    supportsJsonMode: resolved.supportsJsonMode,
   };
 }
 

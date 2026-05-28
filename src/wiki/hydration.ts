@@ -289,11 +289,27 @@ const PlanSchema = z.object({
 type Plan = z.infer<typeof PlanSchema>;
 
 export class HydrationService {
+  /**
+   * @param supportsJsonMode  当前 provider/endpoint 是否接受 `response_format: json_object`。
+   *                          true → 走 strict JSON mode（默认，主流 endpoint 都支持，可靠性最高）。
+   *                          false → 不传该参数；extractJson 负责从可能带 markdown fence /
+   *                          散文前后缀的输出里抢救 JSON。已知需要 false 的场景见
+   *                          src/config.ts ProviderSchema.supportsJsonMode 的注释。
+   */
   constructor(
     private readonly client: OpenAI,
     private readonly model: string,
     private readonly library: LibraryService,
+    private readonly supportsJsonMode: boolean = true,
   ) {}
+
+  /**
+   * 单点封装：write/plan 两处都通过这里决定要不要塞 `response_format`。
+   * 改一处即可同步两处，避免漏改。
+   */
+  private get jsonModeArg(): { response_format: { type: 'json_object' } } | Record<string, never> {
+    return this.supportsJsonMode ? { response_format: { type: 'json_object' as const } } : {};
+  }
 
   async hydrate(input: HydrateInput): Promise<Entry> {
     // ── 候选链接来源（与旧版一致）───────────────────────────────────────────
@@ -342,7 +358,7 @@ export class HydrationService {
       input.mode === 'conversation' ? CONVERSATION_SYSTEM_PROMPT : SYSTEM_PROMPT;
     const completion = await this.client.chat.completions.create({
       model: this.model,
-      response_format: { type: 'json_object' },
+      ...this.jsonModeArg,
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
@@ -436,7 +452,7 @@ export class HydrationService {
         : `Raw input:\n---\n${input.rawContent}\n---`;
       const completion = await this.client.chat.completions.create({
         model: this.model,
-        response_format: { type: 'json_object' },
+        ...this.jsonModeArg,
         messages: [
           { role: 'system', content: PLAN_SYSTEM_PROMPT },
           { role: 'user', content: userMessage },

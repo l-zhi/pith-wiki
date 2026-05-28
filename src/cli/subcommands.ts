@@ -118,7 +118,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
 
       const client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
       const library = new LibraryService(config.wikiRoot);
-      const hydrator = new HydrationService(client, config.model, library);
+      const hydrator = new HydrationService(client, config.model, library, config.supportsJsonMode);
       // 注意：commander `--no-cache` 会把 opts.cache 解析成 false（默认 true）。
       const cacheConverted = opts.cache !== false && config.cacheConverted;
       const { registry: convRegistry, cache: convCache } = buildConverterPipeline({
