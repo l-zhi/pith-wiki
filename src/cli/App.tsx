@@ -197,7 +197,7 @@ export function App({ config: initialConfig }: Props) {
     }
 
     const ac = new AbortController();
-    const hydrator = new HydrationService(client, config.model, library);
+    const hydrator = new HydrationService(client, config.model, library, config.supportsJsonMode);
 
     const workerPromise = runQueue({
       store,
@@ -663,7 +663,7 @@ export function App({ config: initialConfig }: Props) {
       ensureWikiRoot(config);
       // 复用 session 共享的 library —— 写入立即被 agent 后续的 wiki_query/list 看到，
       // 也共用同一份 index.json 的写入节流，不会和 worker 互相覆盖。
-      const hydrator = new HydrationService(client, config.model, library);
+      const hydrator = new HydrationService(client, config.model, library, config.supportsJsonMode);
       const entry = await hydrator.hydrate({
         rawContent: snapshot,
         collectionId: collection,
@@ -709,6 +709,17 @@ export function App({ config: initialConfig }: Props) {
           worker={queueWorkerStatus}
           watchedTargets={config.watchAutoStart ? config.watchDirs.length : 0}
           totalWatchDirs={config.watchDirs.length}
+          onNewDead={(info) => {
+            // 把 worker 后台静默 dead 的事件浮到对话流：状态栏只显示"最近一条"，
+            // 用户回头还可以在 scrollback 里翻历史。完整堆栈仍在 ~/.pith-wiki/queue/logs/<id>.log。
+            append({
+              role: 'error',
+              text:
+                `queue: job ${info.jobId} died (${info.collection}/${shortFile(info.file)}) — ${info.error}\n` +
+                `  log: ${path.join(config.queueLogDir, info.jobId + '.log')}` +
+                `  ·  /queue retry ${info.jobId}`,
+            });
+          }}
         />
         <InputBox
           disabled={inFlight || approval !== null}
@@ -733,4 +744,15 @@ function truncateJson(args: unknown): string {
 function shortenHome(p: string): string {
   const home = os.homedir();
   return p.startsWith(home + path.sep) ? '~' + p.slice(home.length) : p;
+}
+
+/**
+ * 把 jobs 的源文件路径压成 `…/last-2/file.ext`，让 dead 通知一行装得下。
+ * 与 queueOps.shortFile 同形（保持视觉一致），但 queueOps 那个未导出；这里就别为
+ * 一个 5 行函数额外拉一次 export 折腾接口面了。
+ */
+function shortFile(file: string, keepSegments = 2): string {
+  const parts = file.split('/');
+  if (parts.length <= keepSegments + 1) return file;
+  return '…/' + parts.slice(-keepSegments - 1).join('/');
 }
