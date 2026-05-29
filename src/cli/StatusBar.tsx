@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Box, Text } from 'ink';
-import { loadQueueCounts } from './dashboardData.js';
+import { loadQueueDigest } from './dashboardData.js';
+import { shortError } from './queueOps.js';
 
 /**
  * 底部常驻的 1 行 live status bar。
@@ -31,6 +32,15 @@ const C = {
   pink: '#f472b6',
 } as const;
 
+/** App.tsx 通过这个回调把"新 dead 出现了"这件事打到 scrollback 里，避免静默 dead。 */
+export interface NewDeadInfo {
+  jobId: string;
+  collection: string;
+  file: string;
+  /** 已经过 shortError 截断的单行错误。 */
+  error: string;
+}
+
 interface Props {
   statePath: string;
   worker: QueueWorkerStatus;
@@ -38,6 +48,12 @@ interface Props {
   watchedTargets?: number;
   totalWatchDirs?: number;
   pollMs?: number;
+  /**
+   * 检测到新的 kind='dead' 事件时被调用一次。StatusBar 自己只负责盯 events.ts，
+   * 是否往对话里 append message 由父组件决定，避免 StatusBar 直接耦合 messages 状态。
+   * 启动时的"历史 dead"不会触发——首次 poll 把最新 ts 当 baseline 记下来。
+   */
+  onNewDead?: (info: NewDeadInfo) => void;
 }
 
 interface Counts {
@@ -45,6 +61,12 @@ interface Counts {
   running: number;
   completed: number;
   dead: number;
+}
+
+/** 第二行（错误提示）渲染所用的快照：worker error 优先，dead 兜底。 */
+interface InlineErr {
+  kind: 'worker' | 'dead';
+  text: string;
 }
 
 function countsEqual(a: Counts | null, b: Counts | null): boolean {
@@ -64,30 +86,58 @@ function StatusBarImpl({
   watchedTargets,
   totalWatchDirs,
   pollMs = 2000,
+  onNewDead,
 }: Props) {
   const [counts, setCounts] = useState<Counts | null>(null);
+  const [latestDeadErr, setLatestDeadErr] = useState<string | null>(null);
   const [readErr, setReadErr] = useState<string | null>(null);
+  // 上次见到的最新 dead 事件时间戳。首次 tick 用 baseline 模式：只记录、不通知；
+  // 之后每见到一个更新的 ts 就视为"刚发生了新 dead"，触发 onNewDead 一次。
+  const lastDeadTsRef = useRef<string | null>(null);
+  const baselineDoneRef = useRef(false);
+  // 把 onNewDead 装进 ref，避免父组件每次 render 传新闭包都导致 effect 重订
+  // （重订 effect 会重新走 baseline → 又错过通知）。
+  const onNewDeadRef = useRef(onNewDead);
+  useEffect(() => {
+    onNewDeadRef.current = onNewDead;
+  }, [onNewDead]);
 
   useEffect(() => {
     let alive = true;
     function tick(): void {
       if (!alive) return;
       try {
-        // loadQueueCounts 已按 collection 分组，这里把所有 collection 合并求总和
-        const grouped = loadQueueCounts(statePath);
-        const sum: Counts = { pending: 0, running: 0, completed: 0, dead: 0 };
-        for (const v of grouped.values()) {
-          sum.pending += v.pending;
-          sum.running += v.running;
-          sum.completed += v.completed;
-          sum.dead += v.dead;
-        }
+        const digest = loadQueueDigest(statePath);
         // 等值判断：每 tick 都重建一个 sum 对象，setCounts 看引用变化会重渲；
         // 实际数字没变时直接 noop，避免在 worker 空转的稳态下 2s 一次的无意义
         // re-render。这种重渲在终端尺寸偏紧时会被 Ink 当作新行写进 scrollback，
         // 表现为同一行 status bar 不停堆叠刷屏。
-        setCounts((prev) => (countsEqual(prev, sum) ? prev : sum));
+        setCounts((prev) => (countsEqual(prev, digest.counts) ? prev : digest.counts));
         setReadErr((prev) => (prev === null ? prev : null));
+
+        // 第二行的内联错误：优先用 lastError（更精确，已落在 job 上），
+        // 兜底用最近一条 dead event 的 msg（job 被 /queue clear-dead 删掉时仍可见）。
+        const inline = digest.latestDeadJob?.lastError ?? digest.latestDeadEvent?.msg ?? null;
+        const trimmed = inline ? shortError(inline) : null;
+        setLatestDeadErr((prev) => (prev === trimmed ? prev : trimmed));
+
+        // 新 dead 通知：用事件 ts 单调比较。首次 tick 不发通知，只把当前最新 ts
+        // 当做 baseline——不然每次 REPL 启动都会把历史 dead 重放一遍。
+        const ev = digest.latestDeadEvent;
+        if (!baselineDoneRef.current) {
+          lastDeadTsRef.current = ev?.ts ?? null;
+          baselineDoneRef.current = true;
+        } else if (ev && ev.ts !== lastDeadTsRef.current) {
+          lastDeadTsRef.current = ev.ts;
+          const job = digest.latestDeadJob;
+          const errText = shortError(job?.lastError ?? ev.msg ?? '?');
+          onNewDeadRef.current?.({
+            jobId: ev.jobId,
+            collection: job?.collection ?? '?',
+            file: job?.file ?? '?',
+            error: errText,
+          });
+        }
       } catch (err) {
         const msg = (err as Error).message;
         setReadErr((prev) => (prev === msg ? prev : msg));
@@ -192,9 +242,16 @@ function StatusBarImpl({
           </>
         ) : null}
       </Box>
+      {/* 第二行：worker 错误优先（进程级失败，必须显眼），其次最近一个 dead job 的
+          错误（让 "dead 10" 不再是没解释的红字）。两者都没就让 PinnedRows 的 minHeight
+          顶住空行，避免布局抖动。 */}
       {worker.mode === 'error' && worker.error ? (
         <Box>
           <Text color={C.pink}>worker: {worker.error}</Text>
+        </Box>
+      ) : counts.dead > 0 && latestDeadErr ? (
+        <Box>
+          <Text color={C.pink}>dead: {latestDeadErr}</Text>
         </Box>
       ) : null}
     </PinnedRows>
@@ -262,7 +319,10 @@ function arePropsEqual(prev: Props, next: Props): boolean {
     prev.totalWatchDirs === next.totalWatchDirs &&
     prev.worker.mode === next.worker.mode &&
     prev.worker.error === next.worker.error &&
-    prev.worker.externalPid === next.worker.externalPid
+    prev.worker.externalPid === next.worker.externalPid &&
+    // onNewDead 经常以新闭包传入；不参与等值判断，靠 ref 在 effect 内拿最新值。
+    // 这里显式列出来表明"知道但故意忽略"，避免后续维护者误以为是 bug。
+    true
   );
 }
 

@@ -11,8 +11,12 @@ import { pushEvent, type QueueJob, type QueueState } from '../wiki/queue/state.j
  * job 状态字段不并发（worker 只动 running，retry/clear 只动 dead），dead 的处理是安全的。
  */
 
-/** 把 lastError 压成单行短串，避免 dashboard 列表被多行堆栈撑爆。 */
-function shortError(msg: string | undefined, max = 80): string {
+/**
+ * 把 lastError 压成单行短串，避免 dashboard 列表 / status bar 被多行堆栈撑爆。
+ * 导出给 StatusBar 一致复用同一规则（同 80 字符上限），避免一会儿截 80 一会儿 120
+ * 的视觉抖动。
+ */
+export function shortError(msg: string | undefined, max = 80): string {
   if (!msg) return '?';
   const oneLine = msg.replace(/\s+/g, ' ').trim();
   return oneLine.length <= max ? oneLine : oneLine.slice(0, max - 1) + '…';
