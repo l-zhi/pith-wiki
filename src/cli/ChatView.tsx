@@ -4,7 +4,11 @@ import Spinner from 'ink-spinner';
 
 export interface DisplayMessage {
   id: string;
-  role: 'user' | 'assistant' | 'system' | 'tool' | 'error';
+  /**
+   * `process` = 降权"过程痕迹"（think 标记 / tool round / verbose 叙述）：暗灰、
+   * 无标题头、紧贴上一条，不抢正文注意力。其余 role 正常带标题头渲染。
+   */
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'error' | 'process';
   text: string;
   meta?: string;
   /**
@@ -33,15 +37,24 @@ export function ChatView({ messages, inFlight }: Props) {
   return (
     <>
       <Static items={messages}>
-        {(m) => (
-          <Box key={m.id} flexDirection="column" marginTop={1}>
-            <Text color={colorFor(m.role)} bold>
-              {labelFor(m.role)}
-              {m.meta ? <Text color="gray"> {m.meta}</Text> : null}
-            </Text>
-            {m.node ? m.node : <Text>{m.text}</Text>}
-          </Box>
-        )}
+        {(m) =>
+          m.role === 'process' ? (
+            // 过程档：暗灰、紧贴上一条（marginTop=0）、无标题头。
+            <Box key={m.id} flexDirection="column">
+              <Text color="gray" dimColor>
+                {m.text}
+              </Text>
+            </Box>
+          ) : (
+            <Box key={m.id} flexDirection="column" marginTop={1}>
+              <Text color={colorFor(m.role)} bold>
+                {labelFor(m.role)}
+                {m.meta ? <Text color="gray"> {m.meta}</Text> : null}
+              </Text>
+              {m.node ? m.node : <Text>{m.text}</Text>}
+            </Box>
+          )
+        }
       </Static>
       {inFlight ? (
         <Box marginTop={1}>

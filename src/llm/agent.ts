@@ -62,10 +62,52 @@ export interface UsageDelta {
 }
 
 export interface AgentEvents {
-  onAssistantText?: (delta: string) => void;
-  onToolCall?: (call: { name: string; args: unknown }) => void;
-  onToolResult?: (result: { name: string; ok: boolean; preview: string }) => void;
+  /**
+   * 一轮产生的"思考过程"。统一两个来源：
+   *   - source='field'：provider 的 reasoning_content / thinking 扩展字段
+   *   - source='tag'  ：模型写在 content 里的 `<think>…</think>`
+   * 没有思考内容的轮次不触发。
+   */
+  onThinking?: (e: { text: string; source: 'field' | 'tag' }) => void;
+  /**
+   * assistant 正文（已剥离 `<think>`）。
+   *   - final=true ：最后一轮的正式答案
+   *   - final=false：中间轮（带 tool_calls）的叙述，如"我去查一下…"
+   * 空串不触发。
+   */
+  onAssistantText?: (e: { text: string; final: boolean }) => void;
+  /** 一次 tool 调用 + 其结果，合并成一个事件。preview 是结果 JSON 的截断预览。 */
+  onToolRound?: (e: { name: string; args: unknown; ok: boolean; preview: string }) => void;
   onUsage?: (delta: UsageDelta) => void;
+}
+
+/**
+ * 把一条 assistant content 拆成 { body, thinking }。
+ *
+ * 规则（仅处理 `<think>` 标签来源；字段来源由调用方优先处理）：
+ *   - 抽取所有成对的 `<think>…</think>`，拼接成 thinking，从正文移除。
+ *   - 未闭合的 `<think>`（模型截断 / 仍在思考）：开标签之后全部算 thinking，
+ *     之前的算正文。
+ *   - 没有 think 标签：thinking=null，body=原文。
+ * 大小写不敏感；body 末尾 trim。
+ */
+export function splitThinking(content: string): { body: string; thinking: string | null } {
+  if (!/<think/i.test(content)) return { body: content.trim(), thinking: null };
+  const thinks: string[] = [];
+  // 成对标签
+  let body = content.replace(/<think\b[^>]*>([\s\S]*?)<\/think>/gi, (_m, inner: string) => {
+    thinks.push(inner.trim());
+    return '';
+  });
+  // 残留的未闭合开标签：之后全部归入 thinking
+  const openIdx = body.search(/<think\b[^>]*>/i);
+  if (openIdx !== -1) {
+    const tail = body.slice(openIdx).replace(/<think\b[^>]*>/i, '');
+    thinks.push(tail.trim());
+    body = body.slice(0, openIdx);
+  }
+  const thinking = thinks.filter(Boolean).join('\n\n').trim();
+  return { body: body.trim(), thinking: thinking.length ? thinking : null };
 }
 
 export interface RunOptions {
@@ -203,18 +245,38 @@ export class Agent {
       if (typeof m.reasoning_content === 'string') extras.reasoning_content = m.reasoning_content;
       if (m.thinking !== undefined) extras.thinking = m.thinking;
 
+      // API 历史保留原始 content（含 <think>，不动回合制语义）；UI/transcript 走拆分后的视图。
+      const rawContent = msg.content ?? '';
       this.messages.push({
         role: 'assistant',
-        content: msg.content ?? '',
+        content: rawContent,
         ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
         ...extras,
       } as ChatCompletionMessageParam);
 
+      // thinking 来源优先级：结构化字段 > content 内的 <think> 标签。
+      const fieldReasoning =
+        typeof m.reasoning_content === 'string'
+          ? m.reasoning_content
+          : typeof m.thinking === 'string'
+            ? m.thinking
+            : null;
+      const split = splitThinking(rawContent);
+      // 字段来源时 content 通常不含 <think>，正文取原文；标签来源时取剥离后的 body。
+      const body = fieldReasoning ? rawContent.trim() : split.body;
+      const thinking = fieldReasoning ?? split.thinking;
+      if (thinking) {
+        events.onThinking?.({ text: thinking, source: fieldReasoning ? 'field' : 'tag' });
+      }
+
       if (toolCalls.length === 0) {
-        finalText = msg.content ?? '';
-        if (finalText) events.onAssistantText?.(finalText);
+        finalText = body;
+        if (body) events.onAssistantText?.({ text: body, final: true });
         break;
       }
+
+      // 中间轮叙述（"我去查…"）：终端默认不显，但事件仍发出，供 transcript 记录。
+      if (body) events.onAssistantText?.({ text: body, final: false });
 
       for (const call of toolCalls) {
         await this.queue.add(() => this.runToolCall(call, events));
@@ -230,10 +292,17 @@ export class Agent {
   ): Promise<void> {
     const tool = this.toolRegistry.get(call.function.name);
     if (!tool) {
+      const err = { ok: false, error: `Unknown tool: ${call.function.name}` };
       this.messages.push({
         role: 'tool',
         tool_call_id: call.id,
-        content: JSON.stringify({ ok: false, error: `Unknown tool: ${call.function.name}` }),
+        content: JSON.stringify(err),
+      });
+      events.onToolRound?.({
+        name: call.function.name,
+        args: undefined,
+        ok: false,
+        preview: err.error,
       });
       return;
     }
@@ -250,10 +319,14 @@ export class Agent {
         tool_call_id: call.id,
         content: JSON.stringify({ ok: false, error: `Invalid arguments: ${message}` }),
       });
+      events.onToolRound?.({
+        name: tool.name,
+        args: call.function.arguments,
+        ok: false,
+        preview: `Invalid arguments: ${message}`,
+      });
       return;
     }
-
-    events.onToolCall?.({ name: tool.name, args: parsed });
 
     let result: unknown;
     try {
@@ -265,7 +338,7 @@ export class Agent {
     const preview = json.length > 200 ? `${json.slice(0, 200)}…` : json;
     const ok =
       typeof result === 'object' && result !== null && (result as { ok?: boolean }).ok !== false;
-    events.onToolResult?.({ name: tool.name, ok, preview });
+    events.onToolRound?.({ name: tool.name, args: parsed, ok, preview });
 
     this.messages.push({ role: 'tool', tool_call_id: call.id, content: json });
   }
@@ -280,7 +353,10 @@ export type AgentErrorKind =
   | 'unknown';
 
 export class AgentError extends Error {
-  constructor(public readonly kind: AgentErrorKind, message: string) {
+  constructor(
+    public readonly kind: AgentErrorKind,
+    message: string,
+  ) {
     super(message);
     this.name = 'AgentError';
   }

@@ -51,6 +51,10 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     takesArg: true,
   },
   {
+    name: '/verbose',
+    description: 'Toggle inline think / tool detail (default off). Affects subsequent turns only.',
+  },
+  {
     name: '/soul',
     description:
       'Show the active SOUL.md (voice/style overrides). Edit the file + restart REPL to apply.',
