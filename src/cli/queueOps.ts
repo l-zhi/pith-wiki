@@ -12,9 +12,9 @@ import { pushEvent, type QueueJob, type QueueState } from '../wiki/queue/state.j
  */
 
 /**
- * 把 lastError 压成单行短串，避免 dashboard 列表 / status bar 被多行堆栈撑爆。
- * 导出给 StatusBar 一致复用同一规则（同 80 字符上限），避免一会儿截 80 一会儿 120
- * 的视觉抖动。
+ * 把 lastError / tool 结果压成单行短串，避免 dashboard 列表、status bar 或对话流被
+ * 多行堆栈撑爆。统一导出（同 80 字符上限）供 StatusBar 的 dead 提示与 App.tsx 的
+ * tool round 渲染复用，避免一会儿截 80 一会儿 120 的视觉抖动。
  */
 export function shortError(msg: string | undefined, max = 80): string {
   if (!msg) return '?';
