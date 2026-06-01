@@ -22,6 +22,20 @@ export interface DisplayMessage {
 interface Props {
   messages: DisplayMessage[];
   inFlight: boolean;
+  /**
+   * 进行中的"当前活动"单行状态（tool 调用 / 中间叙述）。新动作替换旧的，轮结束清空。
+   * 默认模式下显示在 spinner 旁，替代通用的 "thinking…"；null 时回落到 "thinking…"。
+   * 完整过程在 transcript，这里只截断成一行说明"在干嘛"。
+   */
+  activity?: string | null;
+}
+
+/** 动态区活动行的单行宽度上限，超出截断，避免换行把布局顶乱。 */
+const ACTIVITY_MAX = 100;
+
+function oneLine(text: string, max = ACTIVITY_MAX): string {
+  const s = text.replace(/\s+/g, ' ').trim();
+  return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
 /**
@@ -33,7 +47,7 @@ interface Props {
  *
  * 参考 Claude Code 的同款实现思路。
  */
-export function ChatView({ messages, inFlight }: Props) {
+export function ChatView({ messages, inFlight, activity }: Props) {
   return (
     <>
       <Static items={messages}>
@@ -59,8 +73,15 @@ export function ChatView({ messages, inFlight }: Props) {
       {inFlight ? (
         <Box marginTop={1}>
           <Text color="cyan">
-            <Spinner type="dots" /> thinking…
+            <Spinner type="dots" />{' '}
           </Text>
+          {activity ? (
+            <Text color="gray" dimColor>
+              {oneLine(activity)}
+            </Text>
+          ) : (
+            <Text color="cyan">thinking…</Text>
+          )}
         </Box>
       ) : null}
     </>

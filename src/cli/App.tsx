@@ -95,9 +95,12 @@ export function App({ config: initialConfig }: Props) {
   const [inFlight, setInFlight] = useState(false);
   const [usage, setUsage] = useState({ inputTokens: 0, outputTokens: 0 });
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
-  // verbose=false（默认）：think / tool / 中间叙述降权成暗灰单行（或不显）。
+  // verbose=false（默认）：think / tool / 中间叙述只在动态区显示一行实时状态（见 activity）。
   // verbose=true：think 与 tool 在终端内联展开完整内容。切换只影响后续轮（scrollback 不可改）。
   const [verbose, setVerbose] = useState(false);
+  // 进行中的"当前活动"单行状态（默认模式下渲染在动态区，替代静态 spinner 文案）。
+  // 新动作替换旧的；轮结束清空。null = 还没有具体活动，显示通用 thinking…。
+  const [activity, setActivity] = useState<string | null>(null);
   // 历史命令：启动时从 ~/.pith-wiki/history 加载最近 N 条；每次提交追加。
   const [history, setHistory] = useState<string[]>(() =>
     loadHistory(config.historyFile, HISTORY_LIMIT),
@@ -368,36 +371,41 @@ export function App({ config: initialConfig }: Props) {
     const ac = new AbortController();
     abortRef.current = ac;
     setInFlight(true);
+    setActivity(null);
     try {
       await agent.send(trimmed, {
         signal: ac.signal,
         events: {
+          // 默认模式：进行中的过程（思考/tool/中间叙述）只在动态区显示一行可截断的
+          // 实时状态，新动作替换旧的，轮结束即消失——不往 scrollback 堆永久行。
+          // verbose 模式：把每条过程降权 append 进 scrollback，供调试逐条回看。
+          // 完整内容两种模式都落 transcript。
           onThinking: ({ text, source }) => {
-            // 默认：一行降权标记；verbose：暗灰缩进展开完整 think。完整内容始终落 transcript。
-            append({
-              role: 'process',
-              text: verbose ? `· 思考过程\n${indent(text)}` : '· 思考过程 · 详见 transcript',
-            });
+            if (verbose) {
+              append({ role: 'process', text: `· 思考过程\n${indent(text)}` });
+            } else {
+              setActivity('思考中…');
+            }
             transcript?.recordThinking(text, source);
           },
           onAssistantText: ({ text, final }) => {
             if (final) {
               append({ role: 'assistant', text });
             } else if (verbose) {
-              // 中间叙述：默认不显，verbose 下降权一行。
               append({ role: 'process', text: `· ${text.replace(/\s+/g, ' ').trim()}` });
+            } else {
+              setActivity(text.replace(/\s+/g, ' ').trim());
             }
             // 中间叙述也写 transcript，保证可追溯（这是之前完全丢失的内容）。
             transcript?.recordAssistant(text);
           },
           onToolRound: ({ name, args, ok, preview }) => {
-            const head = `· ${name}(${truncateJson(args)})`;
-            append({
-              role: 'process',
-              text: verbose
-                ? `${head}\n${indent(preview)}`
-                : `${head} → ${ok ? '✓' : `✗ ${shortError(preview)}`}`,
-            });
+            const head = `${name}(${truncateJson(args)})`;
+            if (verbose) {
+              append({ role: 'process', text: `· ${head}\n${indent(preview)}` });
+            } else {
+              setActivity(`${head} → ${ok ? '✓' : `✗ ${shortError(preview)}`}`);
+            }
             transcript?.recordToolCall(name, args);
             transcript?.recordToolResult(name, ok, preview);
           },
@@ -423,6 +431,7 @@ export function App({ config: initialConfig }: Props) {
     } finally {
       abortRef.current = null;
       setInFlight(false);
+      setActivity(null);
       transcript?.endTurn();
     }
   };
@@ -732,7 +741,7 @@ export function App({ config: initialConfig }: Props) {
 
   return (
     <Box flexDirection="column">
-      <ChatView messages={messages} inFlight={inFlight && !approval} />
+      <ChatView messages={messages} inFlight={inFlight && !approval} activity={activity} />
       {approval ? <ToolApproval request={approval} /> : null}
       <Box flexDirection="column">
         <TokenMeter inputTokens={usage.inputTokens} outputTokens={usage.outputTokens} />
