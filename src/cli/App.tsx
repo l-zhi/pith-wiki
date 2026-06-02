@@ -30,7 +30,7 @@ import { HydrationService } from '../wiki/hydration.js';
 import { formatConvertersTable } from './converterFormat.js';
 import { collectDashboardData, formatDashboard } from './dashboardData.js';
 import { Dashboard } from './Dashboard.js';
-import { clearDead, formatDeadList, formatQueueStatus, resetDead } from './queueOps.js';
+import { clearDead, formatDeadList, formatQueueStatus, resetDead, shortError } from './queueOps.js';
 
 interface Props {
   /**
@@ -95,6 +95,12 @@ export function App({ config: initialConfig }: Props) {
   const [inFlight, setInFlight] = useState(false);
   const [usage, setUsage] = useState({ inputTokens: 0, outputTokens: 0 });
   const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+  // verbose=false（默认）：think / tool / 中间叙述只在动态区显示一行实时状态（见 activity）。
+  // verbose=true：think 与 tool 在终端内联展开完整内容。切换只影响后续轮（scrollback 不可改）。
+  const [verbose, setVerbose] = useState(false);
+  // 进行中的"当前活动"单行状态（默认模式下渲染在动态区，替代静态 spinner 文案）。
+  // 新动作替换旧的；轮结束清空。null = 还没有具体活动，显示通用 thinking…。
+  const [activity, setActivity] = useState<string | null>(null);
   // 历史命令：启动时从 ~/.pith-wiki/history 加载最近 N 条；每次提交追加。
   const [history, setHistory] = useState<string[]>(() =>
     loadHistory(config.historyFile, HISTORY_LIMIT),
@@ -122,7 +128,8 @@ export function App({ config: initialConfig }: Props) {
   // worker / watcher / agent 工具上下文都拿同一份；watcher 据此动态生成 chokidar glob，
   // /converters slash 据此打表。
   const converters = useMemo(
-    () => buildConverterPipeline({ wikiRoot: config.wikiRoot, cacheConverted: config.cacheConverted }),
+    () =>
+      buildConverterPipeline({ wikiRoot: config.wikiRoot, cacheConverted: config.cacheConverted }),
     [config.wikiRoot, config.cacheConverted],
   );
 
@@ -273,18 +280,17 @@ export function App({ config: initialConfig }: Props) {
   }, [config, client, library]);
 
   const requestApproval = useMemo(
-    () =>
-      (path: string, preview: string) =>
-        new Promise<'yes' | 'no' | 'always'>((resolve) => {
-          setApproval({
-            path,
-            preview,
-            resolve: (answer) => {
-              setApproval(null);
-              resolve(answer);
-            },
-          });
-        }),
+    () => (path: string, preview: string) =>
+      new Promise<'yes' | 'no' | 'always'>((resolve) => {
+        setApproval({
+          path,
+          preview,
+          resolve: (answer) => {
+            setApproval(null);
+            resolve(answer);
+          },
+        });
+      }),
     [],
   );
 
@@ -365,26 +371,42 @@ export function App({ config: initialConfig }: Props) {
     const ac = new AbortController();
     abortRef.current = ac;
     setInFlight(true);
+    setActivity(null);
     try {
       await agent.send(trimmed, {
         signal: ac.signal,
         events: {
-          onAssistantText: (text) => {
-            append({ role: 'assistant', text });
+          // 默认模式：进行中的过程（思考/tool/中间叙述）只在动态区显示一行可截断的
+          // 实时状态，新动作替换旧的，轮结束即消失——不往 scrollback 堆永久行。
+          // verbose 模式：把每条过程降权 append 进 scrollback，供调试逐条回看。
+          // 完整内容两种模式都落 transcript。
+          onThinking: ({ text, source }) => {
+            if (verbose) {
+              append({ role: 'process', text: `· 思考过程\n${indent(text)}` });
+            } else {
+              setActivity('思考中…');
+            }
+            transcript?.recordThinking(text, source);
+          },
+          onAssistantText: ({ text, final }) => {
+            if (final) {
+              append({ role: 'assistant', text });
+            } else if (verbose) {
+              append({ role: 'process', text: `· ${text.replace(/\s+/g, ' ').trim()}` });
+            } else {
+              setActivity(text.replace(/\s+/g, ' ').trim());
+            }
+            // 中间叙述也写 transcript，保证可追溯（这是之前完全丢失的内容）。
             transcript?.recordAssistant(text);
           },
-          onToolCall: ({ name, args }) => {
-            append({
-              role: 'tool',
-              text: `→ ${name}(${truncateJson(args)})`,
-            });
+          onToolRound: ({ name, args, ok, preview }) => {
+            const head = `${name}(${truncateJson(args)})`;
+            if (verbose) {
+              append({ role: 'process', text: `· ${head}\n${indent(preview)}` });
+            } else {
+              setActivity(`${head} → ${ok ? '✓' : `✗ ${shortError(preview)}`}`);
+            }
             transcript?.recordToolCall(name, args);
-          },
-          onToolResult: ({ name, ok, preview }) => {
-            append({
-              role: 'tool',
-              text: `${ok ? '✓' : '✗'} ${name}: ${preview}`,
-            });
             transcript?.recordToolResult(name, ok, preview);
           },
           onUsage: (d) =>
@@ -409,6 +431,7 @@ export function App({ config: initialConfig }: Props) {
     } finally {
       abortRef.current = null;
       setInFlight(false);
+      setActivity(null);
       transcript?.endTurn();
     }
   };
@@ -477,7 +500,9 @@ export function App({ config: initialConfig }: Props) {
           role: 'system',
           text:
             'No SOUL.md loaded.\nDrop one at ~/.pith-wiki/SOUL.md (user-global)\n' +
-            'or ' + path.join(config.workspaceRoot, 'SOUL.md') + ' (project-local),\n' +
+            'or ' +
+            path.join(config.workspaceRoot, 'SOUL.md') +
+            ' (project-local),\n' +
             'or set PITH_WIKI_SOUL=<path>. Restart REPL to apply.',
         });
       } else {
@@ -485,10 +510,20 @@ export function App({ config: initialConfig }: Props) {
           role: 'system',
           text:
             `soul sources:\n  ${soul.sources.map((p) => shortenHome(p)).join('\n  ')}\n\n` +
-            '─'.repeat(40) + '\n' +
+            '─'.repeat(40) +
+            '\n' +
             soul.content,
         });
       }
+    } else if (cmd === '/verbose') {
+      const next = !verbose;
+      setVerbose(next);
+      append({
+        role: 'system',
+        text: next
+          ? 'verbose on — 后续轮内联展开 think / tool 详情（已显示的内容不变）'
+          : 'verbose off — 后续轮 think / tool 降权为暗灰摘要',
+      });
     } else if (cmd === '/exit' || cmd === '/quit') {
       exit();
     } else {
@@ -531,7 +566,10 @@ export function App({ config: initialConfig }: Props) {
     }
     if (sub === 'retry') {
       if (rest.length === 0) {
-        append({ role: 'error', text: 'Usage: /queue retry <id> [<id>...]  (or /queue retry-all)' });
+        append({
+          role: 'error',
+          text: 'Usage: /queue retry <id> [<id>...]  (or /queue retry-all)',
+        });
         return;
       }
       const r = resetDead(store, rest);
@@ -646,7 +684,10 @@ export function App({ config: initialConfig }: Props) {
   const handleDigest = async (rawArg: string) => {
     const collection = rawArg.trim() || config.digestCollection;
     if (!agent.hasContent()) {
-      append({ role: 'error', text: 'no conversation to digest yet (try after at least one user/assistant turn)' });
+      append({
+        role: 'error',
+        text: 'no conversation to digest yet (try after at least one user/assistant turn)',
+      });
       return;
     }
     const snapshot = agent.snapshot();
@@ -700,7 +741,7 @@ export function App({ config: initialConfig }: Props) {
 
   return (
     <Box flexDirection="column">
-      <ChatView messages={messages} inFlight={inFlight && !approval} />
+      <ChatView messages={messages} inFlight={inFlight && !approval} activity={activity} />
       {approval ? <ToolApproval request={approval} /> : null}
       <Box flexDirection="column">
         <TokenMeter inputTokens={usage.inputTokens} outputTokens={usage.outputTokens} />
@@ -736,8 +777,17 @@ export function App({ config: initialConfig }: Props) {
 const HISTORY_LIMIT = 20;
 
 function truncateJson(args: unknown): string {
-  const json = JSON.stringify(args);
+  // JSON.stringify(undefined) → undefined（非字符串）；unknown-tool 路径会传 undefined。
+  const json = JSON.stringify(args) ?? '';
   return json.length > 80 ? `${json.slice(0, 80)}…` : json;
+}
+
+/** verbose 模式下把多行内容缩进 2 空格，挂在过程档标题行下面。 */
+function indent(text: string, prefix = '  '): string {
+  return text
+    .split('\n')
+    .map((l) => prefix + l)
+    .join('\n');
 }
 
 /** 显示路径时把 `<homedir>/...` 压缩成 `~/...`，让 dashboard 一行装得下。 */

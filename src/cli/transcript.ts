@@ -42,41 +42,39 @@ export class TranscriptLogger {
   }
 
   recordUser(text: string): void {
-    this.write(
-      `\n## 🧑 User · ${nowIso()}\n\n${escapeBody(text)}\n`,
-    );
+    this.write(`\n## 🧑 User · ${nowIso()}\n\n${escapeBody(text)}\n`);
   }
 
   recordAssistant(text: string): void {
+    this.write(`\n## 🤖 Assistant · ${nowIso()}\n\n${escapeBody(text)}\n`);
+  }
+
+  /**
+   * 思考过程。终端默认只留一行降权标记，完整内容靠这里落盘追溯。
+   * source 标明来自 reasoning 字段还是 content 里的 `<think>` 标签。
+   */
+  recordThinking(text: string, source: 'field' | 'tag'): void {
     this.write(
-      `\n## 🤖 Assistant · ${nowIso()}\n\n${escapeBody(text)}\n`,
+      `\n### 💭 Thinking (${source}) · ${nowIso()}\n\n\`\`\`\n${fencedBody(text)}\n\`\`\`\n`,
     );
   }
 
   recordToolCall(name: string, args: unknown): void {
     const json = safeStringify(args);
-    this.write(
-      `\n### → tool: ${name} · ${nowIso()}\n\n\`\`\`json\n${json}\n\`\`\`\n`,
-    );
+    this.write(`\n### → tool: ${name} · ${nowIso()}\n\n\`\`\`json\n${json}\n\`\`\`\n`);
   }
 
   recordToolResult(name: string, ok: boolean, preview: string): void {
     const marker = ok ? '✓' : '✗';
-    this.write(
-      `\n### ${marker} tool result: ${name}\n\n\`\`\`\n${preview}\n\`\`\`\n`,
-    );
+    this.write(`\n### ${marker} tool result: ${name}\n\n\`\`\`\n${preview}\n\`\`\`\n`);
   }
 
   recordError(msg: string): void {
-    this.write(
-      `\n## ⚠ Error · ${nowIso()}\n\n\`\`\`\n${msg}\n\`\`\`\n`,
-    );
+    this.write(`\n## ⚠ Error · ${nowIso()}\n\n\`\`\`\n${msg}\n\`\`\`\n`);
   }
 
   recordSystem(text: string): void {
-    this.write(
-      `\n> ${nowIso()} · ${text.replace(/\n/g, ' ')}\n`,
-    );
+    this.write(`\n> ${nowIso()} · ${text.replace(/\n/g, ' ')}\n`);
   }
 
   /** 在用户回合结束之后写一条分隔线，让 transcript 在视觉上一段一段。 */
@@ -116,6 +114,11 @@ function safeStringify(v: unknown): string {
  *   - 文本本身不强制 fenced code，user / assistant 段就让它当普通 markdown 渲染
  */
 function escapeBody(text: string): string {
+  return text.replace(/```/g, '\\`\\`\\`');
+}
+
+/** 放进 ``` fenced code 块的内容：把内部的 ``` 转义，避免提前关闭代码块。 */
+function fencedBody(text: string): string {
   return text.replace(/```/g, '\\`\\`\\`');
 }
 
