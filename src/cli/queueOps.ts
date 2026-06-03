@@ -22,8 +22,12 @@ export function shortError(msg: string | undefined, max = 80): string {
   return oneLine.length <= max ? oneLine : oneLine.slice(0, max - 1) + '…';
 }
 
-/** dead 列表 → 多行文本，给 system message 直接显示。 */
-export function formatDeadList(state: QueueState): string {
+/**
+ * dead 列表 → 多行文本，给 system message 直接显示。
+ * dead 不再主动推到对话流（通知机制已移除），这里是 REPL 侧唯一的 dead 详情入口，
+ * 所以把 log 路径写准：传 logDir 时按真实配置渲染，缺省回退到默认安装路径。
+ */
+export function formatDeadList(state: QueueState, logDir?: string): string {
   const dead = Object.values(state.jobs).filter((j) => j.status === 'dead');
   if (dead.length === 0) {
     return 'No dead jobs.';
@@ -42,7 +46,7 @@ export function formatDeadList(state: QueueState): string {
     '  /queue retry-all        reset all dead → pending',
     '  /queue clear-dead       delete all dead from state',
     '  /queue status           full counts + recent events',
-    '  log:  ~/.pith-wiki/queue/logs/<id>.log',
+    `  log:  ${logDir ?? '~/.pith-wiki/queue/logs'}/<id>.log`,
   );
   return lines.join('\n');
 }

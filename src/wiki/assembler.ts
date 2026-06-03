@@ -35,22 +35,42 @@ export interface QueryResult {
   references: ReferencedEntry[];
 }
 
+/**
+ * 本轮检索范围（来自 REPL `@`-mention）。
+ *   - collections：硬过滤——候选池与链接扩展都只在这些集合内
+ *   - entryIds   ：钉死——这些条目强制注入（即使打分 0 / 不在集合过滤内），且排在最前
+ * 两者皆空 / 未传 → 整库召回（v0 行为）。
+ */
+export interface QueryScope {
+  collections?: string[];
+  entryIds?: string[];
+}
+
 const TOKEN_CHARS = 4;
 
 
 export class ContextAssembler {
   constructor(private readonly library: LibraryService) {}
 
-  query(text: string, maxTokens = 4000): QueryResult {
+  query(text: string, maxTokens = 4000, scope?: QueryScope): QueryResult {
     const queryTokens = new Set(tokenize(text));
-    if (queryTokens.size === 0) {
+    const pinnedIds = scope?.entryIds ?? [];
+    const collFilter =
+      scope?.collections && scope.collections.length > 0 ? new Set(scope.collections) : null;
+
+    // 没有 query token 时通常直接返回空——但若有钉死条目（用户只 @文件 不提问），
+    // 仍要把它们渲染出来。
+    if (queryTokens.size === 0 && pinnedIds.length === 0) {
       return { context: '', referencedEntries: [], references: [] };
     }
 
-    const all = this.library.list();
+    // 候选池：集合 scope 下只取这些集合，否则全量。
+    const all = collFilter
+      ? this.library.list().filter((e) => collFilter.has(e.collection))
+      : this.library.list();
     const scored: Scored[] = [];
     for (const entry of all) {
-      const score = scoreEntry(entry, queryTokens);
+      const score = queryTokens.size > 0 ? scoreEntry(entry, queryTokens) : 0;
       if (score > 0) scored.push({ entry, score });
     }
 
@@ -60,6 +80,13 @@ export class ContextAssembler {
     const linkIndex = this.library.linkIndex();
     const ordered: string[] = [];
     const seen = new Set<string>();
+    // 钉死条目排最前：即便打分为 0 / 跨集合也保留，优先占预算。
+    for (const id of pinnedIds) {
+      if (!seen.has(id) && this.library.get(id)) {
+        ordered.push(id);
+        seen.add(id);
+      }
+    }
     for (const s of seeds) {
       if (!seen.has(s.entry.id)) {
         ordered.push(s.entry.id);
@@ -68,6 +95,11 @@ export class ContextAssembler {
       const node = linkIndex.get(s.entry.id);
       if (node) {
         for (const linkId of node.forward) {
+          // 集合 scope 下，链接扩展不越界（只跟进仍在 scope 内的条目）。
+          if (collFilter) {
+            const target = this.library.get(linkId);
+            if (!target || !collFilter.has(target.collection)) continue;
+          }
           if (!seen.has(linkId)) {
             ordered.push(linkId);
             seen.add(linkId);
