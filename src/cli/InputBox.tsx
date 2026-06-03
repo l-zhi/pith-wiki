@@ -1,78 +1,158 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
-import { completeOnTab, filterCommands, SLASH_COMMANDS } from './slashCommands.js';
+import { completeOnTab, filterCommands, type SlashCommand } from './slashCommands.js';
+import {
+  ascendValue,
+  confirmDirValue,
+  confirmEntryValue,
+  descendValue,
+  listLevel,
+  parseMentionInput,
+  type MentionLevelItem,
+  type MentionTree,
+} from './mentions.js';
 
 interface Props {
   disabled: boolean;
   onSubmit: (value: string) => void;
   /** 历史记录数组，按时间升序：最旧在前、最新在后。 */
   history: string[];
+  /**
+   * `@`-mention 目录树（wiki 的 collection + subpath 层级）。由 App 按 library memo 后传入。
+   * 缺省 → 不弹 mention 提示（嵌入 / 测试场景）。
+   */
+  mentionTree?: MentionTree;
 }
 
 /**
- * 输入框 + 历史浏览 + Slash 命令实时提示 / Tab 补全。
+ * 输入框 + 历史浏览 + Slash 命令 / @-mention 实时提示。
  *
- * 历史索引语义：
- *   -1                 = 用户当前正在编辑的草稿
- *   0                  = 最近一条历史
- *   ...                = 越旧越大
- *   history.length - 1 = 最旧的一条
+ * Picker 打开时（输入 `/` 命令头 或 `@` mention）支持键盘导航：
+ *   ↑ / ↓   移动高亮选择
+ *   Enter    确认高亮项 → 补全进输入框（不提交本条消息）；已是完整形态时再 Enter 才提交
+ *   Tab      钻取 / 补全（@目录 → 进入该目录；@条目 / 命令 → 补全）
+ *   ← / →    （仅 @-mention）→ 进入高亮目录 / ← 退回上层目录
+ * Picker 关闭时：
+ *   ↑ / ↓   浏览输入历史
+ *   Enter    提交消息
  *
- * 操作：
- *   ↑ 进入更老的历史（在 -1 时先把当前草稿存进 draftRef，下次 ↓ 回到 -1 时还原）
- *   ↓ 朝当前方向走；走到 -1 时恢复草稿
- *   Enter 提交；提交后索引重置为 -1、草稿清空
- *   Tab  在 / 开头时按命令前缀做补全（1 个匹配 → 完整补全；多个 → 最长公共前缀）
+ * 历史索引语义：-1 = 草稿；0 = 最近一条；越旧越大。
  *
- * 已知坑修复：ink-text-input v6 的内部光标偏移是 useState 维护的，外部 setValue
- * 不会重置；用 key={historyIndex|tabBump} 强制 React 在切换历史项 / Tab 补全后
- * 整体 remount，新的 TextInput 初始化时把 cursorOffset 设为 value.length，
- * 光标自然落在末尾。
+ * 光标坑：ink-text-input v6 的光标偏移是内部 useState，外部 setValue 不重置；
+ * 用 key={historyIndex|tabBump} 在切历史 / 导航补全后强制 remount，让光标回末尾。
  */
-export function InputBox({ disabled, onSubmit, history }: Props) {
+export function InputBox({ disabled, onSubmit, history, mentionTree }: Props) {
   const [value, setValue] = useState('');
   const [historyIndex, setHistoryIndex] = useState(-1);
-  // 进入历史前的草稿，按 ↓ 回到 -1 时复原。
   const draftRef = useRef('');
-  // 每次 Tab 补全 +1，与 historyIndex 一起组成 TextInput 的 key，让光标重置到末尾。
   const [tabBump, setTabBump] = useState(0);
+  // picker 内高亮项索引。任何会改变候选列表的操作（打字 / 导航）都把它复位到 0。
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // / 开头时实时过滤命令；其他情况返回空数组（不渲染提示框）。
-  const suggestions = useMemo(() => {
+  // / 开头时实时过滤命令；含空格（进入参数区）则收起。
+  const slashItems = useMemo<SlashCommand[]>(() => {
     if (!value.startsWith('/')) return [];
-    // 已经在打参数（含空格）时不再过滤——参数自由输入，命令头已固定
     if (value.includes(' ')) return [];
     return filterCommands(value);
   }, [value]);
 
+  // 非 / 开头时检测正在输入的 @-mention，按当前目录层级列举候选。
+  const mentionInput = useMemo(() => parseMentionInput(value), [value]);
+  const mentionItems = useMemo<MentionLevelItem[]>(() => {
+    if (!mentionInput || !mentionTree) return [];
+    return listLevel(mentionTree, mentionInput.pathSegs, mentionInput.partial);
+  }, [mentionInput, mentionTree]);
+
+  const pickerKind: 'slash' | 'mention' | null =
+    slashItems.length > 0 ? 'slash' : mentionItems.length > 0 ? 'mention' : null;
+  const itemCount = pickerKind === 'slash' ? slashItems.length : mentionItems.length;
+  const sel = itemCount > 0 ? Math.min(selectedIndex, itemCount - 1) : 0;
+
+  // setValue + 复位选择 + 强制 remount（光标回末尾）。用于导航 / 补全这类整体改写。
+  const applyValue = (v: string) => {
+    setValue(v);
+    setSelectedIndex(0);
+    setTabBump((n) => n + 1);
+  };
+
+  // 给定高亮项算出"确认补全"后的完整 value（Enter 用）。
+  const completionFor = (): string | null => {
+    if (pickerKind === 'slash') {
+      const c = slashItems[sel];
+      return c ? `${c.name}${c.takesArg ? ' ' : ''}` : null;
+    }
+    if (pickerKind === 'mention' && mentionInput) {
+      const it = mentionItems[sel];
+      if (!it) return null;
+      return it.kind === 'dir'
+        ? confirmDirValue(value, mentionInput.pathSegs, it.segment)
+        : confirmEntryValue(value, it.segment);
+    }
+    return null;
+  };
+
+  // Tab：钻取 / 补全。@目录 → 进入；@条目 → 确认；命令 → 补全选中项。
+  const drillOrComplete = () => {
+    if (pickerKind === 'mention' && mentionInput) {
+      const it = mentionItems[sel];
+      if (!it) return;
+      applyValue(
+        it.kind === 'dir'
+          ? descendValue(value, mentionInput.pathSegs, it.segment)
+          : confirmEntryValue(value, it.segment),
+      );
+      return;
+    }
+    if (pickerKind === 'slash') {
+      const next = completeOnTab(value, slashItems);
+      if (next !== value) applyValue(next);
+    }
+  };
+
   useInput((_input, key) => {
     if (disabled) return;
 
-    if (key.tab) {
-      if (suggestions.length === 0) return;
-      const next = completeOnTab(value, suggestions);
-      if (next !== value) {
-        setValue(next);
-        setTabBump((n) => n + 1); // 强制 TextInput remount → 光标回末尾
+    if (pickerKind) {
+      if (key.upArrow) {
+        setSelectedIndex(Math.max(0, sel - 1));
+        return;
       }
+      if (key.downArrow) {
+        setSelectedIndex(Math.min(itemCount - 1, sel + 1));
+        return;
+      }
+      if (key.tab) {
+        drillOrComplete();
+        return;
+      }
+      if (pickerKind === 'mention' && mentionInput) {
+        if (key.rightArrow) {
+          const it = mentionItems[sel];
+          if (it && it.kind === 'dir') applyValue(descendValue(value, mentionInput.pathSegs, it.segment));
+          return;
+        }
+        if (key.leftArrow) {
+          if (mentionInput.pathSegs.length > 0) applyValue(ascendValue(value, mentionInput.pathSegs));
+          return;
+        }
+      }
+      // 其余按键（打字等）不拦截，交给 TextInput。
       return;
     }
 
+    // picker 关闭：↑↓ 浏览历史。
     if (key.upArrow) {
       if (history.length === 0) return;
       const newIndex = Math.min(historyIndex + 1, history.length - 1);
-      if (newIndex === historyIndex) return; // 已到最旧
-      // 第一次离开草稿时把当前正在编辑的内容存起来。
+      if (newIndex === historyIndex) return;
       if (historyIndex === -1) draftRef.current = value;
       setHistoryIndex(newIndex);
-      // history 的最后一项是最近一条，对应索引 0。
       setValue(history[history.length - 1 - newIndex]);
       return;
     }
-
     if (key.downArrow) {
-      if (historyIndex === -1) return; // 已经在草稿
+      if (historyIndex === -1) return;
       const newIndex = historyIndex - 1;
       setHistoryIndex(newIndex);
       setValue(newIndex === -1 ? draftRef.current : history[history.length - 1 - newIndex]);
@@ -82,10 +162,19 @@ export function InputBox({ disabled, onSubmit, history }: Props) {
 
   const handleSubmit = (v: string) => {
     if (!v.trim()) return;
+    // picker 开着：Enter 先确认高亮项进文本框；已是完整形态（补全 == 当前值）才真正提交。
+    if (pickerKind && itemCount > 0) {
+      const completion = completionFor();
+      if (completion !== null && completion !== value) {
+        applyValue(completion);
+        return;
+      }
+    }
     onSubmit(v);
     setValue('');
     setHistoryIndex(-1);
     draftRef.current = '';
+    setSelectedIndex(0);
   };
 
   if (disabled) {
@@ -98,17 +187,19 @@ export function InputBox({ disabled, onSubmit, history }: Props) {
 
   return (
     <Box flexDirection="column">
-      {suggestions.length > 0 ? <SuggestionList items={suggestions} /> : null}
+      {pickerKind === 'slash' ? <SlashSuggestionList items={slashItems} selected={sel} /> : null}
+      {pickerKind === 'mention' ? (
+        <MentionSuggestionList items={mentionItems} selected={sel} atRoot={mentionInput?.pathSegs.length === 0} />
+      ) : null}
       <Box>
         <Text color="green">› </Text>
-        {/*
-          key={historyIndex}-{tabBump} 触发 remount，让光标在切换历史项 / Tab 补全
-          后回到末尾。正常打字时两个值都不变，TextInput 不 remount，输入流畅。
-        */}
         <TextInput
           key={`${historyIndex}-${tabBump}`}
           value={value}
-          onChange={setValue}
+          onChange={(v) => {
+            setValue(v);
+            setSelectedIndex(0);
+          }}
           onSubmit={handleSubmit}
         />
       </Box>
@@ -116,25 +207,70 @@ export function InputBox({ disabled, onSubmit, history }: Props) {
   );
 }
 
-/**
- * 命令提示列表。简单的纯展示组件——不接收键盘焦点、不维护选中态；
- * 用户通过继续打字过滤、按 Tab 补全。等价于 fish/zsh 的 menu-complete 风格。
- */
-function SuggestionList({ items }: { items: typeof SLASH_COMMANDS }) {
-  // 命令名右侧对齐到等宽列，便于眼扫
+/** Slash 命令提示。高亮项前缀 `›` + 反色。 */
+function SlashSuggestionList({ items, selected }: { items: SlashCommand[]; selected: number }) {
   const nameWidth = Math.max(...items.map((c) => c.name.length));
   return (
     <Box flexDirection="column" marginBottom={0}>
-      {items.map((c) => (
-        <Box key={c.name}>
-          <Text color="cyan">{c.name.padEnd(nameWidth)}</Text>
-          <Text color="gray">  {c.description}</Text>
-          {c.aliases && c.aliases.length > 0 ? (
-            <Text color="gray"> (alias: {c.aliases.join(', ')})</Text>
-          ) : null}
-        </Box>
-      ))}
-      <Text color="gray">  Tab to complete · Enter to submit</Text>
+      {items.map((c, i) => {
+        const active = i === selected;
+        return (
+          <Box key={c.name}>
+            <Text color={active ? 'cyan' : undefined}>{active ? '› ' : '  '}</Text>
+            <Text color="cyan" inverse={active}>
+              {c.name.padEnd(nameWidth)}
+            </Text>
+            <Text color="gray">  {c.description}</Text>
+            {c.aliases && c.aliases.length > 0 ? (
+              <Text color="gray"> (alias: {c.aliases.join(', ')})</Text>
+            ) : null}
+          </Box>
+        );
+      })}
+      <Text color="gray">  ↑↓ select · Enter confirm · Tab complete</Text>
+    </Box>
+  );
+}
+
+/**
+ * `@`-mention 提示。目录用 `▸ name/` 显示（→ 进入 / ← 退回），条目显示 title + 集合。
+ * 高亮项前缀 `›` + 反色。
+ */
+function MentionSuggestionList({
+  items,
+  selected,
+  atRoot,
+}: {
+  items: MentionLevelItem[];
+  selected: number;
+  atRoot: boolean;
+}) {
+  const nameWidth = Math.min(
+    28,
+    Math.max(...items.map((it) => (it.kind === 'dir' ? `${it.segment}/` : `@${it.segment}`).length)),
+  );
+  return (
+    <Box flexDirection="column" marginBottom={0}>
+      {items.map((it, i) => {
+        const active = i === selected;
+        const token = it.kind === 'dir' ? `${it.segment}/` : `@${it.segment}`;
+        return (
+          <Box key={`${it.kind}:${it.segment}`}>
+            <Text color={active ? 'cyan' : undefined}>{active ? '› ' : '  '}</Text>
+            <Text color={it.kind === 'dir' ? 'yellow' : 'cyan'} inverse={active}>
+              {(it.kind === 'dir' ? `▸ ${token}` : token).padEnd(nameWidth + 2)}
+            </Text>
+            {it.kind === 'dir' ? (
+              <Text color="gray">  {it.count} entries</Text>
+            ) : (
+              <Text color="gray">  {it.label}  ({it.collection})</Text>
+            )}
+          </Box>
+        );
+      })}
+      <Text color="gray">
+        {`  ↑↓ select · → enter dir${atRoot ? '' : ' · ← back'} · Enter confirm · Tab drill`}
+      </Text>
     </Box>
   );
 }

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type OpenAI from 'openai';
 import type { Config } from '../config.js';
 import { LibraryService } from '../wiki/library.js';
-import { ContextAssembler } from '../wiki/assembler.js';
+import { ContextAssembler, type QueryScope } from '../wiki/assembler.js';
 import { HydrationService } from '../wiki/hydration.js';
 import {
   buildConverterPipeline,
@@ -34,6 +34,12 @@ export interface ToolContext {
   converterRegistry: ConverterRegistry;
   /** 转换结果缓存（按 cacheConverted 决定是 FS 还是 Null 实现）。 */
   converterCache: ConverterCache;
+  /**
+   * 本轮检索范围（REPL `@`-mention 解析得到）。仅在该轮的 tool 调用里出现：
+   * Agent 把它 spread 进一份 per-turn ctx 副本。wiki_query 据此收窄召回。
+   * 缺省 undefined → 整库召回（CLI / 旧路径零影响）。
+   */
+  scope?: QueryScope;
 }
 
 export interface ToolDef<P extends z.ZodTypeAny = z.ZodTypeAny> {

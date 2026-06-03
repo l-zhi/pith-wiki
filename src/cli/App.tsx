@@ -15,6 +15,7 @@ import {
 } from '../config.js';
 import { ChatView, DisplayMessage } from './ChatView.js';
 import { InputBox } from './InputBox.js';
+import { buildMentionCandidates, buildMentionTree, parseScope } from './mentions.js';
 import { ToolApproval, ApprovalRequest } from './ToolApproval.js';
 import { TokenMeter } from './TokenMeter.js';
 import { appendHistory, loadHistory } from './history.js';
@@ -331,6 +332,15 @@ export function App({ config: initialConfig }: Props) {
   const append = (msg: Omit<DisplayMessage, 'id'>) =>
     setMessages((prev) => [...prev, { ...msg, id: nextId() }]);
 
+  // `@`-mention 数据：flat 候选给 parseScope 校验、目录树给 InputBox 导航。
+  // 随 messages 长度变化重算，让本会话内 ingest / worker 新增的条目也能进 picker
+  // （list() 走内存索引，廉价）。
+  const mentionCandidates = useMemo(
+    () => buildMentionCandidates(library),
+    [library, messages.length],
+  );
+  const mentionTree = useMemo(() => buildMentionTree(library), [library, messages.length]);
+
   useInput((input, key) => {
     if (key.ctrl && input === 'c') {
       const now = Date.now();
@@ -366,7 +376,17 @@ export function App({ config: initialConfig }: Props) {
       return;
     }
 
+    // 解析本轮 @-mention → 检索范围。命中集合 / 条目就把范围旁路传给 agent。
+    const scope = parseScope(trimmed, mentionCandidates);
+
     append({ role: 'user', text: trimmed });
+    if (scope) {
+      const parts = [
+        ...scope.collections.map((c) => `${c}/`),
+        ...scope.entryIds,
+      ];
+      append({ role: 'system', text: `↳ scope: ${parts.join(' · ')}` });
+    }
     transcript?.recordUser(trimmed);
     const ac = new AbortController();
     abortRef.current = ac;
@@ -375,6 +395,7 @@ export function App({ config: initialConfig }: Props) {
     try {
       await agent.send(trimmed, {
         signal: ac.signal,
+        scope: scope ?? undefined,
         events: {
           // 默认模式：进行中的过程（思考/tool/中间叙述）只在动态区显示一行可截断的
           // 实时状态，新动作替换旧的，轮结束即消失——不往 scrollback 堆永久行。
@@ -549,7 +570,7 @@ export function App({ config: initialConfig }: Props) {
     const [sub, ...rest] = arg.split(/\s+/).filter(Boolean);
 
     if (!sub || sub === 'dead') {
-      append({ role: 'system', text: formatDeadList(store.load()) });
+      append({ role: 'system', text: formatDeadList(store.load(), config.queueLogDir) });
       return;
     }
     if (sub === 'status') {
@@ -745,27 +766,18 @@ export function App({ config: initialConfig }: Props) {
       {approval ? <ToolApproval request={approval} /> : null}
       <Box flexDirection="column">
         <TokenMeter inputTokens={usage.inputTokens} outputTokens={usage.outputTokens} />
+        {/* dead 不再主动浮到对话流刷屏：status bar 显示计数 + 提示，按需 /queue dead 查询。 */}
         <StatusBar
           statePath={config.queueStatePath}
           worker={queueWorkerStatus}
           watchedTargets={config.watchAutoStart ? config.watchDirs.length : 0}
           totalWatchDirs={config.watchDirs.length}
-          onNewDead={(info) => {
-            // 把 worker 后台静默 dead 的事件浮到对话流：状态栏只显示"最近一条"，
-            // 用户回头还可以在 scrollback 里翻历史。完整堆栈仍在 ~/.pith-wiki/queue/logs/<id>.log。
-            append({
-              role: 'error',
-              text:
-                `queue: job ${info.jobId} died (${info.collection}/${shortFile(info.file)}) — ${info.error}\n` +
-                `  log: ${path.join(config.queueLogDir, info.jobId + '.log')}` +
-                `  ·  /queue retry ${info.jobId}`,
-            });
-          }}
         />
         <InputBox
           disabled={inFlight || approval !== null}
           onSubmit={handleSubmit}
           history={history}
+          mentionTree={mentionTree}
         />
       </Box>
       {config.readOnly ? <Text color="gray">read-only mode</Text> : null}
@@ -796,13 +808,3 @@ function shortenHome(p: string): string {
   return p.startsWith(home + path.sep) ? '~' + p.slice(home.length) : p;
 }
 
-/**
- * 把 jobs 的源文件路径压成 `…/last-2/file.ext`，让 dead 通知一行装得下。
- * 与 queueOps.shortFile 同形（保持视觉一致），但 queueOps 那个未导出；这里就别为
- * 一个 5 行函数额外拉一次 export 折腾接口面了。
- */
-function shortFile(file: string, keepSegments = 2): string {
-  const parts = file.split('/');
-  if (parts.length <= keepSegments + 1) return file;
-  return '…/' + parts.slice(-keepSegments - 1).join('/');
-}

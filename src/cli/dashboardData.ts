@@ -87,20 +87,17 @@ function scanWikiCollections(wikiRoot: string): Map<string, number> {
 export type CollectionQueueCount = QueueStatusCount;
 
 /**
- * StatusBar 用的轻量轮询快照：合计 counts + 最近一次 dead 的简介。
+ * StatusBar 用的轻量轮询快照：合计 counts。
  *
  * 为什么和 `loadQueueCounts` 分两个函数：dashboard 关心按 collection 分组，
- * StatusBar 只关心总和 + 最近一条 dead；语义不同，共用一次读但各取所需更直白。
+ * StatusBar 只关心总和；语义不同，共用一次读但各取所需更直白。
  *
- * `latestDeadEvent` 取自 events 环形 buffer 的最新 kind='dead'，是"是否有新 dead 发生"
- * 的最稳信号（buffer 截断之前都靠它）。`latestDeadJob` 顺着 jobId 反查当前还活着的
- * dead job，把它的 lastError / file / collection 一并带出来给 UI 渲染。job 可能因为
- * /queue clear-dead 已被删除，那时只剩 event.msg 这一条线索。
+ * 历史：这里曾带 `latestDeadEvent` / `latestDeadJob` 给 StatusBar 做"新 dead 浮到
+ * 对话流"的主动通知。该机制已移除——dead 详情不再主动展示，改为按需查询
+ * （REPL `/queue dead` / CLI `pith-wiki queue dead`），digest 只剩计数。
  */
 export interface QueueDigest {
   counts: { pending: number; running: number; completed: number; dead: number };
-  latestDeadEvent?: { ts: string; jobId: string; msg: string };
-  latestDeadJob?: { id: string; collection: string; file: string; lastError: string };
 }
 
 export function loadQueueDigest(queueStatePath: string): QueueDigest {
@@ -111,28 +108,7 @@ export function loadQueueDigest(queueStatePath: string): QueueDigest {
     for (const job of Object.values(state.jobs)) {
       counts[job.status as JobStatus] += 1;
     }
-    // 倒序找最近一条 dead 事件——events 是环形数组，末尾是最新。
-    let latestDeadEvent: QueueDigest['latestDeadEvent'];
-    for (let i = state.events.length - 1; i >= 0; i--) {
-      const ev = state.events[i];
-      if (ev.kind === 'dead') {
-        latestDeadEvent = { ts: ev.ts, jobId: ev.jobId, msg: ev.msg ?? '' };
-        break;
-      }
-    }
-    let latestDeadJob: QueueDigest['latestDeadJob'];
-    if (latestDeadEvent) {
-      const j = state.jobs[latestDeadEvent.jobId];
-      if (j && j.status === 'dead') {
-        latestDeadJob = {
-          id: j.id,
-          collection: j.collection,
-          file: j.file,
-          lastError: j.lastError ?? latestDeadEvent.msg,
-        };
-      }
-    }
-    return { counts, latestDeadEvent, latestDeadJob };
+    return { counts };
   } catch {
     /* 静默：status bar 不能因为 state.json 坏掉就崩 */
     return { counts };

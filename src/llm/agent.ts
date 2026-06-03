@@ -6,6 +6,7 @@ import type {
   ChatCompletionMessageToolCall,
 } from 'openai/resources/chat/completions';
 import { ALL_TOOLS, ToolContext, toolsForOpenAI, type AnyToolDef } from '../tools/index.js';
+import type { QueryScope } from '../wiki/assembler.js';
 
 /**
  * 中性默认 system prompt——同时适用于 CLI 和嵌入用例。
@@ -113,6 +114,13 @@ export function splitThinking(content: string): { body: string; thinking: string
 export interface RunOptions {
   signal?: AbortSignal;
   events?: AgentEvents;
+  /**
+   * 本轮检索范围（REPL `@`-mention）。非空时：
+   *   1. 预先用 scope-aware query 算一段上下文，作为临时消息压在问题前（确保 @文件 钉死生效，
+   *      即使模型本轮不调 wiki_query）；
+   *   2. 本轮 tool 调用经 turnCtx 携带 scope，使后续 wiki_query 持续收窄。
+   */
+  scope?: QueryScope;
 }
 
 export class Agent {
@@ -122,6 +130,8 @@ export class Agent {
   private readonly maxSteps: number;
   private readonly toolRegistry: Map<string, AnyToolDef>;
   private readonly toolsPayload: ReturnType<typeof toolsForOpenAI>;
+  /** 当前轮的检索范围（@-mention）。send() 入口设、finally 清。tool dispatch 据此构 turnCtx。 */
+  private currentScope: QueryScope | null = null;
 
   constructor(
     private readonly client: OpenAI,
@@ -193,10 +203,21 @@ export class Agent {
   }
 
   async send(userMessage: string, opts: RunOptions = {}): Promise<string> {
+    const scope = normalizeScope(opts.scope);
+    this.currentScope = scope;
+
+    // @-mention 钉死保证：本轮范围非空时，先用 scope-aware query 预算一段上下文，
+    // 作为一条临时 user 消息压在真实问题前——即使模型本轮不调 wiki_query，
+    // @文件 / @目录 的内容也已经在模型眼前。集合 scope 同时靠 currentScope 持续收窄。
+    if (scope) {
+      const preamble = this.buildScopePreamble(userMessage, scope);
+      if (preamble) this.messages.push({ role: 'user', content: preamble });
+    }
     this.messages.push({ role: 'user', content: userMessage });
     const events = opts.events ?? {};
     const tools = this.toolsPayload;
 
+    try {
     let finalText = '';
     let safety = 0;
     while (safety++ < this.maxSteps) {
@@ -284,6 +305,26 @@ export class Agent {
     }
 
     return finalText;
+    } finally {
+      this.currentScope = null;
+    }
+  }
+
+  /**
+   * 用本轮 scope 预算一段上下文，渲染成一条说明性的 user preamble。
+   * 返回空串 → 不注入（例如范围里啥也没召回到）。
+   */
+  private buildScopePreamble(userMessage: string, scope: QueryScope): string {
+    const result = this.toolCtx.assembler.query(userMessage, 4000, scope);
+    if (!result.context) return '';
+    const hints: string[] = [];
+    if (scope.collections?.length) hints.push(`collections: ${scope.collections.join(', ')}`);
+    if (scope.entryIds?.length) hints.push(`pinned entries: ${scope.entryIds.join(', ')}`);
+    return (
+      `[Scoped context for this question — ${hints.join(' · ')}. ` +
+      `Answer primarily from the entries below; use wiki_query (already scoped) only if you need more.]\n\n` +
+      result.context
+    );
   }
 
   private async runToolCall(
@@ -328,9 +369,15 @@ export class Agent {
       return;
     }
 
+    // 本轮有 @-mention scope 时，spread 一份带 scope 的 ctx 副本（共享底层 services），
+    // 让 wiki_query 等工具按范围收窄；无 scope 则直接用基础 ctx（零开销）。
+    const turnCtx: ToolContext = this.currentScope
+      ? { ...this.toolCtx, scope: this.currentScope }
+      : this.toolCtx;
+
     let result: unknown;
     try {
-      result = await tool.handler(parsed as never, this.toolCtx);
+      result = await tool.handler(parsed as never, turnCtx);
     } catch (err) {
       result = { ok: false, error: (err as Error).message };
     }
@@ -342,6 +389,15 @@ export class Agent {
 
     this.messages.push({ role: 'tool', tool_call_id: call.id, content: json });
   }
+}
+
+/** 把 RunOptions.scope 收敛成"有内容才返回对象，否则 null"，统一空判断。 */
+function normalizeScope(scope: QueryScope | undefined): QueryScope | null {
+  if (!scope) return null;
+  const collections = scope.collections ?? [];
+  const entryIds = scope.entryIds ?? [];
+  if (collections.length === 0 && entryIds.length === 0) return null;
+  return { collections, entryIds };
 }
 
 export type AgentErrorKind =

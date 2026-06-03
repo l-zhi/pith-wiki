@@ -12,7 +12,8 @@ export const wikiQueryTool: ToolDef<typeof params> = {
     'Search the wiki for entries related to a question. Returns a Markdown context block (compressed digests, ~30-50% of source) plus per-entry source paths so you can decide whether to read the originals via wiki_read_source / read_file. Uses keyword scoring with bigram support for Chinese; expands 1-hop forward links from top seeds.',
   parameters: params,
   handler: async (args, ctx) => {
-    const result = ctx.assembler.query(args.query, args.max_tokens);
+    // ctx.scope 来自本轮 `@`-mention（Agent 注入）；有则收窄召回，无则整库。
+    const result = ctx.assembler.query(args.query, args.max_tokens, ctx.scope);
     return {
       ok: true,
       context: result.context,
