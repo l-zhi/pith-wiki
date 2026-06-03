@@ -207,6 +207,55 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
       }
     });
 
+  // ---------- queue dead ----------
+  // dead 的详情/日志不再主动刷到命令行（REPL 通知与 status bar 错误行均已移除），
+  // 这里是按需查询的专用入口：列出全部 dead job + 各自 log 文件路径。
+  queue
+    .command('dead')
+    .description('List dead jobs (errors and per-job log paths).')
+    .option('--json', 'Emit machine-readable JSON.')
+    .action((opts) => {
+      const config = args.configFor();
+      ensureQueueDirs(config);
+      const store = new QueueStore(config.queueStatePath);
+      const state = store.load();
+      const dead = Object.values(state.jobs).filter((j) => j.status === 'dead');
+
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            dead.map((j) => ({
+              id: j.id,
+              collection: j.collection,
+              file: j.file,
+              attempts: j.attempts,
+              lastError: j.lastError ?? null,
+              log: path.join(config.queueLogDir, `${j.id}.log`),
+            })),
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+
+      if (dead.length === 0) {
+        console.log(chalk.green('No dead jobs.'));
+        return;
+      }
+      console.log(chalk.red(`${dead.length} dead job(s):`));
+      for (const j of dead) {
+        console.log(`\n  ${chalk.red(j.id)}  ${j.collection}/${j.file}  attempts=${j.attempts}`);
+        if (j.lastError) console.log(`    err: ${j.lastError}`);
+        console.log(chalk.gray(`    log: ${path.join(config.queueLogDir, `${j.id}.log`)}`));
+      }
+      console.log(
+        chalk.gray(
+          `\nActions: pith-wiki queue retry <id>  ·  queue retry --all-dead  ·  queue clear --dead`,
+        ),
+      );
+    });
+
   // ---------- queue run ----------
   queue
     .command('run')

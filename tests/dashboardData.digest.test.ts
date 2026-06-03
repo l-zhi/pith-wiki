@@ -1,10 +1,11 @@
 /**
- * `loadQueueDigest` 单元测试：覆盖 StatusBar 拿来做 dead 通知的快照逻辑。
+ * `loadQueueDigest` 单元测试：覆盖 StatusBar 轮询用的计数快照。
  *
  * 关注：
- *   - state.json 缺失 → 安全返回零 counts、无 dead
- *   - 多个 dead 事件 → 选 events 数组里最末尾那个
- *   - latestDeadJob 只在 jobs 表里仍是 dead 时返回（jobs 被 clear-dead 删除时只剩 event.msg）
+ *   - state.json 缺失 → 安全返回零 counts
+ *   - 正常 state → 按 status 聚合 counts（dead 详情不再进 digest——
+ *     "新 dead 浮到对话流"的通知机制已移除，详情按需走 /queue dead 查询）
+ *   - 坏 JSON 不抛
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -23,14 +24,12 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
 
 describe('loadQueueDigest', () => {
-  it('文件缺失返回零 counts 且无 dead 字段', () => {
+  it('文件缺失返回零 counts', () => {
     const d = loadQueueDigest(path.join(tmpDir, 'missing.json'));
     expect(d.counts).toEqual({ pending: 0, running: 0, completed: 0, dead: 0 });
-    expect(d.latestDeadEvent).toBeUndefined();
-    expect(d.latestDeadJob).toBeUndefined();
   });
 
-  it('聚合 counts 并返回 events 中最末尾的 dead 事件 + 对应 job', () => {
+  it('按 status 聚合 counts（含多个 dead）', () => {
     const state: QueueState = {
       version: 1,
       jobs: {
@@ -74,33 +73,11 @@ describe('loadQueueDigest', () => {
 
     const d = loadQueueDigest(statePath);
     expect(d.counts).toEqual({ pending: 1, running: 0, completed: 0, dead: 2 });
-    expect(d.latestDeadEvent?.jobId).toBe('b');
-    expect(d.latestDeadJob?.id).toBe('b');
-    expect(d.latestDeadJob?.lastError).toBe('boom-b');
-    expect(d.latestDeadJob?.file).toBe('/abs/b.md');
-    expect(d.latestDeadJob?.collection).toBe('life');
-  });
-
-  it('job 被清理掉后只剩 event.msg 这一条线索', () => {
-    const state: QueueState = {
-      version: 1,
-      jobs: {}, // /queue clear-dead 之后
-      events: [
-        { ts: '2026-05-01T00:00:03.000Z', jobId: 'b', kind: 'dead', msg: 'gone-but-logged' },
-      ],
-    };
-    writeStateAtomic(statePath, state);
-
-    const d = loadQueueDigest(statePath);
-    expect(d.counts.dead).toBe(0);
-    expect(d.latestDeadEvent?.msg).toBe('gone-but-logged');
-    expect(d.latestDeadJob).toBeUndefined();
   });
 
   it('坏 JSON 不抛，返回零 counts', () => {
     fs.writeFileSync(statePath, '{ not valid', 'utf8');
     const d = loadQueueDigest(statePath);
     expect(d.counts).toEqual({ pending: 0, running: 0, completed: 0, dead: 0 });
-    expect(d.latestDeadEvent).toBeUndefined();
   });
 });
