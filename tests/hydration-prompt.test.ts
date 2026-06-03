@@ -10,7 +10,12 @@
  * 这些断言把那次修复"焊死"，避免回退。
  */
 import { describe, expect, it } from 'vitest';
-import { CONVERSATION_SYSTEM_PROMPT, PLAN_SYSTEM_PROMPT, SYSTEM_PROMPT } from '../src/wiki/hydration.js';
+import {
+  CONVERSATION_SYSTEM_PROMPT,
+  PLAN_SYSTEM_PROMPT,
+  SYSTEM_PROMPT,
+  systemPromptFor,
+} from '../src/wiki/hydration.js';
 
 describe('Hydration SYSTEM_PROMPT — 不可回退的硬约束', () => {
   it('包含语言保持要求（避免中文输入被翻译成英文）', () => {
@@ -188,5 +193,78 @@ describe('PLAN_SYSTEM_PROMPT — 长文规划阶段的硬约束', () => {
 
   it('禁止凭空虚构源没支持的章节', () => {
     expect(PLAN_SYSTEM_PROMPT).toMatch(/DO NOT invent|don'?t invent|does(n'?| not) support/i);
+  });
+});
+
+/**
+ * systemPromptFor — 运行时按 source 选 prompt。
+ *
+ * 背景：文件源的 id 必被 deriveIdFromFilename 覆盖，整段 ID NAMING（"死了么" 反例等）
+ * 对输出毫无影响，纯属 token 浪费。文件源应换成极简 id 指令；其余情形仍用完整版。
+ */
+describe('systemPromptFor — 文件源省 ID 段', () => {
+  it('文件源 + filenameHint：document 模式省掉完整 ID NAMING 块', () => {
+    const p = systemPromptFor({
+      rawContent: 'x',
+      source: { type: 'file', value: 'a.md' },
+      collectionId: 'tech',
+      filenameHint: 'a.md',
+    });
+    // 完整 ID 块的标志性反例不应出现
+    expect(p).not.toContain('死了么');
+    expect(p).not.toContain('ID NAMING');
+    // 但要有极简 id 指令（仍要求合法 slug）
+    expect(p).toMatch(/normalized from the source filename/);
+    // preamble 不变（behavior 测试依赖 "knowledge curator"）
+    expect(p).toContain('knowledge curator');
+  });
+
+  it('文件源 + filenameHint：conversation 模式省掉完整 ID NAMING 块', () => {
+    const p = systemPromptFor({
+      rawContent: 'x',
+      source: { type: 'file', value: 'a.md' },
+      collectionId: 'tech',
+      filenameHint: 'a.md',
+      mode: 'conversation',
+    });
+    // ID 块的标志（6-14 字规则 / ID NAMING 标题）不应出现；
+    // 注意 "成长与低谷期反思" 仍会出现在 PRESERVE-THE-QUESTION 的开场示例里，那不是 ID 块。
+    expect(p).not.toContain('ID NAMING');
+    expect(p).not.toMatch(/6-14/);
+    expect(p).toMatch(/normalized from the source filename/);
+    // 对话专属不变量仍在
+    expect(p).toMatch(/PRESERVE THE QUESTION/);
+    expect(p).toContain('Q&A conversation');
+  });
+
+  it('非文件源（inline）：document 模式返回完整 SYSTEM_PROMPT', () => {
+    const p = systemPromptFor({
+      rawContent: 'x',
+      source: { type: 'inline' },
+      collectionId: 'tech',
+    });
+    expect(p).toBe(SYSTEM_PROMPT);
+    expect(p).toContain('死了么');
+  });
+
+  it('文件源但缺 filenameHint：id 不会被派生覆盖 → 保留完整 ID 指引', () => {
+    const p = systemPromptFor({
+      rawContent: 'x',
+      source: { type: 'file', value: 'a.md' },
+      collectionId: 'tech',
+    });
+    expect(p).toBe(SYSTEM_PROMPT);
+    expect(p).toContain('死了么');
+  });
+
+  it('非文件源（inline）：conversation 模式返回完整 CONVERSATION_SYSTEM_PROMPT', () => {
+    const p = systemPromptFor({
+      rawContent: 'x',
+      source: { type: 'inline' },
+      collectionId: 'tech',
+      mode: 'conversation',
+    });
+    expect(p).toBe(CONVERSATION_SYSTEM_PROMPT);
+    expect(p).toContain('成长与低谷期');
   });
 });

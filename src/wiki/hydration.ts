@@ -28,30 +28,29 @@ const LONG_DOC_THRESHOLD_CHARS = 3000;
  */
 const SCORING_PROBE_CHARS = 4000;
 
-/**
- * Hydration system prompt.
- *
- * 任何修改都应被 tests/hydration-prompt.test.ts 锁定 ——
- * 那里断言了几条不可回退的硬约束（语言保持、字数上限）。
- */
-export const SYSTEM_PROMPT = `You are a knowledge curator for a personal Wiki. Your job is to produce ONE high-density Wiki entry from raw input.
+// ── 共享提示词片段 ──────────────────────────────────────────────────────────
+// SYSTEM_PROMPT 与 CONVERSATION_SYSTEM_PROMPT 历史上把下面这些规则逐字复制了两份，
+// 改一处极易漏另一处。这里抽成可组合片段，两个 prompt 由 builder 拼装。
+// 任何措辞改动都应被 tests/hydration-prompt.test.ts 的子串断言守住。
 
-Output STRICT JSON in exactly this shape (no commentary, no code fences):
+const STRICT_JSON_PREAMBLE = 'Output STRICT JSON in exactly this shape (no commentary, no code fences):';
 
-{
-  "id": "entry-id",                 // unique slug; see ID rule below
-  "title": "Human Readable Title",
-  "summary": "One-sentence routing summary.",
-  "tags": ["tag1", "tag2"],         // 1-6 short topical tags
-  "links": ["other-entry-id"],      // entry ids you cross-reference; use [] if none
-  "content": "# Title\\n- bullet ..."   // pure Markdown body, no frontmatter
+/** LANGUAGE 规则。sourceNoun 区分 "raw input"（文档）/ "conversation"（对话）。 */
+function languageRule(sourceNoun: string): string {
+  return `LANGUAGE: Write \`title\`, \`summary\`, and \`content\` in the SAME PRIMARY LANGUAGE as the ${sourceNoun}. Chinese in → Chinese out. English in → English out. Do NOT translate. (Tags stay lowercase ASCII / kebab-case regardless of input language — they're for cross-language filtering.)`;
 }
 
-Hard rules — violating any of these is a failure:
+/** WORD LIMIT 公共前半句；各 prompt 各自补 drop-list 尾巴。 */
+const WORD_LIMIT_CORE = '`content` MUST be under 400 words (or ~600 Chinese characters for CJK content).';
 
-1. LANGUAGE: Write \`title\`, \`summary\`, and \`content\` in the SAME PRIMARY LANGUAGE as the raw input. Chinese in → Chinese out. English in → English out. Do NOT translate. (Tags stay lowercase ASCII / kebab-case regardless of input language — they're for cross-language filtering.)
+/** CROSS-REFS 公共前半句；各 prompt 各自补 link 表匹配规则。 */
+const CROSS_REF_CORE = 'Inline references use [[concept-id]] format.';
 
-   ID NAMING:
+/**
+ * 文档版完整 ID NAMING 块（含 "死了么" 反例/正例）。
+ * tests/hydration-prompt.test.ts 焊死了这里的 6-14 / 死了么 / kebab-case ASCII 等不变量。
+ */
+const ID_NAMING_DOC = `   ID NAMING:
    - Predominantly Chinese source → Chinese id (Han characters). The id MUST preserve the source's specificity — do NOT collapse a long descriptive filename into a single hook word.
 
      PRESERVE the distinguishing markers from the filename or main topic. Target 6-14 Han characters; if a single concept already covers it (e.g. filename "成长经历.md"), 4 chars are fine.
@@ -69,15 +68,71 @@ Hard rules — violating any of these is a failure:
      Mechanics: connect multi-concept ids with a single ASCII hyphen. NO spaces, NO punctuation, NO quotes, NO file extension, NO trailing "复盘"/"笔记"/"总结" unless that word is core to the source.
 
    - Predominantly Japanese / Korean source → Kana / Hangul accordingly, same specificity rule.
-   - Otherwise (English / mixed Latin) → kebab-case ASCII: lowercase a-z, digits 0-9, hyphens. No leading hyphen. Same specificity rule (don't compress "the-economics-of-failed-apps" to "failed-apps").
+   - Otherwise (English / mixed Latin) → kebab-case ASCII: lowercase a-z, digits 0-9, hyphens. No leading hyphen. Same specificity rule (don't compress "the-economics-of-failed-apps" to "failed-apps").`;
 
-2. WORD LIMIT: \`content\` MUST be under 400 words (or ~600 Chinese characters for CJK content). If the source is longer, drop examples, code excerpts, project history, marketing language, and second-order details. Keep only definitions, patterns, constraints, and core facts.
+/**
+ * 对话版完整 ID NAMING 块（含 "成长与低谷期" 例子）。
+ * tests/hydration-prompt.test.ts 焊死了这里的不变量。
+ */
+const ID_NAMING_CONVERSATION = `   ID NAMING:
+   - Predominantly Chinese conversation → Chinese id (Han characters). Preserve the user's question framing — same rule as title.
+
+     Target 6-14 Han characters. Connect concepts with single ASCII hyphens.
+
+     Good: question about "成长和低谷期" → id "成长与低谷期反思"
+     Bad:  same question → id "成长" ❌ (drops 低谷期 angle)
+
+     NO spaces, NO punctuation, NO quotes.
+
+   - Predominantly Japanese / Korean → Kana / Hangul accordingly, same specificity rule.
+   - Otherwise → kebab-case ASCII: lowercase a-z, digits 0-9, hyphens; no leading hyphen. Same specificity rule (preserve question markers).`;
+
+/**
+ * 极简 ID 指令。文件源（source.type==='file' 且有 filenameHint）时，id 必被
+ * deriveIdFromFilename 覆盖（见 hydrate() 的 id 工程化覆盖段），整段 ID NAMING 对
+ * 模型输出毫无影响——纯 token 浪费。这里用一行顶替，仍要求一个 schema-合法的 slug，
+ * 覆盖 deriveIdFromFilename 返回空串（filename 全非法字符）那个边界 case。
+ */
+const ID_NAMING_MINIMAL = `   ID: output any short lowercase-ascii slug for \`id\`; it will be normalized from the source filename, so don't over-think it.`;
+
+/** 文档脱水 prompt。idBlock 决定塞完整 ID NAMING 还是极简版。 */
+function buildDocPrompt(idBlock: string): string {
+  return `You are a knowledge curator for a personal Wiki. Your job is to produce ONE high-density Wiki entry from raw input.
+
+${STRICT_JSON_PREAMBLE}
+
+{
+  "id": "entry-id",                 // unique slug; see ID rule below
+  "title": "Human Readable Title",
+  "summary": "One-sentence routing summary.",
+  "tags": ["tag1", "tag2"],         // 1-6 short topical tags
+  "links": ["other-entry-id"],      // entry ids you cross-reference; use [] if none
+  "content": "# Title\\n- bullet ..."   // pure Markdown body, no frontmatter
+}
+
+Hard rules — violating any of these is a failure:
+
+1. ${languageRule('raw input')}
+
+${idBlock}
+
+2. WORD LIMIT: ${WORD_LIMIT_CORE} If the source is longer, drop examples, code excerpts, project history, marketing language, and second-order details. Keep only definitions, patterns, constraints, and core facts.
 
 3. COMPRESSION: For verbose sources (articles, transcripts), aim for compression ratio ≤ 0.3 (output ≤ 30% of input length). For already-dense sources (READMEs, bullet notes), ≤ 0.5 is acceptable but never copy verbatim — always re-condense.
 
 4. STRUCTURE: Use Markdown bullet lists. Drop transitions ("In this section..."), marketing language, first-person voice, timestamps, and self-references like "the document says".
 
-5. CROSS-REFS: Inline references use [[concept-id]] format. If a candidate id from the link table matches, also list it under \`links\`.`;
+5. CROSS-REFS: ${CROSS_REF_CORE} If a candidate id from the link table matches, also list it under \`links\`.`;
+}
+
+/**
+ * Hydration system prompt（文档脱水，含完整 ID NAMING）。
+ *
+ * 任何修改都应被 tests/hydration-prompt.test.ts 锁定 ——
+ * 那里断言了几条不可回退的硬约束（语言保持、字数上限）。
+ * 注意：导出常量始终是「完整版」；文件源省 ID 段发生在运行时的 systemPromptFor。
+ */
+export const SYSTEM_PROMPT = buildDocPrompt(ID_NAMING_DOC);
 
 /**
  * 长文档的"先规划再写"专用 system prompt（plan pass）。
@@ -124,7 +179,9 @@ Rules:
  *
  * 任何修改都应被 tests/hydration-prompt.test.ts 锁定关键不变量。
  */
-export const CONVERSATION_SYSTEM_PROMPT = `You are a knowledge curator turning a Q&A conversation into ONE high-density Wiki entry.
+/** 对话脱水 prompt。idBlock 决定塞完整 ID NAMING 还是极简版。 */
+function buildConversationPrompt(idBlock: string): string {
+  return `You are a knowledge curator turning a Q&A conversation into ONE high-density Wiki entry.
 
 The raw input is a markdown-formatted conversation with sections labeled \`## User\` and \`## Assistant\` (and possibly \`### Tool: <name>\` for tool calls the assistant made). Both sides matter:
 
@@ -133,7 +190,7 @@ The raw input is a markdown-formatted conversation with sections labeled \`## Us
 
 Your job is NOT to summarize only the assistant's answers. You must preserve the question's specificity in the title, summary, and structure. If the user asked about "成长和低谷期", the title must mention BOTH (e.g. "成长与低谷期反思"), NOT collapse to a generic "成长经历".
 
-Output STRICT JSON in exactly this shape (no commentary, no code fences):
+${STRICT_JSON_PREAMBLE}
 
 {
   "id": "entry-id",                 // unique slug; see ID rule below
@@ -156,28 +213,39 @@ Hard rules — violating any of these is a failure:
 
    Multiple turns → multiple sections, in order. Do NOT merge unrelated turns into one section.
 
-3. LANGUAGE: Write \`title\`, \`summary\`, and \`content\` in the SAME PRIMARY LANGUAGE as the conversation. Chinese in → Chinese out. English in → English out. Do NOT translate. (Tags stay lowercase ASCII / kebab-case regardless — they're for cross-language filtering.)
+3. ${languageRule('conversation')}
 
-   ID NAMING:
-   - Predominantly Chinese conversation → Chinese id (Han characters). Preserve the user's question framing — same rule as title.
+${idBlock}
 
-     Target 6-14 Han characters. Connect concepts with single ASCII hyphens.
-
-     Good: question about "成长和低谷期" → id "成长与低谷期反思"
-     Bad:  same question → id "成长" ❌ (drops 低谷期 angle)
-
-     NO spaces, NO punctuation, NO quotes.
-
-   - Predominantly Japanese / Korean → Kana / Hangul accordingly, same specificity rule.
-   - Otherwise → kebab-case ASCII: lowercase a-z, digits 0-9, hyphens; no leading hyphen. Same specificity rule (preserve question markers).
-
-4. WORD LIMIT: \`content\` MUST be under 400 words (or ~600 Chinese characters for CJK). Drop pleasantries, repetitions, verbose marketing-style assistant text, and second-order asides. Keep the user's specific framing, the answer's key claims, and concrete examples only when essential.
+4. WORD LIMIT: ${WORD_LIMIT_CORE} Drop pleasantries, repetitions, verbose marketing-style assistant text, and second-order asides. Keep the user's specific framing, the answer's key claims, and concrete examples only when essential.
 
 5. TAGS: 3-6 kebab-case tags. Include BOTH the topic the user probed (their angle of inquiry) AND the answer's domain. E.g. for a user asking about retry policy from a reliability angle, both \`retry\` and \`reliability\` belong in tags.
 
-6. CROSS-REFS: Inline references use [[concept-id]] format. If a candidate id from the link table matches a concept actually discussed, also list it under \`links\`.
+6. CROSS-REFS: ${CROSS_REF_CORE} If a candidate id from the link table matches a concept actually discussed, also list it under \`links\`.
 
 7. NEUTRALITY: Drop transitions ("In this section..."), marketing language, the assistant's first-person voice ("I think…" → declarative claim), timestamps, and self-references. The user's question can be paraphrased into a neutral noun phrase ("Q: <topic>"), not a verbatim quote.`;
+}
+
+/**
+ * Conversation digest 专用 system prompt（含完整 ID NAMING）。
+ * 导出常量始终是「完整版」；文件源省 ID 段发生在运行时的 systemPromptFor。
+ */
+export const CONVERSATION_SYSTEM_PROMPT = buildConversationPrompt(ID_NAMING_CONVERSATION);
+
+/**
+ * 按输入选定 write pass 的 system prompt。
+ *
+ * 文件源（source.type==='file' 且有 filenameHint）时 id 必被 deriveIdFromFilename
+ * 覆盖（见 hydrate() id 工程化覆盖段），整段 ID NAMING 对输出无影响 → 换成极简版省 token。
+ * 其余情形（inline / url / 无 filenameHint）id 仍取 LLM 输出，保留完整 ID 指引。
+ */
+export function systemPromptFor(input: HydrateInput): string {
+  const idOverridden = input.source.type === 'file' && !!input.filenameHint;
+  if (input.mode === 'conversation') {
+    return idOverridden ? buildConversationPrompt(ID_NAMING_MINIMAL) : CONVERSATION_SYSTEM_PROMPT;
+  }
+  return idOverridden ? buildDocPrompt(ID_NAMING_MINIMAL) : SYSTEM_PROMPT;
+}
 
 export interface HydrateInput {
   rawContent: string;
@@ -354,8 +422,7 @@ export class HydrationService {
       : '';
     const userMessage = `${filenameLine}${planBlock}${linksBlock}Raw input:\n---\n${input.rawContent}\n---`;
 
-    const systemPrompt =
-      input.mode === 'conversation' ? CONVERSATION_SYSTEM_PROMPT : SYSTEM_PROMPT;
+    const systemPrompt = systemPromptFor(input);
     const completion = await this.client.chat.completions.create({
       model: this.model,
       ...this.jsonModeArg,
