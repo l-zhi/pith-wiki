@@ -305,11 +305,13 @@ export function visualWidth(s: string): number {
   return w;
 }
 
-function vpad(s: string, width: number): string {
+/** 视觉宽度感知的右填充（左对齐）：给表格列对齐复用。 */
+export function vpad(s: string, width: number): string {
   return s + ' '.repeat(Math.max(0, width - visualWidth(s)));
 }
 
-function vpadStart(s: string, width: number): string {
+/** 视觉宽度感知的左填充（右对齐）：给数字列右对齐复用。 */
+export function vpadStart(s: string, width: number): string {
   return ' '.repeat(Math.max(0, width - visualWidth(s))) + s;
 }
 

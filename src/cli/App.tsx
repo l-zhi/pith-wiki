@@ -14,6 +14,7 @@ import {
   type Config,
 } from '../config.js';
 import { ChatView, DisplayMessage } from './ChatView.js';
+import { renderMarkdown } from './MarkdownView.js';
 import { InputBox } from './InputBox.js';
 import { buildMentionCandidates, buildMentionTree, parseScope } from './mentions.js';
 import { ToolApproval, ApprovalRequest } from './ToolApproval.js';
@@ -411,7 +412,9 @@ export function App({ config: initialConfig }: Props) {
           },
           onAssistantText: ({ text, final }) => {
             if (final) {
-              append({ role: 'assistant', text });
+              // 正文渲染成 markdown 富节点（去符号/着色/表格/链接）；text 原文保留作
+              // transcript 与渲染失败时的回退。renderMarkdown 内部已 try/catch。
+              append({ role: 'assistant', text, node: renderMarkdown(text) });
             } else if (verbose) {
               append({ role: 'process', text: `· ${text.replace(/\s+/g, ' ').trim()}` });
             } else {
