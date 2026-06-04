@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { DashboardData, CollectionRow, WatchRow } from './dashboardData.js';
 import { visualWidth } from './dashboardData.js';
+import { C } from './theme.js';
 
 /**
  * REPL 启动 dashboard 的 Ink 渲染。
@@ -32,15 +33,6 @@ interface Props {
   data: DashboardData;
   worker?: WorkerInfo;
 }
-
-// design palette → ink color name（ink 走 truecolor 时用 hex，否则 16 色 fallback）
-const C = {
-  green: '#34d399',
-  cyan: '#67e8f9',
-  amber: '#fbbf24',
-  pink: '#f472b6',
-  purple: '#a78bfa',
-} as const;
 
 const NUM_COL_W = 8;
 const WATCH_COL_W = 7;
