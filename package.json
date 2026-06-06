@@ -1,6 +1,6 @@
 {
   "name": "pith-wiki",
-  "version": "0.2.0-beta.0",
+  "version": "0.2.0",
   "description": "Karpathy-style LLM knowledge base CLI: hydrate raw docs into dense Markdown entries; retrieve by keyword + link traversal. No embeddings, no vector DB, files all the way down.",
   "type": "module",
   "license": "MIT",
