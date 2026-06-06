@@ -6,6 +6,8 @@ import { Agent, AgentError, defaultSystemPrompt } from '../llm/agent.js';
 import { createClient } from '../llm/client.js';
 import { composeSystemPrompt, loadSoul, type LoadedSoul } from '../llm/soul.js';
 import { buildContext } from '../tools/index.js';
+import { makeSkillTool } from '../tools/skill.js';
+import { buildSkillRegistry, SkillRegistry } from '../skills/index.js';
 import {
   ensureOutputDir,
   ensureQueueDirs,
@@ -21,7 +23,7 @@ import { ToolApproval, ApprovalRequest } from './ToolApproval.js';
 import { TokenMeter } from './TokenMeter.js';
 import { appendHistory, loadHistory } from './history.js';
 import { StatusBar, type QueueWorkerStatus } from './StatusBar.js';
-import { SLASH_COMMANDS } from './slashCommands.js';
+import { SLASH_COMMANDS, type SlashCommand } from './slashCommands.js';
 import { TranscriptLogger, deriveTranscriptPath } from './transcript.js';
 import { QueueLockedError, QueueStore } from '../wiki/queue/store.js';
 import { runQueue } from '../wiki/queue/runner.js';
@@ -134,6 +136,38 @@ export function App({ config: initialConfig }: Props) {
       buildConverterPipeline({ wikiRoot: config.wikiRoot, cacheConverted: config.cacheConverted }),
     [config.wikiRoot, config.cacheConverted],
   );
+
+  // Skill 注册表：启动时异步扫一次 skillDirs。
+  // 与 soul 同生命周期——加载后整个 session 不变；新增 skill 需重启 REPL 才生效
+  // （catalog 在 Agent 构造时 baked）。初始为空 registry，加载完 setState 触发 agent 重建一次。
+  const [skillRegistry, setSkillRegistry] = useState<SkillRegistry>(() => new SkillRegistry());
+  useEffect(() => {
+    let alive = true;
+    const warnings: string[] = [];
+    buildSkillRegistry({
+      skillDirs: config.skillDirs,
+      onWarn: (m) => warnings.push(m),
+    })
+      .then((reg) => {
+        if (!alive) return;
+        setSkillRegistry(reg);
+        const n = reg.list().length;
+        if (n > 0 || warnings.length > 0) {
+          const parts = [`skills: ${n} discovered`];
+          if (warnings.length) parts.push(...warnings.map((w) => `  ⚠ ${w}`));
+          append({ role: 'system', text: parts.join('\n') });
+        }
+      })
+      .catch((err: Error) => {
+        if (!alive) return;
+        append({ role: 'error', text: `skill discovery failed: ${err.message}` });
+      });
+    return () => {
+      alive = false;
+    };
+    // 只在挂载时跑一次（skillDirs 启动后不变）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 启动 dashboard：扫 wikiRoot 各 collection 的 .md 数 + 每个 watchDir 的可识别文件数，
   // 作为一条 system 消息追加到对话顶部。异步加载，不阻塞 REPL 启动。
@@ -325,10 +359,13 @@ export function App({ config: initialConfig }: Props) {
     const ctx = buildContext(config, client, requestApproval, library, {
       converterRegistry: converters.registry,
       converterCache: converters.cache,
+      skillRegistry,
     });
     const systemPrompt = composeSystemPrompt(defaultSystemPrompt, soul);
-    return new Agent(client, config.model, ctx, { systemPrompt });
-  }, [config, client, requestApproval, library, converters, soul]);
+    // skill 走单个 `skill` 工具（仅当存在 skill 时才挂，避免空 catalog 的死工具）。
+    const extraTools = skillRegistry.list().length > 0 ? [makeSkillTool(skillRegistry)] : [];
+    return new Agent(client, config.model, ctx, { systemPrompt, extraTools });
+  }, [config, client, requestApproval, library, converters, soul, skillRegistry]);
 
   const append = (msg: Omit<DisplayMessage, 'id'>) =>
     setMessages((prev) => [...prev, { ...msg, id: nextId() }]);
@@ -341,6 +378,18 @@ export function App({ config: initialConfig }: Props) {
     [library, messages.length],
   );
   const mentionTree = useMemo(() => buildMentionTree(library), [library, messages.length]);
+
+  // 每个 skill 暴露成一个动态 slash 命令 `/<name>`，并入 InputBox 的命令提示 / 补全。
+  // 与内置命令同名者由 filterCommands 丢弃（内置优先）。
+  const skillCommands = useMemo<SlashCommand[]>(
+    () =>
+      skillRegistry.list().map((s) => ({
+        name: `/${s.name}`,
+        description: `skill: ${s.description}`,
+        takesArg: true,
+      })),
+    [skillRegistry],
+  );
 
   useInput((input, key) => {
     if (key.ctrl && input === 'c') {
@@ -548,10 +597,75 @@ export function App({ config: initialConfig }: Props) {
           ? 'verbose on — 后续轮内联展开 think / tool 详情（已显示的内容不变）'
           : 'verbose off — 后续轮 think / tool 降权为暗灰摘要',
       });
+    } else if (cmd === '/skill' || cmd.startsWith('/skill ')) {
+      const arg = cmd === '/skill' ? '' : cmd.slice('/skill '.length).trim();
+      handleSkill(arg);
     } else if (cmd === '/exit' || cmd === '/quit') {
       exit();
     } else {
-      append({ role: 'error', text: `Unknown command: ${cmd}` });
+      // 走到这里说明不是任何内置命令（内置已在上面优先匹配 → 系统命令永远胜过同名 skill）。
+      // 尝试把 `/<name> [问题]` 解析成一个 skill 调用。
+      const firstSpace = cmd.search(/\s/);
+      const name = (firstSpace === -1 ? cmd : cmd.slice(0, firstSpace)).slice(1); // 去掉前导 '/'
+      const question = firstSpace === -1 ? '' : cmd.slice(firstSpace + 1).trim();
+      if (skillRegistry.has(name)) {
+        invokeSkillByName(name, question);
+      } else {
+        append({ role: 'error', text: `Unknown command: ${cmd}` });
+      }
+    }
+  };
+
+  /**
+   * `/skill`（无参）→ 列出已发现的 skill。调用一个 skill 用 `/<name> <问题>`
+   * （见 invokeSkillByName）；`/skill <name> <问题>` 也等价可用。
+   */
+  const handleSkill = (arg: string): void => {
+    const all = skillRegistry.list();
+    if (!arg) {
+      if (all.length === 0) {
+        append({
+          role: 'system',
+          text:
+            'No skills installed.\nDrop a <name>/SKILL.md under ' +
+            config.skillDirs.map((d) => shortenHome(d)).join(' or ') +
+            ',\nor use `pith-wiki skill add <path>`. Restart REPL to pick up changes.',
+        });
+        return;
+      }
+      const lines = all.map((s) => `  /${s.name}  —  ${s.description}`);
+      append({
+        role: 'system',
+        text: 'Installed skills (invoke with /<name> <your question>):\n' + lines.join('\n'),
+      });
+      return;
+    }
+    // `/skill <name> <问题>`：拆出名字 + 问题，复用 invokeSkillByName。
+    const firstSpace = arg.search(/\s/);
+    const name = firstSpace === -1 ? arg : arg.slice(0, firstSpace);
+    const question = firstSpace === -1 ? '' : arg.slice(firstSpace + 1).trim();
+    invokeSkillByName(name, question);
+  };
+
+  /**
+   * 调用一个具名 skill。供两条入口复用：动态 `/<name> <问题>` 与 `/skill <name> <问题>`。
+   * 把 skill 正文压入上下文；带问题则立即走 handleSubmit 跑一轮（仅这轮生效），
+   * 不带问题则等用户下一条输入（两步式）。
+   */
+  const invokeSkillByName = (name: string, question: string): void => {
+    const skill = skillRegistry.get(name);
+    if (!skill) {
+      append({ role: 'error', text: `Unknown skill: ${name}. Try /skill to list installed ones.` });
+      return;
+    }
+    agent.injectContext(`[Skill: ${skill.name}]\n\n${skill.body}`);
+    if (question) {
+      void handleSubmit(question);
+    } else {
+      append({
+        role: 'system',
+        text: `skill "${skill.name}" loaded — now type your request (or use /${skill.name} <question> in one line).`,
+      });
     }
   };
 
@@ -781,6 +895,7 @@ export function App({ config: initialConfig }: Props) {
           onSubmit={handleSubmit}
           history={history}
           mentionTree={mentionTree}
+          extraCommands={skillCommands}
         />
       </Box>
       {config.readOnly ? <Text color="gray">read-only mode</Text> : null}

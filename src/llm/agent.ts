@@ -169,6 +169,15 @@ export class Agent {
   }
 
   /**
+   * 把一段上下文（典型：用户用 `/skill <name>` 手动调出的 skill 指令）作为一条
+   * 前置 user 消息压入历史，但 **不** 触发 LLM 请求。下一次 send() 时模型才会
+   * 看到它——等价于用户在提问前先粘了一段说明。空串 no-op。
+   */
+  injectContext(text: string): void {
+    if (text.trim()) this.messages.push({ role: 'user', content: text });
+  }
+
+  /**
    * 当前是否有可摘要的对话内容。
    * 仅 system prompt（reset 后的初始状态）→ false；至少有一轮 user/assistant → true。
    */

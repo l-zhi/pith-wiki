@@ -23,6 +23,7 @@ import { collectDashboardData, formatDashboard } from './dashboardData.js';
 import { resolveSafePath, SafetyError } from '../tools/safety.js';
 import { Source } from '../wiki/types.js';
 import { buildQueueCommands, buildWatchCommand } from './queueCommands.js';
+import { buildSkillCommands } from './skillCommands.js';
 import { runInit, formatInitResult, PROVIDER_CATALOG, type InitOptions } from './initCommand.js';
 import { promptInitOptions } from './initInteractive.js';
 
@@ -428,6 +429,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
 
   buildQueueCommands(program, args);
   buildWatchCommand(program, args);
+  buildSkillCommands(program, args);
 }
 
 /**

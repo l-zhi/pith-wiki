@@ -169,6 +169,14 @@ const ConfigSchema = z.object({
    * 内容拼到 Agent 的 system prompt 末尾作为 voice/style 层。
    */
   soulFile: z.string().optional(),
+  /**
+   * skill 发现目录列表（绝对路径）。每个目录下的 `<name>/SKILL.md` 会被自动发现。
+   *
+   * 默认双层（与 soulFile 同构）：`<pithWikiHome>/skills`（跨工作区的"我的技能"）
+   * + `<workspaceRoot>/skills`（项目本地）。后者排在后面 → 同名时覆盖前者。
+   * 每个 skill 是一份 SKILL.md（纯指令，渐进式披露）。实际扫描在 src/skills/ 内做。
+   */
+  skillDirs: z.array(z.string()).default([]),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -204,6 +212,7 @@ export interface ConfigOverrides {
   digestCollection?: string;
   cacheConverted?: boolean;
   soulFile?: string;
+  skillDirs?: string[];
 }
 
 const DEFAULTS = {
@@ -326,6 +335,20 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     [];
   const additionalReadPaths = additionalReadPathsRaw.map((p) => path.resolve(expandHome(p)));
 
+  // skillDirs：CLI flag > env (PITH_WIKI_SKILLS) > 配置文件 > 默认双层。
+  // 默认与 soulFile 同构：user-global 在前、project-local 在后（同名覆盖）。
+  // 所有路径做 `~/` 展开 + 绝对化（相对路径相对 cwd）。
+  const defaultSkillDirs = [
+    path.join(pithWikiHome(), 'skills'),
+    path.join(path.resolve(workspaceRoot), 'skills'),
+  ];
+  const skillDirsRaw =
+    overrides.skillDirs ??
+    parseReadPathsFromEnv(process.env.PITH_WIKI_SKILLS) ??
+    file.skillDirs ??
+    defaultSkillDirs;
+  const skillDirs = skillDirsRaw.map((p) => path.resolve(expandHome(p)));
+
   // 队列相关默认路径都在 ~/.pith-wiki/queue/ 下。
   // 优先级与其他字段一致：CLI flag > 配置文件 > 默认。env 暂不引入，避免接口表面过大。
   const defaultQueueDir = path.join(pithWikiHome(), 'queue');
@@ -387,6 +410,7 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     // 实际读盘 + ~/展开在 src/llm/soul.ts 内，避免 config schema 持有读盘副作用
     soulFile:
       overrides.soulFile ?? process.env.PITH_WIKI_SOUL ?? file.soulFile ?? undefined,
+    skillDirs,
     // 顶层 supportsJsonMode 仅在没用 provider map 的 v0 场景下直接生效；
     // 用了 activeProvider 时会被 applyActiveProvider 用 entry 的同名字段覆盖。
     // 这里走 file 字段（无 CLI/env 入口，结构小且改动频率低）。
@@ -477,6 +501,15 @@ export function ensureQueueDirs(config: Config): void {
 /** 创建 transcript 输出目录。 */
 export function ensureOutputDir(config: Config): void {
   fs.mkdirSync(config.outputDir, { recursive: true });
+}
+
+/**
+ * 创建 skill 发现目录（默认双层的第一条 = user-global，作为 `skill add` 的落地目标）。
+ * skillDirs 为空时 no-op。其余目录不强制创建——用户没建就当没有 skill。
+ */
+export function ensureSkillsDir(config: Config): void {
+  const first = config.skillDirs[0];
+  if (first) fs.mkdirSync(first, { recursive: true });
 }
 
 export function requireApiKey(config: Config): void {
