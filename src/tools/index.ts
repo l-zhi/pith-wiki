@@ -16,6 +16,7 @@ import { listDirTool } from './list_dir.js';
 import { wikiIngestTool } from './wiki_ingest.js';
 import { wikiGetTool } from './wiki_get.js';
 import { wikiQueryTool } from './wiki_query.js';
+import { wikiGrepTool } from './wiki_grep.js';
 import { wikiListTool } from './wiki_list.js';
 import { wikiReadSourceTool } from './wiki_read_source.js';
 import { wikiQueueAddTool } from './wiki_queue_add.js';
@@ -116,6 +117,7 @@ export const ALL_TOOLS: AnyToolDef[] = [
   wikiIngestTool,
   wikiGetTool,
   wikiQueryTool,
+  wikiGrepTool,
   wikiListTool,
   wikiReadSourceTool,
   wikiQueueAddTool,
