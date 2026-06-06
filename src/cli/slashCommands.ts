@@ -59,15 +59,29 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     description:
       'Show the active SOUL.md (voice/style overrides). Edit the file + restart REPL to apply.',
   },
+  {
+    name: '/skill',
+    description:
+      'List installed skills. Invoke one directly with /<skill-name> <your question>.',
+    takesArg: true,
+  },
   { name: '/exit', description: 'Exit the REPL.', aliases: ['/quit'] },
 ];
 
-/** 按前缀过滤命令（含别名匹配）。空前缀（"/"）返回全部主条目。 */
-export function filterCommands(prefix: string): SlashCommand[] {
+/**
+ * 按前缀过滤命令（含别名匹配）。空前缀（"/"）返回全部主条目。
+ *
+ * `extra` 是运行时动态命令（典型：每个 skill 暴露成 `/<name>`）。**内置命令优先**：
+ * 任何与内置 name / alias 同名的 extra 会被丢弃，保证 `/help` 这类系统命令不被
+ * 同名 skill 顶掉。其余 extra 接在内置之后参与前缀匹配。
+ */
+export function filterCommands(prefix: string, extra: SlashCommand[] = []): SlashCommand[] {
   if (!prefix.startsWith('/')) return [];
   // 取第一个空格之前的部分作为命令前缀；空格之后是参数，不参与过滤。
   const head = prefix.split(/\s/, 1)[0];
-  return SLASH_COMMANDS.filter((c) => {
+  const reserved = new Set(SLASH_COMMANDS.flatMap((c) => [c.name, ...(c.aliases ?? [])]));
+  const dyn = extra.filter((c) => !reserved.has(c.name));
+  return [...SLASH_COMMANDS, ...dyn].filter((c) => {
     if (c.name.startsWith(head)) return true;
     return c.aliases?.some((a) => a.startsWith(head)) ?? false;
   });
