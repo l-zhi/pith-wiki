@@ -13,6 +13,7 @@ import { ContextAssembler } from '../src/wiki/assembler.js';
 import { LibraryService } from '../src/wiki/library.js';
 import type { Entry } from '../src/wiki/types.js';
 import { wikiListTool } from '../src/tools/wiki_list.js';
+import { wikiGrepTool } from '../src/tools/wiki_grep.js';
 import { wikiReadSourceTool } from '../src/tools/wiki_read_source.js';
 import { wikiQueryTool } from '../src/tools/wiki_query.js';
 import type { ToolContext } from '../src/tools/index.js';
@@ -160,6 +161,252 @@ describe('wiki_list', () => {
       items: Array<{ source: { type: string; value?: string } }>;
     };
     expect(r.items[0].source).toEqual({ type: 'file', value: '/abs/path/note.md' });
+  });
+});
+
+// ---- wiki_grep ----
+
+describe('wiki_grep', () => {
+  it('字面子串命中正文 → 返回 id + 1-based 行号', async () => {
+    library.put(
+      makeEntry({
+        id: 'json-mode',
+        content: 'line one\nuses response_format: json_object here\nline three',
+      }),
+    );
+    const r = (await wikiGrepTool.handler(
+      { patterns: ['json_object'], regex: false, ignore_case: true, max_matches_per_entry: 5, max_entries: 50 },
+      ctx,
+    )) as {
+      ok: boolean;
+      total_matched: number;
+      items: Array<{ id: string; matches: Array<{ line: number | null; field: string; pattern: string }> }>;
+    };
+    expect(r.ok).toBe(true);
+    expect(r.total_matched).toBe(1);
+    expect(r.items[0].id).toBe('json-mode');
+    expect(r.items[0].matches[0]).toMatchObject({ line: 2, field: 'content', pattern: 'json_object' });
+  });
+
+  it('patterns 之间 OR：覆盖一个日期的多种写法', async () => {
+    library.put(makeEntry({ id: 'iso', content: 'meeting on 2026-06-04' }));
+    library.put(makeEntry({ id: 'cjk', content: '会议在 2026年6月4日 召开' }));
+    library.put(makeEntry({ id: 'none', content: 'no date here' }));
+
+    const r = (await wikiGrepTool.handler(
+      {
+        patterns: ['2026-06-04', '2026/06/04', '2026年6月4日'],
+        regex: false,
+        ignore_case: true,
+        max_matches_per_entry: 5,
+        max_entries: 50,
+      },
+      ctx,
+    )) as { total_matched: number; items: Array<{ id: string }> };
+    expect(r.total_matched).toBe(2);
+    expect(r.items.map((i) => i.id).sort()).toEqual(['cjk', 'iso']);
+  });
+
+  it('命中元数据（title/summary/tags）→ line=null，标出 field', async () => {
+    library.put(makeEntry({ id: 'meta', title: 'Agent retry loop', content: 'body without the word' }));
+    const r = (await wikiGrepTool.handler(
+      { patterns: ['retry'], regex: false, ignore_case: true, max_matches_per_entry: 5, max_entries: 50 },
+      ctx,
+    )) as { items: Array<{ matches: Array<{ line: number | null; field: string }> }> };
+    expect(r.items[0].matches[0]).toMatchObject({ line: null, field: 'title' });
+  });
+
+  it('regex 模式：覆盖式正则一发命中多种日期格式', async () => {
+    library.put(makeEntry({ id: 'a', content: 'date 2026-06-04 here' }));
+    library.put(makeEntry({ id: 'b', content: 'date 2026/6/4 here' }));
+    const r = (await wikiGrepTool.handler(
+      {
+        patterns: ['2026[-/]0?6[-/]0?4'],
+        regex: true,
+        ignore_case: true,
+        max_matches_per_entry: 5,
+        max_entries: 50,
+      },
+      ctx,
+    )) as { total_matched: number; items: Array<{ id: string }> };
+    expect(r.total_matched).toBe(2);
+  });
+
+  it('非法正则 → ok=false（不崩 agent loop）', async () => {
+    library.put(makeEntry({ id: 'x', content: 'whatever' }));
+    const r = (await wikiGrepTool.handler(
+      { patterns: ['('], regex: true, ignore_case: true, max_matches_per_entry: 5, max_entries: 50 },
+      ctx,
+    )) as { ok: boolean; error?: string };
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/Invalid regex/);
+  });
+
+  it('ignore_case=false → 精确大小写', async () => {
+    library.put(makeEntry({ id: 'x', content: 'useMemo and USEMEMO' }));
+    const r = (await wikiGrepTool.handler(
+      { patterns: ['useMemo'], regex: false, ignore_case: false, max_matches_per_entry: 5, max_entries: 50 },
+      ctx,
+    )) as { items: Array<{ matches: Array<{ text: string }> }> };
+    expect(r.items[0].matches).toHaveLength(1);
+    expect(r.items[0].matches[0].text).toContain('useMemo and USEMEMO');
+  });
+
+  it('collection 过滤', async () => {
+    library.put(makeEntry({ id: 'a', collection: 'tech', content: 'foo' }));
+    library.put(makeEntry({ id: 'b', collection: 'reading', content: 'foo' }));
+    const r = (await wikiGrepTool.handler(
+      { patterns: ['foo'], regex: false, ignore_case: true, collection: 'tech', max_matches_per_entry: 5, max_entries: 50 },
+      ctx,
+    )) as { total_matched: number; items: Array<{ id: string }> };
+    expect(r.total_matched).toBe(1);
+    expect(r.items[0].id).toBe('a');
+  });
+
+  it('max_entries 截断 → truncated=true，total_matched 仍是全量', async () => {
+    for (let i = 0; i < 5; i++) {
+      library.put(makeEntry({ id: `e${i}`, content: 'common token', updated: `2026-04-0${i + 1}` }));
+    }
+    const r = (await wikiGrepTool.handler(
+      { patterns: ['common'], regex: false, ignore_case: true, max_matches_per_entry: 5, max_entries: 2 },
+      ctx,
+    )) as { total_matched: number; returned: number; truncated: boolean };
+    expect(r.total_matched).toBe(5);
+    expect(r.returned).toBe(2);
+    expect(r.truncated).toBe(true);
+  });
+
+  it('max_matches_per_entry 限制每条命中行数', async () => {
+    const body = Array.from({ length: 10 }, (_, i) => `hit line ${i}`).join('\n');
+    library.put(makeEntry({ id: 'many', content: body }));
+    const r = (await wikiGrepTool.handler(
+      { patterns: ['hit'], regex: false, ignore_case: true, max_matches_per_entry: 3, max_entries: 50 },
+      ctx,
+    )) as { items: Array<{ match_count: number; matches: unknown[] }> };
+    expect(r.items[0].matches).toHaveLength(3);
+    expect(r.items[0].match_count).toBe(3);
+  });
+
+  it('零命中 → ok=true，total_matched=0（让模型明确知道"确实没有"）', async () => {
+    library.put(makeEntry({ id: 'x', content: 'nothing relevant' }));
+    const r = (await wikiGrepTool.handler(
+      { patterns: ['quantum'], regex: false, ignore_case: true, max_matches_per_entry: 5, max_entries: 50 },
+      ctx,
+    )) as { ok: boolean; total_matched: number; items: unknown[] };
+    expect(r.ok).toBe(true);
+    expect(r.total_matched).toBe(0);
+    expect(r.items).toEqual([]);
+  });
+
+  it('空 patterns → ok=false', async () => {
+    const r = (await wikiGrepTool.handler(
+      { patterns: [], regex: false, ignore_case: true, max_matches_per_entry: 5, max_entries: 50 },
+      ctx,
+    )) as { ok: boolean; error?: string };
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/empty/);
+  });
+});
+
+// ---- wiki_grep：默认搜原文 source ----
+
+describe('wiki_grep — 默认搜原文(source)', () => {
+  type GrepResult = {
+    total_matched: number;
+    items: Array<{
+      id: string;
+      searched: 'source' | 'content';
+      source_path?: string;
+      matches: Array<{ line: number | null; field: string; pattern: string }>;
+    }>;
+  };
+  const grep = (patterns: string[]) =>
+    wikiGrepTool.handler(
+      { patterns, regex: false, ignore_case: true, max_matches_per_entry: 5, max_entries: 50 },
+      ctx,
+    ) as Promise<GrepResult>;
+
+  it('source.value=.md：命中原文里有、但 content 没有的词', async () => {
+    const src = path.join(workspaceRoot, 'note.md');
+    fs.writeFileSync(src, 'first line\n原文独有词 出现在这里\nthird line\n');
+    library.put(
+      makeEntry({ id: 'n1', content: '压缩摘要里没有那个词', source: { type: 'file', value: src } }),
+    );
+    const r = await grep(['原文独有词']);
+    expect(r.total_matched).toBe(1);
+    expect(r.items[0].searched).toBe('source');
+    expect(r.items[0].source_path).toBe(src);
+    expect(r.items[0].matches[0]).toMatchObject({ line: 2, field: 'source', pattern: '原文独有词' });
+  });
+
+  it('source.cachePath(转换格式)：grep 的是 sidecar，不是 value', async () => {
+    const pdf = path.join(workspaceRoot, 'paper.pdf');
+    fs.writeFileSync(pdf, Buffer.from([0x25, 0x50, 0x44, 0x46])); // %PDF
+    const cacheDir = path.join(wikiRoot, 'tech', '.cache');
+    fs.mkdirSync(cacheDir, { recursive: true });
+    const sidecar = path.join(cacheDir, 'paper.md');
+    fs.writeFileSync(sidecar, 'sidecar 第一行\nSIDECAR_WORD 在洗出来的 md 里\n');
+    library.put(
+      makeEntry({
+        id: 'paper',
+        content: 'digest',
+        source: { type: 'file', value: pdf, convertedBy: 'pdf-parse', cachePath: sidecar },
+      }),
+    );
+    const r = await grep(['SIDECAR_WORD']);
+    expect(r.total_matched).toBe(1);
+    expect(r.items[0].searched).toBe('source');
+    expect(r.items[0].source_path).toBe(sidecar);
+    expect(r.items[0].matches[0].field).toBe('source');
+  });
+
+  it('inline source → 回退搜 content（field=content, searched=content）', async () => {
+    library.put(makeEntry({ id: 'inl', content: 'digest 含 关键词A', source: { type: 'inline' } }));
+    const r = await grep(['关键词A']);
+    expect(r.total_matched).toBe(1);
+    expect(r.items[0].searched).toBe('content');
+    expect(r.items[0].matches[0].field).toBe('content');
+  });
+
+  it('source 越界沙箱 → 回退 content，不读外部文件', async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'grep-outside-'));
+    const f = path.join(outside, 'secret.md');
+    fs.writeFileSync(f, '越界机密词\n');
+    try {
+      library.put(
+        makeEntry({ id: 'bad', content: '安全摘要', source: { type: 'file', value: f } }),
+      );
+      // 越界文件里的词搜不到（说明没读它），回退到 content
+      const miss = await grep(['越界机密词']);
+      expect(miss.total_matched).toBe(0);
+      const hit = await grep(['安全摘要']);
+      expect(hit.items[0].searched).toBe('content');
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('二进制原文(无 cachePath 的 .pdf)→ 不 grep 二进制，回退 content', async () => {
+    const pdf = path.join(workspaceRoot, 'raw.pdf');
+    fs.writeFileSync(pdf, Buffer.from([0x25, 0x50, 0x44, 0x46]));
+    library.put(
+      makeEntry({ id: 'binpdf', content: 'digest 含 标记词B', source: { type: 'file', value: pdf } }),
+    );
+    const r = await grep(['标记词B']);
+    expect(r.total_matched).toBe(1);
+    expect(r.items[0].searched).toBe('content');
+  });
+
+  it('source 文件缺失 → 回退 content', async () => {
+    library.put(
+      makeEntry({
+        id: 'gone',
+        content: 'digest 含 词C',
+        source: { type: 'file', value: path.join(workspaceRoot, 'nope.md') },
+      }),
+    );
+    const r = await grep(['词C']);
+    expect(r.items[0].searched).toBe('content');
   });
 });
 
