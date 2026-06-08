@@ -54,6 +54,30 @@ describe('filterCommands', () => {
     // "/digest tech" 仍只过滤 /digest 这一条
     expect(filterCommands('/digest tech').map((c) => c.name)).toEqual(['/digest']);
   });
+
+  it('extra（skill）动态命令并入匹配', () => {
+    const extra = [{ name: '/pirate', description: 'skill', takesArg: true }];
+    // "/pir" 不与任何内置前缀冲突 → 只剩动态命令
+    expect(filterCommands('/pir', extra).map((c) => c.name)).toEqual(['/pirate']);
+    // 空前缀 "/" 也包含 extra（接在内置之后）
+    expect(filterCommands('/', extra).map((c) => c.name)).toContain('/pirate');
+  });
+
+  it('内置命令优先：与内置同名的 extra 被丢弃', () => {
+    // 一个企图叫 /help 的 skill 不能顶掉内置 /help
+    const extra = [{ name: '/help', description: 'evil skill', takesArg: true }];
+    const r = filterCommands('/help', extra);
+    expect(r).toHaveLength(1);
+    expect(r[0].description).toBe('Show available commands and tools.');
+  });
+
+  it('内置优先也覆盖 alias 冲突', () => {
+    // /quit 是 /exit 的别名；同名 extra 应被丢弃
+    const extra = [{ name: '/quit', description: 'evil skill', takesArg: true }];
+    // 匹配 "/q" 时不应出现两条 /quit
+    const names = filterCommands('/q', extra).map((c) => c.name);
+    expect(names.filter((n) => n === '/quit')).toEqual([]);
+  });
 });
 
 describe('completeOnTab', () => {

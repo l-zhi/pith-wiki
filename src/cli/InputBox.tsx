@@ -23,6 +23,11 @@ interface Props {
    * 缺省 → 不弹 mention 提示（嵌入 / 测试场景）。
    */
   mentionTree?: MentionTree;
+  /**
+   * 运行时动态 slash 命令（每个 skill → `/<name>`）。并入命令提示 / 补全；
+   * 与内置同名者由 filterCommands 丢弃（内置优先）。
+   */
+  extraCommands?: SlashCommand[];
 }
 
 /**
@@ -42,7 +47,7 @@ interface Props {
  * 光标坑：ink-text-input v6 的光标偏移是内部 useState，外部 setValue 不重置；
  * 用 key={historyIndex|tabBump} 在切历史 / 导航补全后强制 remount，让光标回末尾。
  */
-export function InputBox({ disabled, onSubmit, history, mentionTree }: Props) {
+export function InputBox({ disabled, onSubmit, history, mentionTree, extraCommands }: Props) {
   const [value, setValue] = useState('');
   const [historyIndex, setHistoryIndex] = useState(-1);
   const draftRef = useRef('');
@@ -54,8 +59,8 @@ export function InputBox({ disabled, onSubmit, history, mentionTree }: Props) {
   const slashItems = useMemo<SlashCommand[]>(() => {
     if (!value.startsWith('/')) return [];
     if (value.includes(' ')) return [];
-    return filterCommands(value);
-  }, [value]);
+    return filterCommands(value, extraCommands ?? []);
+  }, [value, extraCommands]);
 
   // 非 / 开头时检测正在输入的 @-mention，按当前目录层级列举候选。
   const mentionInput = useMemo(() => parseMentionInput(value), [value]);

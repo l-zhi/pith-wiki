@@ -10,6 +10,7 @@ import {
   type ConverterRegistry,
   type ConverterCache,
 } from '../wiki/converters/index.js';
+import { SkillRegistry } from '../skills/registry.js';
 import { readFileTool } from './read_file.js';
 import { writeFileTool } from './write_file.js';
 import { listDirTool } from './list_dir.js';
@@ -36,6 +37,12 @@ export interface ToolContext {
   /** 转换结果缓存（按 cacheConverted 决定是 FS 还是 Null 实现）。 */
   converterCache: ConverterCache;
   /**
+   * skill 注册表。`skill` 工具据此把 prompt skill 的正文调进上下文。
+   * 缺省（未经 BuildContextExtras 注入）时是一个空 registry —— CLI 子命令这种
+   * 不需要 skill 的一次性路径零开销。
+   */
+  skillRegistry: SkillRegistry;
+  /**
    * 本轮检索范围（REPL `@`-mention 解析得到）。仅在该轮的 tool 调用里出现：
    * Agent 把它 spread 进一份 per-turn ctx 副本。wiki_query 据此收窄召回。
    * 缺省 undefined → 整库召回（CLI / 旧路径零影响）。
@@ -60,6 +67,11 @@ export interface BuildContextExtras {
    */
   converterRegistry?: ConverterRegistry;
   converterCache?: ConverterCache;
+  /**
+   * 已建好的 skill 注册表。REPL 在 mount 时 await buildSkillRegistry 后传入；
+   * 不传则 buildContext 用一个空 registry 兜底。
+   */
+  skillRegistry?: SkillRegistry;
 }
 
 export function buildContext(
@@ -104,6 +116,7 @@ export function buildContext(
     requestApproval,
     converterRegistry: registry,
     converterCache: cache,
+    skillRegistry: extras.skillRegistry ?? new SkillRegistry(),
   };
 }
 
