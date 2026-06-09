@@ -12,16 +12,31 @@ export interface LinkIndexEntry {
  * 持久化索引文件 schema。落在 `<wikiRoot>/index.json`。
  *
  * 设计意图：冷启动免去对每条 entry 的 `readFileSync + matter.parse`，
- * 大库下省 50-100ms。新鲜度检查只看 collection 目录的 mtime（O(N collections)
- * 而不是 O(N entries)），在用户没改动的情况下能直接信任 cache。
+ * 大库下省 50-100ms。
+ *
+ * 新鲜度检查：保存时记下每个 collection **子树最深目录 mtime**（见
+ * `collectionMtimes`），启动时只重算这一个聚合值比对。目录 mtime 在其直接子项
+ * 增删/改名时变化，逐层取 max 就能捕捉子树**任意深度**的条目增删——这正是早期
+ * "只看顶层 collection 目录 mtime" 的盲区：深层子目录（如
+ * `工作/opensic/.../道言真经·第三部/`）新增文件只 bump 叶子目录，顶层 mtime 不动，
+ * 旧索引会被当成 fresh，新条目永远进不了索引、对检索隐身。
+ *
+ * 仍抓不了"原地编辑现有 .md 内容但目录 mtime 不变"——这种留给 watcher 走
+ * enqueue → put 链路，或用户手动删 index.json 强制 rebuild。
  *
  * 不需要非常实时——`put`/`delete` 后用一个 5s 防抖 timer 异步刷盘；进程退出
  * 前没刷完也无所谓，下次启动 scanAll 会得到正确状态。
  */
-const INDEX_FILE_VERSION = 1 as const;
+const INDEX_FILE_VERSION = 2 as const;
 interface IndexFileShape {
   version: typeof INDEX_FILE_VERSION;
   savedAt: string;
+  /**
+   * 保存时各 collection 子树的最深目录 mtime（ms，含 collection 根目录本身）。
+   * 启动时重算并逐 collection 比对：当前值 > 存档值 → 子树有增删 → 作废重建。
+   * key 集合还兼做 collection 增删检测（集合不一致直接作废）。
+   */
+  collectionMtimes: Record<string, number>;
   /** 所有条目的完整 Entry。读回时直接重建 entryCache。 */
   entries: Entry[];
 }
@@ -31,6 +46,24 @@ export interface LibraryServiceOptions {
   persist?: boolean;
   /** 调度 → 实际写入之间的延迟（ms）。默认 5000。 */
   persistDelayMs?: number;
+  /**
+   * 显式从扫描 / 新鲜度计算里排除的目录（绝对路径，连同其整棵子树）。
+   *
+   * 典型用途：raw transcripts 落在 `<wikiRoot>/output/transcripts/`，与被索引的
+   * digest 条目（`<wikiRoot>/output/*.md`）共享 `output` collection 树根。scanAll
+   * 是递归的，会一路扫进 transcripts 子目录——把它们当成 `output` collection 的条目
+   * 灌进索引/检索是不期望的。早期靠"transcript 文件名含大写 T/Z 违反 ID_RE → 解析
+   * 抛错被静默跳过"顺手挡住，但那是意外不是设计：一旦命名改动或补了合法 frontmatter
+   * 就会破防。在这里显式传入 transcriptsDir 把"意外不扫"变成"有意不扫"。
+   *
+   * 同时也从 collectionTreeMtime 里排除——否则每回合写 transcript 都会 bump 子目录
+   * mtime，反复作废 index.json cache。
+   *
+   * 路径在构造时统一 path.resolve 归一化；既支持顶层目录（user 把 outputDir 设成
+   * `<wikiRoot>/transcripts`），也支持嵌套子目录（默认的 `output/transcripts`）。
+   * 落在 wikiRoot 之外的条目是无害的 no-op（本来就不会被扫到）。
+   */
+  ignoredDirs?: string[];
 }
 
 export class LibraryService {
@@ -39,6 +72,9 @@ export class LibraryService {
 
   private readonly persistEnabled: boolean;
   private readonly persistDelayMs: number;
+  /** 被显式忽略的目录绝对路径集合（含子树）。见 LibraryServiceOptions.ignoredDirs。 */
+  private readonly ignoredDirs: Set<string>;
+
   private persistTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -47,6 +83,12 @@ export class LibraryService {
   ) {
     this.persistEnabled = options.persist ?? true;
     this.persistDelayMs = options.persistDelayMs ?? 5000;
+    this.ignoredDirs = new Set((options.ignoredDirs ?? []).map((p) => path.resolve(p)));
+  }
+
+  /** 该目录（连同子树）是否被显式排除在扫描 / mtime 计算之外。 */
+  private isIgnoredDir(abs: string): boolean {
+    return this.ignoredDirs.size > 0 && this.ignoredDirs.has(path.resolve(abs));
   }
 
   /** wikiRoot 绝对路径。给需要计算 cache / sidecar 路径的子系统用。 */
@@ -194,9 +236,10 @@ export class LibraryService {
    * 尝试从 `<wikiRoot>/index.json` 加载快照。
    *
    * 拒绝（返回 null）的情况：
-   *   1. 文件不存在 / 解析失败 / version 不匹配
-   *   2. 任一 collection 目录的 mtime > index.json 的 mtime
-   *      （目录 mtime 在文件添加/删除时会被 bump，这就抓到了"外部新增/删除条目"）
+   *   1. 文件不存在 / 解析失败 / version 不匹配 / 缺 collectionMtimes
+   *   2. collection 集合变化（顶层新增/删除 collection 目录）
+   *   3. 任一 collection 的子树最深目录 mtime > 存档值
+   *      （目录 mtime 在其直接子项增删/改名时 bump，逐层取 max 抓到任意深度的条目增删）
    *
    * 注意：不会抓"在原地编辑现有 .md 内容但目录 mtime 不变"的情况。这种场景留给
    * watcher 走正常 enqueue → put 链路，或者用户手动删除 index.json 强制 rebuild。
@@ -209,31 +252,28 @@ export class LibraryService {
     try {
       const raw = fs.readFileSync(file, 'utf8');
       const obj = JSON.parse(raw);
-      if (obj?.version !== INDEX_FILE_VERSION || !Array.isArray(obj.entries)) return null;
+      if (
+        obj?.version !== INDEX_FILE_VERSION ||
+        !Array.isArray(obj.entries) ||
+        typeof obj.collectionMtimes !== 'object' ||
+        obj.collectionMtimes === null
+      ) {
+        return null;
+      }
       parsed = obj as IndexFileShape;
     } catch {
       return null;
     }
 
-    let indexMtime: number;
-    try {
-      indexMtime = fs.statSync(file).mtimeMs;
-    } catch {
-      return null;
-    }
-
-    if (fs.existsSync(this.wikiRoot)) {
-      const dirs = fs
-        .readdirSync(this.wikiRoot, { withFileTypes: true })
-        .filter((d) => d.isDirectory() && !d.name.startsWith('.'));
-      for (const d of dirs) {
-        try {
-          const dirMtime = fs.statSync(path.join(this.wikiRoot, d.name)).mtimeMs;
-          if (dirMtime > indexMtime) return null;
-        } catch {
-          return null;
-        }
-      }
+    // 子树最深 mtime 比对：捕捉任意深度的条目增删（含顶层 collection 增删）。
+    const stored = parsed.collectionMtimes;
+    const current = this.computeCollectionMtimes();
+    const storedNames = Object.keys(stored);
+    const currentNames = Object.keys(current);
+    if (storedNames.length !== currentNames.length) return null; // collection 增/删
+    for (const name of currentNames) {
+      if (!(name in stored)) return null; // 新 collection（同时有增有删时也能抓到）
+      if (current[name] > stored[name]) return null; // 子树有增删
     }
 
     // schema 兼容性兜底：用 Zod 把每条 entry 校验一遍。任何一条不合法 → 整份作废重建。
@@ -269,19 +309,83 @@ export class LibraryService {
     const payload: IndexFileShape = {
       version: INDEX_FILE_VERSION,
       savedAt: new Date().toISOString(),
+      // 写盘当下重算（在 put/delete 已落盘后，子目录 mtime 反映的是最新状态）。
+      // index.json 落在 wikiRoot 根、不在任何 collection 子目录里，写它不会自我失效。
+      collectionMtimes: this.computeCollectionMtimes(),
       entries,
     };
     fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), 'utf8');
     fs.renameSync(tmp, file);
   }
 
+  /**
+   * 各顶层 collection → 其子树最深目录 mtime（ms）的快照。
+   * 跳过 dotdir（.cache / .git / .obsidian）。wikiRoot 不存在时返回空对象。
+   */
+  private computeCollectionMtimes(): Record<string, number> {
+    const result: Record<string, number> = {};
+    if (!fs.existsSync(this.wikiRoot)) return result;
+    let dirs: fs.Dirent[];
+    try {
+      dirs = fs.readdirSync(this.wikiRoot, { withFileTypes: true });
+    } catch {
+      return result;
+    }
+    for (const d of dirs) {
+      if (!d.isDirectory() || d.name.startsWith('.')) continue;
+      const abs = path.join(this.wikiRoot, d.name);
+      if (this.isIgnoredDir(abs)) continue; // 顶层就是被忽略目录（如 outputDir 设成 wikiRoot 直下）
+      result[d.name] = this.collectionTreeMtime(abs);
+    }
+    return result;
+  }
+
+  /**
+   * 一个 collection 子树里所有目录 mtime 的最大值（含 collectionRoot 本身，跳过 dotdir）。
+   * 目录 mtime 在其直接子项增删/改名时变化，逐层取 max 即可捕捉子树任意深度的"条目增删"。
+   * 只看目录、不 stat 文件：O(目录数) 而非 O(条目数)，保住冷启动省时的初衷。
+   * 不可读的目录被静默跳过（最坏只是漏算某个分支，下次 put/启动会自愈）。
+   */
+  private collectionTreeMtime(collectionRoot: string): number {
+    let max = 0;
+    const walk = (dir: string): void => {
+      let st: fs.Stats;
+      try {
+        st = fs.statSync(dir);
+      } catch {
+        return;
+      }
+      if (st.mtimeMs > max) max = st.mtimeMs;
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        if (!e.isDirectory() || e.name.startsWith('.')) continue;
+        const child = path.join(dir, e.name);
+        if (this.isIgnoredDir(child)) continue; // transcriptsDir 等子树：不计入 mtime，避免频繁作废 cache
+        walk(child);
+      }
+    };
+    walk(collectionRoot);
+    return max;
+  }
+
   private scanAll(): Entry[] {
     if (!fs.existsSync(this.wikiRoot)) return [];
     // 跳过 dotdir：兜底 .cache（converter sidecar）、可能的 .git 等。
     // entry collection 不允许以 `.` 开头，所以过滤是无损的。
+    // 也跳过 ignoredDirs 里恰好落在顶层的目录（如 outputDir = wikiRoot 直下）。
     const collections = fs
       .readdirSync(this.wikiRoot, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && !d.name.startsWith('.'));
+      .filter(
+        (d) =>
+          d.isDirectory() &&
+          !d.name.startsWith('.') &&
+          !this.isIgnoredDir(path.join(this.wikiRoot, d.name)),
+      );
     const out: Entry[] = [];
     for (const c of collections) {
       const collectionRoot = path.join(this.wikiRoot, c.name);
@@ -292,7 +396,8 @@ export class LibraryService {
 
   /**
    * 递归扫一个目录，把 .md 文件读成 Entry 收集到 out。
-   * subpath 由 dirAbs 相对 collectionRoot 派生（POSIX 形式），永远跳过 dotdir。
+   * subpath 由 dirAbs 相对 collectionRoot 派生（POSIX 形式），永远跳过 dotdir
+   * 以及 ignoredDirs 里的目录（如 transcriptsDir 子树）。
    * 异常 / 解析失败的单个文件被静默跳过，不影响其它条目（v0 容错策略沿用）。
    */
   private scanDirRecursive(
@@ -314,6 +419,7 @@ export class LibraryService {
       if (e.name.startsWith('.')) continue; // .cache / .git / .obsidian 等
       const abs = path.join(dirAbs, e.name);
       if (e.isDirectory()) {
+        if (this.isIgnoredDir(abs)) continue; // 显式忽略：transcriptsDir 等子树不进索引
         this.scanDirRecursive(abs, collectionRoot, collection, out);
       } else if (e.isFile() && e.name.endsWith('.md')) {
         try {
