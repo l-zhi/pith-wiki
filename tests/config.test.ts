@@ -11,6 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import {
   applyActiveProvider,
   loadConfig,
+  parsePositiveIntEnv,
   parseReadPathsFromEnv,
   resolveProviderEntry,
   type Config,
@@ -487,5 +488,40 @@ describe('PITH_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
 
     expect(() => loadConfig({})).toThrow(/Failed to parse/);
     expect(() => loadConfig({})).toThrow(cfgFile);
+  });
+});
+
+describe('parsePositiveIntEnv — LLM 请求超时解析', () => {
+  it('正整数字符串 → number', () => {
+    expect(parsePositiveIntEnv('60000')).toBe(60000);
+    expect(parsePositiveIntEnv('  90000  ')).toBe(90000);
+  });
+  it('空 / undefined / 非数字 / 非正 / 小数 → undefined（回落默认）', () => {
+    expect(parsePositiveIntEnv(undefined)).toBeUndefined();
+    expect(parsePositiveIntEnv('')).toBeUndefined();
+    expect(parsePositiveIntEnv('abc')).toBeUndefined();
+    expect(parsePositiveIntEnv('0')).toBeUndefined();
+    expect(parsePositiveIntEnv('-5')).toBeUndefined();
+    expect(parsePositiveIntEnv('1.5')).toBeUndefined();
+  });
+});
+
+describe('requestTimeoutMs — 配置链', () => {
+  const original = process.env.PITH_WIKI_TIMEOUT_MS;
+  afterEach(() => {
+    if (original === undefined) delete process.env.PITH_WIKI_TIMEOUT_MS;
+    else process.env.PITH_WIKI_TIMEOUT_MS = original;
+  });
+  it('默认 120_000', () => {
+    delete process.env.PITH_WIKI_TIMEOUT_MS;
+    expect(loadConfig({}).requestTimeoutMs).toBe(120_000);
+  });
+  it('PITH_WIKI_TIMEOUT_MS 覆盖默认', () => {
+    process.env.PITH_WIKI_TIMEOUT_MS = '45000';
+    expect(loadConfig({}).requestTimeoutMs).toBe(45_000);
+  });
+  it('overrides 优先级高于 env', () => {
+    process.env.PITH_WIKI_TIMEOUT_MS = '45000';
+    expect(loadConfig({ requestTimeoutMs: 5000 }).requestTimeoutMs).toBe(5000);
   });
 });
