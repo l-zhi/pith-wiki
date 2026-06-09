@@ -118,7 +118,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
       }
 
       const client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
-      const library = new LibraryService(config.wikiRoot);
+      const library = new LibraryService(config.wikiRoot, { ignoredDirs: [config.outputDir] });
       const hydrator = new HydrationService(client, config.model, library, config.supportsJsonMode);
       // 注意：commander `--no-cache` 会把 opts.cache 解析成 false（默认 true）。
       const cacheConverted = opts.cache !== false && config.cacheConverted;
@@ -297,7 +297,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
     .option('--collection <name>')
     .action((id, opts) => {
       const config = args.configFor();
-      const library = new LibraryService(config.wikiRoot);
+      const library = new LibraryService(config.wikiRoot, { ignoredDirs: [config.outputDir] });
       const entry = library.get(id, opts.collection);
       if (!entry) {
         console.error(chalk.red(`Entry not found: ${id}`));
@@ -324,7 +324,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
     .option('--collection <name>')
     .action((opts) => {
       const config = args.configFor();
-      const library = new LibraryService(config.wikiRoot);
+      const library = new LibraryService(config.wikiRoot, { ignoredDirs: [config.outputDir] });
       const entries = library.list(opts.collection);
       if (entries.length === 0) {
         console.log(chalk.gray('(no entries)'));
@@ -344,7 +344,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
     .option('--max-tokens <n>', 'Token budget.', (v) => parseInt(v, 10), 4000)
     .action((text, opts) => {
       const config = args.configFor();
-      const library = new LibraryService(config.wikiRoot);
+      const library = new LibraryService(config.wikiRoot, { ignoredDirs: [config.outputDir] });
       const assembler = new ContextAssembler(library);
       const result = assembler.query(text, opts.maxTokens);
       if (result.referencedEntries.length === 0) {
