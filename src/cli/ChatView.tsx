@@ -48,6 +48,19 @@ function oneLine(text: string, max = ACTIVITY_MAX): string {
  * 参考 Claude Code 的同款实现思路。
  */
 export function ChatView({ messages, inFlight, activity }: Props) {
+  // 进行中计时器：每秒 +1，inFlight 落下即归零。给用户"在跑还是挂了"的判断依据
+  // ——尤其配合带超时的请求（最长可达 config.requestTimeoutMs）。
+  const [elapsed, setElapsed] = React.useState(0);
+  React.useEffect(() => {
+    if (!inFlight) {
+      setElapsed(0);
+      return;
+    }
+    setElapsed(0);
+    const id = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(id);
+  }, [inFlight]);
+
   return (
     <>
       <Static items={messages}>
@@ -82,6 +95,12 @@ export function ChatView({ messages, inFlight, activity }: Props) {
           ) : (
             <Text color="cyan">thinking…</Text>
           )}
+          {elapsed > 0 ? (
+            <Text color="gray" dimColor>
+              {' '}
+              ({elapsed}s{elapsed >= 10 ? ' · ctrl-c 取消' : ''})
+            </Text>
+          ) : null}
         </Box>
       ) : null}
     </>

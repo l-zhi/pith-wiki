@@ -88,6 +88,13 @@ const ConfigSchema = z.object({
   workspaceRoot: z.string().min(1),
   wikiRoot: z.string().min(1),
   readOnly: z.boolean(),
+  /**
+   * 单次 LLM 请求的超时（毫秒）。默认 120_000（2 分钟）。
+   * OpenAI SDK 自身默认是 10 分钟——对自建 / OpenAI 兼容端点挂起的情况太长，
+   * REPL 会一直转圈直到那时才报错。可在 config.json 或 PITH_WIKI_TIMEOUT_MS 调整。
+   * SDK 仍会按默认重试策略对超时/网络错误重试。
+   */
+  requestTimeoutMs: z.number().int().positive(),
   maxToolPayloadBytes: z.number().int().positive(),
   historyFile: z.string().min(1),
   /**
@@ -144,9 +151,11 @@ const ConfigSchema = z.object({
   watchAutoStart: z.boolean(),
   /**
    * REPL 每次问答自动写入 markdown transcript 的目录。
-   * 默认 `<wikiRoot>/output/transcripts/`：和数字化的 wiki 条目同根，但用子目录
-   * 屏蔽 LibraryService 的 collection 扫描（scanAll 只读 `<wikiRoot>/<collection>/*.md`
-   * 一层，子目录不会被当成 collection）。
+   * 默认 `<wikiRoot>/output/transcripts/`：和数字化的 wiki 条目同根（digest 落
+   * `<wikiRoot>/output/*.md`，被索引）。注意 scanAll 是**递归**的，会一路扫进任意深度
+   * 的子目录——所以光放进子目录并不能屏蔽，必须显式跳过：这个路径作为 ignoredDirs
+   * 传给 LibraryService，把整棵 transcripts 子树排除在扫描 / 检索 / 新鲜度计算之外
+   * （见 src/wiki/library.ts 的 LibraryServiceOptions.ignoredDirs）。
    */
   outputDir: z.string().min(1),
   /** REPL 是否记录 transcript（CLI `--no-transcript` 可关）。默认 true。 */
@@ -190,6 +199,7 @@ export interface ConfigOverrides {
   workspaceRoot?: string;
   wikiRoot?: string;
   readOnly?: boolean;
+  requestTimeoutMs?: number;
   maxToolPayloadBytes?: number;
   additionalReadPaths?: string[];
   queueStatePath?: string;
@@ -218,6 +228,7 @@ export interface ConfigOverrides {
 const DEFAULTS = {
   baseURL: 'https://api.deepseek.com',
   model: 'deepseek-chat',
+  requestTimeoutMs: 120_000,
   maxToolPayloadBytes: 100_000,
   queueConcurrency: 2,
   queueMaxAttempts: 3,
@@ -306,6 +317,16 @@ export function parseReadPathsFromEnv(raw: string | undefined): string[] | undef
 }
 
 /**
+ * 解析 env 里的正整数（如超时毫秒）。空 / 非数字 / 非正 → undefined（交给后续兜底链），
+ * 不抛错：env 写歪不该让整个 CLI 起不来，静默回落到默认更稳妥。
+ */
+export function parsePositiveIntEnv(raw: string | undefined): number | undefined {
+  if (!raw) return undefined;
+  const n = Number(raw.trim());
+  return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+/**
  * CLI 入口的配置加载：读 `.env`、`~/.pith-wiki/config.json`（或 `PITH_WIKI_CONFIG_PATH` 指向的文件）、
  * env 变量，再叠加显式 overrides，zod 校验后返回。
  */
@@ -373,6 +394,11 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
       (process.env.PITH_WIKI_READ_ONLY === 'true' ? true : undefined) ??
       file.readOnly ??
       false,
+    requestTimeoutMs:
+      overrides.requestTimeoutMs ??
+      parsePositiveIntEnv(process.env.PITH_WIKI_TIMEOUT_MS) ??
+      file.requestTimeoutMs ??
+      DEFAULTS.requestTimeoutMs,
     maxToolPayloadBytes:
       overrides.maxToolPayloadBytes ?? file.maxToolPayloadBytes ?? DEFAULTS.maxToolPayloadBytes,
     historyFile: path.join(pithWikiHome(), 'history'),
@@ -391,8 +417,8 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     watchDirs: overrides.watchDirs ?? file.watchDirs ?? [],
     watchAutoStart:
       overrides.watchAutoStart ?? file.watchAutoStart ?? DEFAULTS.watchAutoStart,
-    // 默认放在 <wikiRoot>/output/transcripts/：raw transcripts 和 digest 条目共享 wiki 树根，
-    // 但 transcripts 落在子目录里，不会被 LibraryService 当成 collection 来扫
+    // 默认放在 <wikiRoot>/output/transcripts/：raw transcripts 和 digest 条目共享 wiki 树根。
+    // scanAll 递归扫描，子目录挡不住——这个路径会作为 ignoredDirs 传给 LibraryService 显式跳过。
     outputDir: path.resolve(
       expandHome(
         overrides.outputDir ??
