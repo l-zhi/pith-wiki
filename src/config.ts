@@ -186,6 +186,20 @@ const ConfigSchema = z.object({
    * 每个 skill 是一份 SKILL.md（纯指令，渐进式披露）。实际扫描在 src/skills/ 内做。
    */
   skillDirs: z.array(z.string()).default([]),
+  /**
+   * 数据安全模块总开关。开启后所有 LLM 出站请求经过过滤：block 级规则命中
+   * 拒发，mask 级命中替换为可还原占位符（响应落盘/展示前还原）。
+   * 默认 **true**（安全默认开，显式 opt-out：PITH_WIKI_SECURITY=0 或配置 false）。
+   */
+  securityEnabled: z.boolean().default(true),
+  /**
+   * 安全规则文件列表（绝对路径）。默认双层（与 soulFile/skillDirs 同构）：
+   * `<pithWikiHome>/security.json` + `<workspaceRoot>/security.json`，union 合并
+   * （自定义规则全部生效；preset 冲突时取更严格的）。文件不存在不报错 ——
+   * securityEnabled=true 且无文件时只跑内置 PII 预设（全部 mask）。
+   * 实际读盘 + 编译在 src/security/rules.ts 内做。
+   */
+  securityRulesFiles: z.array(z.string()).default([]),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -223,6 +237,8 @@ export interface ConfigOverrides {
   cacheConverted?: boolean;
   soulFile?: string;
   skillDirs?: string[];
+  securityEnabled?: boolean;
+  securityRulesFiles?: string[];
 }
 
 const DEFAULTS = {
@@ -256,6 +272,17 @@ function loadFileConfig(): Partial<Config> {
   } catch (err) {
     throw new Error(`Failed to parse ${file}: ${(err as Error).message}`);
   }
+}
+
+/**
+ * 三态布尔 env 解析：'true'/'1' → true，'false'/'0' → false，其余（含未设置）→ undefined。
+ * undefined 让优先级链继续往下落（file → 默认值）。默认开的开关需要显式 off 入口，
+ * 单靠 truthy 判断做不到。
+ */
+function parseBoolEnv(raw: string | undefined): boolean | undefined {
+  if (raw === 'true' || raw === '1') return true;
+  if (raw === 'false' || raw === '0') return false;
+  return undefined;
 }
 
 /**
@@ -370,6 +397,19 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     defaultSkillDirs;
   const skillDirs = skillDirsRaw.map((p) => path.resolve(expandHome(p)));
 
+  // securityRulesFiles：CLI flag > env (PITH_WIKI_SECURITY_RULES) > 配置文件 > 默认双层。
+  // 与 skillDirs 同构：user-global 在前、project-local 在后；合并语义在 rules.ts（union）。
+  const defaultSecurityRulesFiles = [
+    path.join(pithWikiHome(), 'security.json'),
+    path.join(path.resolve(workspaceRoot), 'security.json'),
+  ];
+  const securityRulesFilesRaw =
+    overrides.securityRulesFiles ??
+    parseReadPathsFromEnv(process.env.PITH_WIKI_SECURITY_RULES) ??
+    file.securityRulesFiles ??
+    defaultSecurityRulesFiles;
+  const securityRulesFiles = securityRulesFilesRaw.map((p) => path.resolve(expandHome(p)));
+
   // 队列相关默认路径都在 ~/.pith-wiki/queue/ 下。
   // 优先级与其他字段一致：CLI flag > 配置文件 > 默认。env 暂不引入，避免接口表面过大。
   const defaultQueueDir = path.join(pithWikiHome(), 'queue');
@@ -437,6 +477,9 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     soulFile:
       overrides.soulFile ?? process.env.PITH_WIKI_SOUL ?? file.soulFile ?? undefined,
     skillDirs,
+    securityEnabled:
+      overrides.securityEnabled ?? parseBoolEnv(process.env.PITH_WIKI_SECURITY) ?? file.securityEnabled ?? true,
+    securityRulesFiles,
     // 顶层 supportsJsonMode 仅在没用 provider map 的 v0 场景下直接生效；
     // 用了 activeProvider 时会被 applyActiveProvider 用 entry 的同名字段覆盖。
     // 这里走 file 字段（无 CLI/env 入口，结构小且改动频率低）。
