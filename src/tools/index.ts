@@ -90,7 +90,7 @@ export function buildContext(
   library?: LibraryService,
   extras: BuildContextExtras = {},
 ): ToolContext {
-  const lib = library ?? new LibraryService(config.wikiRoot);
+  const lib = library ?? new LibraryService(config.wikiRoot, { ignoredDirs: [config.outputDir] });
   const assembler = new ContextAssembler(lib);
   const hydrator = new HydrationService(client, config.model, lib, config.supportsJsonMode);
   let registry: ConverterRegistry;

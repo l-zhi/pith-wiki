@@ -429,6 +429,57 @@ describe('LibraryService — 扫描器容错', () => {
     // 用一个变量消解未使用警告
     expect(lib.list()).toHaveLength(1);
   });
+
+  it('ignoredDirs：transcriptsDir 子树里 id 合法 + 带 frontmatter 的 .md 也不进索引', () => {
+    // 防御性加固回归：raw transcripts 落在 <wikiRoot>/output/transcripts/，与被索引的
+    // digest 条目（<wikiRoot>/output/*.md）共享 `output` collection 树根，scanAll 递归会
+    // 一路扫进去。过去靠"transcript 文件名含大写 T/Z 违反 ID_RE → 解析抛错被静默跳过"
+    // 顺手挡住——但那是意外不是设计。这里特意造一个 **id 合法且带完整 frontmatter** 的
+    // .md（绕开 ID_RE 那层意外防线），断言它仍不会被 ignoredDirs 之外的逻辑灌进索引。
+    const transcriptsDir = path.join(tmpDir, 'output', 'transcripts');
+    const lib = new LibraryService(tmpDir, {
+      persist: false,
+      ignoredDirs: [transcriptsDir],
+    });
+
+    // 同一个 `output` collection 下的合法 digest 条目（顶层，应被索引）。
+    lib.put(makeEntry({ id: 'real-digest', collection: 'output' }));
+
+    // transcripts 子树里塞一个完全合法、可被 EntrySchema.parse 收纳的条目。
+    fs.mkdirSync(transcriptsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(transcriptsDir, 'leaked-transcript.md'),
+      [
+        '---',
+        'id: leaked-transcript',
+        'collection: output',
+        'title: 一段会话记录',
+        'summary: 不该进检索的 raw transcript',
+        'tags: []',
+        'links: []',
+        'source:',
+        '  type: inline',
+        'updated: 2026-04-30T00:00:00Z',
+        '---',
+        '# 会话',
+        '林闻道：……',
+      ].join('\n'),
+    );
+
+    // 第二个实例全量 scanAll（persist=false 强制走 scan，绕过任何 in-memory cache）。
+    const fresh = new LibraryService(tmpDir, {
+      persist: false,
+      ignoredDirs: [transcriptsDir],
+    });
+    const ids = fresh.list().map((e) => e.id);
+    // digest 条目在；transcript 不在——证明是「整棵 transcripts 子树被显式跳过」，
+    // 而非「整个 output collection 被屏蔽」。
+    expect(ids).toEqual(['real-digest']);
+    expect(fresh.list('output').map((e) => e.id)).toEqual(['real-digest']);
+    expect(fresh.get('leaked-transcript')).toBeNull();
+    // 文件确实存在，只是被有意忽略。
+    expect(fs.existsSync(path.join(transcriptsDir, 'leaked-transcript.md'))).toBe(true);
+  });
 });
 
 /**
@@ -446,6 +497,7 @@ describe('LibraryService — index.json 持久化', () => {
     return {
       id: o.id ?? 'x',
       collection: o.collection ?? 'tech',
+      subpath: o.subpath,
       title: o.title ?? 'x',
       summary: o.summary ?? '',
       tags: o.tags ?? [],
@@ -456,7 +508,7 @@ describe('LibraryService — index.json 持久化', () => {
     };
   }
 
-  it('flushIndex 后磁盘上出现 index.json，version=1', () => {
+  it('flushIndex 后磁盘上出现 index.json，version=2，含 collectionMtimes', () => {
     const lib = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
     lib.put(makeEntry({ id: 'a', title: 'Alpha' }));
     lib.put(makeEntry({ id: 'b', title: 'Beta', collection: 'reading' }));
@@ -466,10 +518,13 @@ describe('LibraryService — index.json 持久化', () => {
     const file = path.join(tmpDir, 'index.json');
     expect(fs.existsSync(file)).toBe(true);
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    expect(parsed.version).toBe(1);
+    expect(parsed.version).toBe(2);
     expect(parsed.entries).toHaveLength(2);
     const ids = (parsed.entries as Entry[]).map((e) => e.id).sort();
     expect(ids).toEqual(['a', 'b']);
+    // collectionMtimes 应覆盖两个 collection，且为正数 mtime
+    expect(Object.keys(parsed.collectionMtimes).sort()).toEqual(['reading', 'tech']);
+    expect(parsed.collectionMtimes.tech).toBeGreaterThan(0);
   });
 
   it('第二个实例直接从 index.json 读 entries，跳过 scanAll', () => {
@@ -566,26 +621,72 @@ describe('LibraryService — index.json 持久化', () => {
   });
 
   it('磁盘 cache schema 兼容：缺字段的旧 cache 被拒绝重建', () => {
-    // 写一个 entries 字段缺 title（违反 EntrySchema）的 index.json
-    fs.mkdirSync(tmpDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(tmpDir, 'index.json'),
-      JSON.stringify({
-        version: 1,
-        savedAt: new Date().toISOString(),
-        entries: [{ id: 'broken' /* 缺 title 等必填 */ }],
-      }),
-    );
-    // 同时建一个真实 .md，验证退化路径能跑通
+    // 先建好真实 .md，再用此刻的 tech mtime 写 index.json——让新鲜度检查通过，
+    // 确保拒绝点真的发生在 EntrySchema 校验（broken 条目缺 title），而不是提前因 mtime/版本被拒。
     fs.mkdirSync(path.join(tmpDir, 'tech'), { recursive: true });
     fs.writeFileSync(
       path.join(tmpDir, 'tech', 'real.md'),
       '---\nid: real\ntitle: Real\nupdated: 2026-04-30T00:00:00Z\nsource:\n  type: inline\n---\n# Real\nbody\n',
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, 'index.json'),
+      JSON.stringify({
+        version: 2,
+        savedAt: new Date().toISOString(),
+        collectionMtimes: { tech: fs.statSync(path.join(tmpDir, 'tech')).mtimeMs },
+        entries: [{ id: 'broken' /* 缺 title 等必填 */ }],
+      }),
     );
 
     const lib = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
     const got = lib.list();
     // schema 校验失败 → 拒绝 cache → scanAll → 拿到 real
     expect(got.map((e) => e.id)).toEqual(['real']);
+  });
+
+  it('深层子目录新增 .md（顶层 collection 目录 mtime 不变）→ 仍侦测并 scanAll（方案3回归）', async () => {
+    // 复刻线上 bug：文件埋在 tech/x/y/z/ 四层深，新增它只 bump 叶子目录 mtime，
+    // 顶层 tech/ 的 mtime 不动。旧实现只看 tech/ mtime → 误判 fresh → 新条目隐身。
+    const writer = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    writer.put(makeEntry({ id: 'a', collection: 'tech', subpath: 'x/y/z' }));
+    writer.list();
+    writer.flushIndex();
+
+    // mtime 分辨率保险：确保叶子目录的新 mtime 严格大于存档值
+    await new Promise((r) => setTimeout(r, 20));
+
+    // 直接往叶子目录写新文件（绕过 put），bump 叶子 mtime
+    const leafDir = path.join(tmpDir, 'tech', 'x', 'y', 'z');
+    fs.writeFileSync(
+      path.join(leafDir, 'b.md'),
+      '---\nid: b\ntitle: DeepAdd\nsubpath: x/y/z\nupdated: 2026-04-30T00:00:00Z\nsource:\n  type: inline\n---\n# B\n林闻道\n',
+    );
+    // 把顶层 collection 目录 mtime 摁回过去，模拟"顶层 mtime 从不冒泡"的线上实况——
+    // 方案3 走子树最深 mtime，不该依赖顶层 mtime 也能抓到。
+    const past = new Date('2000-01-01T00:00:00Z');
+    fs.utimesSync(path.join(tmpDir, 'tech'), past, past);
+
+    const reader = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    const ids = reader
+      .list()
+      .map((e) => e.id)
+      .sort();
+    expect(ids).toEqual(['a', 'b']);
+  });
+
+  it('版本升级：旧 version=1 索引被拒、退化为 scanAll', () => {
+    fs.mkdirSync(path.join(tmpDir, 'tech'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, 'tech', 'real.md'),
+      '---\nid: real\ntitle: Real\nupdated: 2026-04-30T00:00:00Z\nsource:\n  type: inline\n---\n# Real\nbody\n',
+    );
+    // 老格式：有 version=1、无 collectionMtimes
+    fs.writeFileSync(
+      path.join(tmpDir, 'index.json'),
+      JSON.stringify({ version: 1, savedAt: new Date().toISOString(), entries: [] }),
+    );
+
+    const lib = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
+    expect(lib.list().map((e) => e.id)).toEqual(['real']);
   });
 });

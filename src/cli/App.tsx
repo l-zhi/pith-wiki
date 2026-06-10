@@ -126,7 +126,10 @@ export function App({ config: initialConfig }: Props) {
   // /digest 的 hydrator）和后台 queue worker / watcher 都通过同一个 library 写读，
   // in-memory cache 天然同步。worker 刚 ingest 的新条目，下一秒 wiki_list 就能看到；
   // index.json 也只有一个 owner 在写，不会两份 cache 互相覆盖。
-  const library = useMemo(() => new LibraryService(config.wikiRoot), [config.wikiRoot]);
+  const library = useMemo(
+    () => new LibraryService(config.wikiRoot, { ignoredDirs: [config.outputDir] }),
+    [config.wikiRoot, config.outputDir],
+  );
 
   // 转换器注册表 + 结果缓存：整个 REPL session 共用一份。
   // worker / watcher / agent 工具上下文都拿同一份；watcher 据此动态生成 chokidar glob，
