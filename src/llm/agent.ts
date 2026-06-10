@@ -244,6 +244,7 @@ export class Agent {
 
     try {
     let finalText = '';
+    let answered = false;
     let safety = 0;
     while (safety++ < this.maxSteps) {
       let completion: ChatCompletion;
@@ -317,6 +318,7 @@ export class Agent {
 
       if (toolCalls.length === 0) {
         finalText = body;
+        answered = true;
         if (body) events.onAssistantText?.({ text: body, final: true });
         break;
       }
@@ -329,10 +331,84 @@ export class Agent {
       }
     }
 
+    // 跑满 maxSteps 仍未给出"不带 tool_call 的正式答案"：模型还想继续调工具，但被上限拦下。
+    // 不能静默返回空串（用户只会看到 spinner 停下、没有任何回答，像卡死）。
+    // 强制收尾一轮：不再提供 tools，让模型基于已收集到的信息直接作答。
+    if (!answered) {
+      finalText = await this.forceFinalAnswer(events, opts.signal);
+    }
+
     return finalText;
     } finally {
       this.currentScope = null;
     }
+  }
+
+  /**
+   * tool loop 触顶后的兜底收尾：追加一条系统提示要求"别再调工具、直接作答"，
+   * 然后发一次**不带 tools** 的请求拿到正式答案。即便如此仍空，则抛 AgentError，
+   * 绝不让 send() 返回空串（无声失败是最差的体验）。
+   */
+  private async forceFinalAnswer(events: AgentEvents, signal?: AbortSignal): Promise<string> {
+    this.messages.push({
+      role: 'user',
+      content:
+        `[已达到工具调用轮数上限（${this.maxSteps} 轮）。请不要再调用任何工具，` +
+        `直接基于目前已经收集到的信息给出你能给出的最佳回答；` +
+        `若信息确实不足，简要说明已知部分以及还缺什么。]`,
+    });
+
+    let completion: ChatCompletion;
+    try {
+      completion = await this.client.chat.completions.create(
+        {
+          model: this.model,
+          messages: this.messages,
+          // 关键：不传 tools，模型无从再发起 tool_call，必然产出文本（或空）。
+          stream: false,
+        },
+        { signal },
+      );
+    } catch (err) {
+      const e = err as { status?: number; message?: string; name?: string };
+      if (e.name === 'AbortError') throw err;
+      throw new AgentError(classifyError(e), e.message ?? 'LLM request failed');
+    }
+
+    const choice = completion.choices[0];
+    if (!choice) throw new AgentError('model_error', 'No choice returned by model');
+    if (completion.usage) {
+      events.onUsage?.({
+        inputTokens: completion.usage.prompt_tokens ?? 0,
+        outputTokens: completion.usage.completion_tokens ?? 0,
+      });
+    }
+
+    const msg = choice.message;
+    const m = msg as unknown as Record<string, unknown>;
+    const fieldReasoning =
+      typeof m.reasoning_content === 'string'
+        ? m.reasoning_content
+        : typeof m.thinking === 'string'
+          ? m.thinking
+          : null;
+    const rawContent = msg.content ?? '';
+    this.messages.push({ role: 'assistant', content: rawContent });
+
+    const split = splitThinking(rawContent);
+    const thinking = fieldReasoning ?? split.thinking;
+    if (thinking) events.onThinking?.({ text: thinking, source: fieldReasoning ? 'field' : 'tag' });
+    const body = fieldReasoning ? rawContent.trim() : split.body;
+
+    if (body) {
+      events.onAssistantText?.({ text: body, final: true });
+      return body;
+    }
+    throw new AgentError(
+      'model_error',
+      `Reached the ${this.maxSteps}-step tool-call limit without a final answer. ` +
+        `Try rephrasing or narrowing the question, or raise maxSteps.`,
+    );
   }
 
   /**
