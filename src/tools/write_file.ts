@@ -8,7 +8,7 @@ const params = z.object({
   path: z
     .string()
     .describe(
-      'Target path, relative to the wiki output dir (<wikiRoot>/output). Writes are confined there — you cannot write to the current working directory or project.',
+      'File name or sub-path INSIDE the wiki output dir (<wikiRoot>/output). Give just the file (e.g. "report.html") or a sub-path (e.g. "books/三体.md") — do NOT prefix with "output/", you are already inside it. Writes are confined here.',
     ),
   content: z.string().describe('Full file content to write. Existing file is overwritten.'),
 });
@@ -16,7 +16,7 @@ const params = z.object({
 export const writeFileTool: ToolDef<typeof params> = {
   name: 'write_file',
   description:
-    "Write a UTF-8 text file into the wiki output directory (<wikiRoot>/output). Paths are relative to and confined to that dir. No approval prompt — the output dir is pith-wiki's own scratch space, not the user's working directory.",
+    "Write a UTF-8 text file into the wiki output directory (<wikiRoot>/output). The `path` is relative to that dir (don't include an \"output/\" prefix) and confined to it. No approval prompt — the output dir is pith-wiki's own scratch space, not the user's working directory.",
   parameters: params,
   handler: async ({ path: inputPath, content }, ctx) => {
     let safe: string;
@@ -25,7 +25,14 @@ export const writeFileTool: ToolDef<typeof params> = {
       // 不污染用户运行 pith-wiki 的当前目录/项目。既然写不出这个受控目录，就不再
       // 逐次审批（审批本是防乱写用户文件；收敛后已无此风险，免审批更顺手）。
       const writeRoot = path.join(ctx.config.wikiRoot, 'output');
-      safe = resolveSafePath(inputPath, 'write', {
+      // 防呆：模型/skill 常给 "output/xxx"（以为相对 wiki 根），而写入已在 output 内，
+      // 直接拼会得到 output/output/xxx。剥掉相对路径开头与 output 同名的冗余一层。
+      let rel = inputPath;
+      if (!path.isAbsolute(rel)) {
+        const segs = rel.split(/[/\\]+/).filter(Boolean);
+        if (segs.length > 1 && segs[0] === 'output') rel = segs.slice(1).join('/');
+      }
+      safe = resolveSafePath(rel, 'write', {
         workspaceRoot: ctx.config.workspaceRoot,
         wikiRoot: ctx.config.wikiRoot,
         writeRoot,
