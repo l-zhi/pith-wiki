@@ -1,8 +1,9 @@
 /**
  * http_request 工具 + skill http_allow 白名单 单测。
  *
- * 覆盖白名单 / 审批(y·a·n)/ https-only / 鉴权注入 / 缺 key / 跨域重定向拒绝 /
- * 截断,以及 frontmatter http_allow 解析与 allowedHosts() 映射。fetch 用 vi mock。
+ * 覆盖白名单 / https-only / 鉴权注入 / 缺 key / 跨域重定向拒绝 / 截断，以及
+ * frontmatter http_allow 解析与 allowedHosts() 映射。fetch 用 vi mock。
+ * 注意：声明即授权 —— host 在 http_allow 即放行，无运行时审批。
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -11,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildSkillRegistry, loadSkill } from '../src/skills/index.js';
 import { SkillRegistry } from '../src/skills/registry.js';
 import { httpRequestTool } from '../src/tools/http_request.js';
-import type { ToolContext, ApprovalAnswer } from '../src/tools/index.js';
+import type { ToolContext } from '../src/tools/index.js';
 import type { HttpRequestResult } from '../src/tools/http_request.js';
 import type { HttpAllowRule } from '../src/skills/types.js';
 
@@ -46,25 +47,12 @@ function registryWith(rules: HttpAllowRule[]): SkillRegistry {
   return reg;
 }
 
-function makeCtx(opts: {
-  registry: SkillRegistry;
-  approval?: ApprovalAnswer;
-  approvedHosts?: Set<string>;
-  noApprovalChannel?: boolean;
-}): { ctx: ToolContext; approvals: string[] } {
-  const approvals: string[] = [];
-  const ctx = {
+/** 声明即授权后，ToolContext 只需 config + skillRegistry。 */
+function makeCtx(registry: SkillRegistry): ToolContext {
+  return {
     config: { httpTimeoutMs: 30_000, maxToolPayloadBytes: 100_000 },
-    skillRegistry: opts.registry,
-    approvedHosts: opts.approvedHosts ?? new Set<string>(),
-    requestNetworkApproval: opts.noApprovalChannel
-      ? undefined
-      : async (host: string, preview: string) => {
-          approvals.push(preview);
-          return opts.approval ?? 'yes';
-        },
+    skillRegistry: registry,
   } as unknown as ToolContext;
-  return { ctx, approvals };
 }
 
 /** mock 一个 fetch，返回固定响应；记录被调用的 url/init。 */
@@ -85,30 +73,37 @@ function stubFetch(
   return { calls };
 }
 
+const bearer = (host: string, auth_env?: string): HttpAllowRule => ({
+  host,
+  ...(auth_env ? { auth_env } : {}),
+  auth_header: 'Authorization',
+  auth_scheme: 'Bearer',
+});
+
 const run = (args: Record<string, unknown>, ctx: ToolContext) =>
   httpRequestTool.handler(args as never, ctx) as Promise<HttpRequestResult>;
 
 describe('http_request — 白名单 + 协议', () => {
   it('host 不在白名单 → 拒绝，不发请求', async () => {
     const { calls } = stubFetch();
-    const { ctx } = makeCtx({ registry: registryWith([{ host: 'i.weread.qq.com', auth_header: 'Authorization', auth_scheme: 'Bearer' }]) });
-    const r = await run({ url: 'https://evil.com/x', method: 'GET' }, ctx);
+    const r = await run({ url: 'https://evil.com/x', method: 'GET' }, makeCtx(registryWith([bearer('i.weread.qq.com')])));
     expect(r.ok).toBe(false);
     expect(r.error).toContain('not declared');
     expect(calls).toHaveLength(0);
   });
 
   it('非 https → 拒绝', async () => {
-    const { ctx } = makeCtx({ registry: registryWith([{ host: 'i.weread.qq.com', auth_header: 'Authorization', auth_scheme: 'Bearer' }]) });
-    const r = await run({ url: 'http://i.weread.qq.com/x' }, ctx);
+    const r = await run({ url: 'http://i.weread.qq.com/x' }, makeCtx(registryWith([bearer('i.weread.qq.com')])));
     expect(r.ok).toBe(false);
     expect(r.error).toContain('https');
   });
 
-  it('白名单内 + 审批通过 → 发请求', async () => {
+  it('白名单内 → 直接发请求（声明即授权，无审批）', async () => {
     const { calls } = stubFetch({ text: '{"books":[]}' });
-    const { ctx } = makeCtx({ registry: registryWith([{ host: 'api.example.com', auth_header: 'Authorization', auth_scheme: 'Bearer' }]) });
-    const r = await run({ url: 'https://api.example.com/v1', method: 'POST', body: '{"q":1}' }, ctx);
+    const r = await run(
+      { url: 'https://api.example.com/v1', method: 'POST', body: '{"q":1}' },
+      makeCtx(registryWith([bearer('api.example.com')])),
+    );
     expect(r.ok).toBe(true);
     expect(r.status).toBe(200);
     expect(r.body).toContain('books');
@@ -121,12 +116,10 @@ describe('http_request — 鉴权注入', () => {
   it('按 rule 从 env 注入 Bearer，模型未传 key', async () => {
     process.env.TEST_TOKEN = 'secret-123';
     const { calls } = stubFetch();
-    const { ctx } = makeCtx({
-      registry: registryWith([
-        { host: 'api.example.com', auth_env: 'TEST_TOKEN', auth_header: 'Authorization', auth_scheme: 'Bearer' },
-      ]),
-    });
-    await run({ url: 'https://api.example.com/x', method: 'POST', body: '{}' }, ctx);
+    await run(
+      { url: 'https://api.example.com/x', method: 'POST', body: '{}' },
+      makeCtx(registryWith([bearer('api.example.com', 'TEST_TOKEN')])),
+    );
     const headers = calls[0].init.headers as Record<string, string>;
     expect(headers['Authorization']).toBe('Bearer secret-123');
     expect(headers['Content-Type']).toBe('application/json');
@@ -135,73 +128,30 @@ describe('http_request — 鉴权注入', () => {
   it('auth_scheme="" → 裸值（如 X-API-Key）', async () => {
     process.env.TEST_TOKEN = 'k';
     const { calls } = stubFetch();
-    const { ctx } = makeCtx({
-      registry: registryWith([
-        { host: 'api.example.com', auth_env: 'TEST_TOKEN', auth_header: 'X-API-Key', auth_scheme: '' },
-      ]),
-    });
-    await run({ url: 'https://api.example.com/x' }, ctx);
+    const reg = registryWith([
+      { host: 'api.example.com', auth_env: 'TEST_TOKEN', auth_header: 'X-API-Key', auth_scheme: '' },
+    ]);
+    await run({ url: 'https://api.example.com/x' }, makeCtx(reg));
     const headers = calls[0].init.headers as Record<string, string>;
     expect(headers['X-API-Key']).toBe('k');
   });
 
   it('声明了 auth_env 但未设置 → 拒绝并提示', async () => {
     const { calls } = stubFetch();
-    const { ctx } = makeCtx({
-      registry: registryWith([
-        { host: 'api.example.com', auth_env: 'MISSING_TOKEN', auth_header: 'Authorization', auth_scheme: 'Bearer' },
-      ]),
-    });
-    const r = await run({ url: 'https://api.example.com/x' }, ctx);
+    const r = await run(
+      { url: 'https://api.example.com/x' },
+      makeCtx(registryWith([bearer('api.example.com', 'MISSING_TOKEN')])),
+    );
     expect(r.ok).toBe(false);
     expect(r.error).toContain('MISSING_TOKEN');
     expect(calls).toHaveLength(0);
   });
 });
 
-describe('http_request — 审批闸门', () => {
-  it('答 no → 不发请求', async () => {
-    const { calls } = stubFetch();
-    const { ctx } = makeCtx({
-      registry: registryWith([{ host: 'api.example.com', auth_header: 'Authorization', auth_scheme: 'Bearer' }]),
-      approval: 'no',
-    });
-    const r = await run({ url: 'https://api.example.com/x' }, ctx);
-    expect(r.ok).toBe(false);
-    expect(calls).toHaveLength(0);
-  });
-
-  it('答 always → 入 approvedHosts，二次不再问', async () => {
-    stubFetch();
-    const approvedHosts = new Set<string>();
-    const { ctx, approvals } = makeCtx({
-      registry: registryWith([{ host: 'api.example.com', auth_header: 'Authorization', auth_scheme: 'Bearer' }]),
-      approval: 'always',
-      approvedHosts,
-    });
-    await run({ url: 'https://api.example.com/a' }, ctx);
-    expect(approvedHosts.has('api.example.com')).toBe(true);
-    await run({ url: 'https://api.example.com/b' }, ctx);
-    expect(approvals).toHaveLength(1);
-  });
-
-  it('无审批通道（非交互）→ 拒绝', async () => {
-    stubFetch();
-    const { ctx } = makeCtx({
-      registry: registryWith([{ host: 'api.example.com', auth_header: 'Authorization', auth_scheme: 'Bearer' }]),
-      noApprovalChannel: true,
-    });
-    const r = await run({ url: 'https://api.example.com/x' }, ctx);
-    expect(r.ok).toBe(false);
-    expect(r.error).toContain('REPL');
-  });
-});
-
 describe('http_request — 安全兜底', () => {
   it('跨域重定向到白名单外 host → 拒绝', async () => {
     stubFetch({ url: 'https://evil.com/landed' }); // res.url 落到别处
-    const { ctx } = makeCtx({ registry: registryWith([{ host: 'api.example.com', auth_header: 'Authorization', auth_scheme: 'Bearer' }]) });
-    const r = await run({ url: 'https://api.example.com/x' }, ctx);
+    const r = await run({ url: 'https://api.example.com/x' }, makeCtx(registryWith([bearer('api.example.com')])));
     expect(r.ok).toBe(false);
     expect(r.error).toContain('redirected');
   });
@@ -210,9 +160,7 @@ describe('http_request — 安全兜底', () => {
     stubFetch({ text: 'x'.repeat(5000) });
     const ctx = {
       config: { httpTimeoutMs: 30_000, maxToolPayloadBytes: 100 },
-      skillRegistry: registryWith([{ host: 'api.example.com', auth_header: 'Authorization', auth_scheme: 'Bearer' }]),
-      approvedHosts: new Set(['api.example.com']),
-      requestNetworkApproval: async () => 'yes' as const,
+      skillRegistry: registryWith([bearer('api.example.com')]),
     } as unknown as ToolContext;
     const r = await run({ url: 'https://api.example.com/x' }, ctx);
     expect(r.body!.length).toBeLessThan(500);

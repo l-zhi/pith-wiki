@@ -43,10 +43,6 @@ export interface ToolContext {
    * write_file 的"子命令旁路"先例。
    */
   requestCommandApproval?: (command: string, argvPreview: string) => Promise<ApprovalAnswer>;
-  /** 会话内已放行的网络 host（http_request 审批答 `a` 后加入）。 */
-  approvedHosts: Set<string>;
-  /** 网络访问审批通道。仅 REPL 注入；缺省 → http_request 拒绝（同 requestCommandApproval）。 */
-  requestNetworkApproval?: (host: string, preview: string) => Promise<ApprovalAnswer>;
   /** 转换器注册表。批量 ingest / 队列 worker / wiki_ingest 工具都从这里取。 */
   converterRegistry: ConverterRegistry;
   /** 转换结果缓存（按 cacheConverted 决定是 FS 还是 Null 实现）。 */
@@ -89,8 +85,6 @@ export interface BuildContextExtras {
   skillRegistry?: SkillRegistry;
   /** 命令执行审批通道（仅 REPL 提供）。见 ToolContext.requestCommandApproval。 */
   requestCommandApproval?: ToolContext['requestCommandApproval'];
-  /** 网络访问审批通道（仅 REPL 提供）。见 ToolContext.requestNetworkApproval。 */
-  requestNetworkApproval?: ToolContext['requestNetworkApproval'];
 }
 
 export function buildContext(
@@ -135,8 +129,6 @@ export function buildContext(
     requestApproval,
     approvedCommands: new Set(),
     requestCommandApproval: extras.requestCommandApproval,
-    approvedHosts: new Set(),
-    requestNetworkApproval: extras.requestNetworkApproval,
     converterRegistry: registry,
     converterCache: cache,
     skillRegistry: extras.skillRegistry ?? new SkillRegistry(),

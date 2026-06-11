@@ -6,11 +6,12 @@ import { truncatePayload } from './safety.js';
  * http_request:向已安装 skill 声明过的 host 发 HTTP 请求(weread 网关这类
  * "prompt skill + HTTP API" 的执行底座)。
  *
- * 三层闸门(对齐 run_command,详见 docs/adr/0004-cli-skill-exec.md):
+ * 两层闸门(详见 docs/adr/0004-cli-skill-exec.md):
  *   1. 白名单 —— url 的 host 必须 ∈ skillRegistry.allowedHosts()。空 map → 工具不挂载。
- *   2. 审批 —— 每个新 host 首次访问经 ctx.requestNetworkApproval(REPL only;非交互
- *      路径无通道 → 拒绝)。a 按 host 粒度入 approvedHosts。
- *   3. 安全 —— 仅 https;鉴权由工具按 host rule 从环境变量注入,模型看不到也传不了
+ *      **声明即授权**:host 写进某个已装 skill 的 http_allow(安装时已打授权提示)
+ *      即视为放行,运行时不再逐次审批 —— 不同于 run_command(能跑任意本地命令、危险面
+ *      大,仍审批);http 受 host 白名单 + https + 鉴权注入 + 跨域拒绝多重约束,危险面小。
+ *   2. 安全 —— 仅 https;鉴权由工具按 host rule 从环境变量注入,模型看不到也传不了
  *      密钥;跨域重定向拒绝(防 key 跟着 302 跑到别的 host);超时;响应 truncate。
  */
 
@@ -40,7 +41,7 @@ export const httpRequestTool: ToolDef<typeof params> = {
   name: 'http_request',
   description:
     'Make an HTTP request to a host declared in an installed skill\'s http_allow. ' +
-    'Only allowlisted hosts work; each host needs user approval once per session. ' +
+    'Only allowlisted hosts work (declaring a host in a skill is the authorization — no per-request approval). ' +
     'Authentication is injected automatically from configured env vars — never put API keys in the url or body. ' +
     'HTTPS only. Returns the response status and body (truncated if large).',
   parameters: params,
@@ -82,19 +83,7 @@ export const httpRequestTool: ToolDef<typeof params> = {
     }
     if (body !== undefined) headers['Content-Type'] = content_type ?? 'application/json';
 
-    // 闸门 2:审批(每个新 host 一次)
-    if (!ctx.approvedHosts.has(parsedUrl.host)) {
-      if (!ctx.requestNetworkApproval) {
-        return {
-          ok: false,
-          error: 'Network access requires interactive approval and is only available in the REPL.',
-        };
-      }
-      const preview = `${method} ${url}`;
-      const answer = await ctx.requestNetworkApproval(parsedUrl.host, preview);
-      if (answer === 'no') return { ok: false, error: 'User declined the network request.' };
-      if (answer === 'always') ctx.approvedHosts.add(parsedUrl.host);
-    }
+    // 声明即授权:host 已在白名单(闸门 1)即放行,不再运行时审批。
 
     const timeoutMs = timeout_ms ?? ctx.config.httpTimeoutMs;
     const maxBytes = ctx.config.maxToolPayloadBytes;
