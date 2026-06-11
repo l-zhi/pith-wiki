@@ -7,6 +7,7 @@ import { createClient } from '../llm/client.js';
 import { composeSystemPrompt, loadSoul, type LoadedSoul } from '../llm/soul.js';
 import { buildContext } from '../tools/index.js';
 import { makeSkillTool } from '../tools/skill.js';
+import { runCommandTool } from '../tools/run_command.js';
 import { buildSkillRegistry, SkillRegistry } from '../skills/index.js';
 import {
   ensureOutputDir,
@@ -322,8 +323,26 @@ export function App({ config: initialConfig }: Props) {
     () => (path: string, preview: string) =>
       new Promise<'yes' | 'no' | 'always'>((resolve) => {
         setApproval({
+          kind: 'write',
           path,
           preview,
+          resolve: (answer) => {
+            setApproval(null);
+            resolve(answer);
+          },
+        });
+      }),
+    [],
+  );
+
+  // 命令执行审批：与写入审批共用 setApproval 队列，靠 kind='exec' 区分文案。
+  const requestCommandApproval = useMemo(
+    () => (command: string, argvPreview: string) =>
+      new Promise<'yes' | 'no' | 'always'>((resolve) => {
+        setApproval({
+          kind: 'exec',
+          path: command,
+          preview: argvPreview,
           resolve: (answer) => {
             setApproval(null);
             resolve(answer);
@@ -363,12 +382,15 @@ export function App({ config: initialConfig }: Props) {
       converterRegistry: converters.registry,
       converterCache: converters.cache,
       skillRegistry,
+      requestCommandApproval,
     });
     const systemPrompt = composeSystemPrompt(defaultSystemPrompt, soul);
     // skill 走单个 `skill` 工具（仅当存在 skill 时才挂，避免空 catalog 的死工具）。
     const extraTools = skillRegistry.list().length > 0 ? [makeSkillTool(skillRegistry)] : [];
+    // run_command 仅当有 skill 声明过可执行命令时才挂（否则是个永远失败的死工具）。
+    if (skillRegistry.allowedCommands().size > 0) extraTools.push(runCommandTool);
     return new Agent(client, config.model, ctx, { systemPrompt, extraTools });
-  }, [config, client, requestApproval, library, converters, soul, skillRegistry]);
+  }, [config, client, requestApproval, requestCommandApproval, library, converters, soul, skillRegistry]);
 
   const append = (msg: Omit<DisplayMessage, 'id'>) =>
     setMessages((prev) => [...prev, { ...msg, id: nextId() }]);

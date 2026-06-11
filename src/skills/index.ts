@@ -8,8 +8,10 @@ export { SkillRegistry } from './registry.js';
 export {
   type Skill,
   type SkillFrontmatter,
+  type SkillRequirement,
   SkillFrontmatterSchema,
   SKILL_NAME_RE,
+  COMMAND_BIN_RE,
 } from './types.js';
 
 const SKILL_FILE = 'SKILL.md';
@@ -69,5 +71,12 @@ export function loadSkill(skillDir: string): Skill {
   const fm = SkillFrontmatterSchema.parse(parsed.data);
   const body = parsed.content.trim();
   if (!body) throw new Error('skill has an empty body');
-  return { name: fm.name, description: fm.description, body, dir: skillDir };
+  return {
+    name: fm.name,
+    description: fm.description,
+    body,
+    dir: skillDir,
+    commands: fm.commands,
+    requires: fm.requires,
+  };
 }
