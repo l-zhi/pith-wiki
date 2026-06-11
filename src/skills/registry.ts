@@ -38,4 +38,14 @@ export class SkillRegistry {
     if (skills.length === 0) return '';
     return skills.map((s) => `- ${s.name}: ${s.description}`).join('\n');
   }
+
+  /**
+   * 所有已注册 skill 声明的可执行二进制并集 —— run_command 工具的白名单。
+   * 空集 = 没有任何 skill 声明过 commands → run_command 不挂载。
+   */
+  allowedCommands(): Set<string> {
+    const out = new Set<string>();
+    for (const s of this.list()) for (const c of s.commands) out.add(c);
+    return out;
+  }
 }

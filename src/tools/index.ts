@@ -32,6 +32,17 @@ export interface ToolContext {
   hydrator: HydrationService;
   approvedWritePaths: Set<string>;
   requestApproval: (path: string, preview: string) => Promise<ApprovalAnswer>;
+  /**
+   * 会话内已放行的命令二进制（run_command 审批答 `a` 后加入）。
+   * 与 approvedWritePaths 同生命周期：ctx 存活期间累积。
+   */
+  approvedCommands: Set<string>;
+  /**
+   * 命令执行审批通道。仅 REPL 注入（有 UI 才能审批）；缺省 undefined →
+   * run_command 直接拒绝 —— 执行命令比写文件危险一级，非交互路径不沿用
+   * write_file 的"子命令旁路"先例。
+   */
+  requestCommandApproval?: (command: string, argvPreview: string) => Promise<ApprovalAnswer>;
   /** 转换器注册表。批量 ingest / 队列 worker / wiki_ingest 工具都从这里取。 */
   converterRegistry: ConverterRegistry;
   /** 转换结果缓存（按 cacheConverted 决定是 FS 还是 Null 实现）。 */
@@ -72,6 +83,8 @@ export interface BuildContextExtras {
    * 不传则 buildContext 用一个空 registry 兜底。
    */
   skillRegistry?: SkillRegistry;
+  /** 命令执行审批通道（仅 REPL 提供）。见 ToolContext.requestCommandApproval。 */
+  requestCommandApproval?: ToolContext['requestCommandApproval'];
 }
 
 export function buildContext(
@@ -114,6 +127,8 @@ export function buildContext(
     hydrator,
     approvedWritePaths: new Set(),
     requestApproval,
+    approvedCommands: new Set(),
+    requestCommandApproval: extras.requestCommandApproval,
     converterRegistry: registry,
     converterCache: cache,
     skillRegistry: extras.skillRegistry ?? new SkillRegistry(),

@@ -2,6 +2,8 @@ import React, { useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 export interface ApprovalRequest {
+  /** 'write' = 文件写入路径；'exec' = 命令执行（path 存二进制名，preview 存完整 argv）。 */
+  kind?: 'write' | 'exec';
   path: string;
   preview: string;
   resolve: (answer: 'yes' | 'no' | 'always') => void;
@@ -23,16 +25,19 @@ export function ToolApproval({ request }: Props) {
     /* nothing to cleanup */
   }, []);
 
+  const isExec = request.kind === 'exec';
+
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginY={1}>
       <Text color="yellow" bold>
-        Approve write to {request.path}?
+        {isExec ? `Run command "${request.path}"?` : `Approve write to ${request.path}?`}
       </Text>
-      <Text color="gray">--- preview ---</Text>
+      <Text color="gray">{isExec ? '--- command ---' : '--- preview ---'}</Text>
       <Text>{request.preview}</Text>
       <Text color="gray">---------------</Text>
       <Text>
-        <Text color="green">[y]</Text> yes  <Text color="green">[a]</Text> always (this session)
+        <Text color="green">[y]</Text> yes  <Text color="green">[a]</Text>{' '}
+        {isExec ? 'always (this binary, this session)' : 'always (this session)'}
         {'  '}
         <Text color="red">[n]</Text> no
       </Text>
