@@ -8,6 +8,7 @@ import { composeSystemPrompt, loadSoul, type LoadedSoul } from '../llm/soul.js';
 import { buildContext } from '../tools/index.js';
 import { makeSkillTool } from '../tools/skill.js';
 import { runCommandTool } from '../tools/run_command.js';
+import { httpRequestTool } from '../tools/http_request.js';
 import { buildSkillRegistry, SkillRegistry } from '../skills/index.js';
 import { installSkillFromSource, removeSkillByName, SkillExistsError } from '../skills/install.js';
 import {
@@ -353,6 +354,23 @@ export function App({ config: initialConfig }: Props) {
     [],
   );
 
+  // 网络访问审批：同上，kind='net'（path 存 host，preview 存 METHOD url）。
+  const requestNetworkApproval = useMemo(
+    () => (host: string, preview: string) =>
+      new Promise<'yes' | 'no' | 'always'>((resolve) => {
+        setApproval({
+          kind: 'net',
+          path: host,
+          preview,
+          resolve: (answer) => {
+            setApproval(null);
+            resolve(answer);
+          },
+        });
+      }),
+    [],
+  );
+
   // Transcript logger：每次 REPL session 一份独立 markdown 文件，写在 config.outputDir。
   // 用 useMemo 而不是 useState，保证整个 session 期间只构造一次；构造时立即写 header。
   const transcript = useMemo(() => {
@@ -384,14 +402,16 @@ export function App({ config: initialConfig }: Props) {
       converterCache: converters.cache,
       skillRegistry,
       requestCommandApproval,
+      requestNetworkApproval,
     });
     const systemPrompt = composeSystemPrompt(defaultSystemPrompt, soul);
     // skill 走单个 `skill` 工具（仅当存在 skill 时才挂，避免空 catalog 的死工具）。
     const extraTools = skillRegistry.list().length > 0 ? [makeSkillTool(skillRegistry)] : [];
-    // run_command 仅当有 skill 声明过可执行命令时才挂（否则是个永远失败的死工具）。
+    // run_command / http_request 仅当有 skill 声明过对应能力时才挂（否则是永远失败的死工具）。
     if (skillRegistry.allowedCommands().size > 0) extraTools.push(runCommandTool);
+    if (skillRegistry.allowedHosts().size > 0) extraTools.push(httpRequestTool);
     return new Agent(client, config.model, ctx, { systemPrompt, extraTools });
-  }, [config, client, requestApproval, requestCommandApproval, library, converters, soul, skillRegistry]);
+  }, [config, client, requestApproval, requestCommandApproval, requestNetworkApproval, library, converters, soul, skillRegistry]);
 
   const append = (msg: Omit<DisplayMessage, 'id'>) =>
     setMessages((prev) => [...prev, { ...msg, id: nextId() }]);

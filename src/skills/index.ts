@@ -9,9 +9,11 @@ export {
   type Skill,
   type SkillFrontmatter,
   type SkillRequirement,
+  type HttpAllowRule,
   SkillFrontmatterSchema,
   SKILL_NAME_RE,
   COMMAND_BIN_RE,
+  HTTP_HOST_RE,
 } from './types.js';
 
 const SKILL_FILE = 'SKILL.md';
@@ -78,5 +80,6 @@ export function loadSkill(skillDir: string): Skill {
     dir: skillDir,
     commands: fm.commands,
     requires: fm.requires,
+    httpAllow: fm.http_allow,
   };
 }

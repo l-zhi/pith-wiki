@@ -66,6 +66,7 @@ function registryWith(commands: string[]): SkillRegistry {
     dir: tmp,
     commands,
     requires: [],
+    httpAllow: [],
   });
   return reg;
 }
