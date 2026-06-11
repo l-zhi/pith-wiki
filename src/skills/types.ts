@@ -24,6 +24,9 @@ export const SKILL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
  */
 export const COMMAND_BIN_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
+/** http_allow 里的 host:裸主机名(可含端口),不含 scheme / 路径 / 通配。 */
+export const HTTP_HOST_RE = /^[A-Za-z0-9.-]+(:\d+)?$/;
+
 /** SKILL.md frontmatter 校验:name / description 必填,commands / requires 可选。 */
 export const SkillFrontmatterSchema = z.object({
   name: z.string().regex(SKILL_NAME_RE, 'skill name must be slug-like (letters/digits/-/_/.)'),
@@ -46,6 +49,25 @@ export const SkillFrontmatterSchema = z.object({
       }),
     )
     .default([]),
+  /**
+   * 该 skill 允许 agent 经 http_request 工具访问的 host 白名单 + 鉴权声明。
+   * 声明即授权:装含 http_allow 的 skill = 同意 agent 在审批后访问这些域名。
+   * 密钥从 auth_env 指定的环境变量取,由工具注入,模型永远看不到也改不了。
+   */
+  http_allow: z
+    .array(
+      z.object({
+        /** 允许访问的 host(可含端口),精确匹配 URL 的 host。 */
+        host: z.string().regex(HTTP_HOST_RE, 'http_allow.host must be a bare host (no scheme/path)'),
+        /** 鉴权密钥所在的环境变量名;不填则该 host 不注入任何鉴权。 */
+        auth_env: z.string().optional(),
+        /** 鉴权 header 名,默认 Authorization。 */
+        auth_header: z.string().default('Authorization'),
+        /** 鉴权前缀,默认 Bearer(=> `Bearer <值>`);设 "" 则裸值(如 X-API-Key: <值>)。 */
+        auth_scheme: z.string().default('Bearer'),
+      }),
+    )
+    .default([]),
 });
 
 export type SkillFrontmatter = z.infer<typeof SkillFrontmatterSchema>;
@@ -53,6 +75,13 @@ export type SkillFrontmatter = z.infer<typeof SkillFrontmatterSchema>;
 export interface SkillRequirement {
   bin: string;
   install?: string;
+}
+
+export interface HttpAllowRule {
+  host: string;
+  auth_env?: string;
+  auth_header: string;
+  auth_scheme: string;
 }
 
 export interface Skill {
@@ -66,4 +95,6 @@ export interface Skill {
   commands: string[];
   /** 外部 CLI 依赖声明(安装时检测用)。 */
   requires: SkillRequirement[];
+  /** 该 skill 声明的 HTTP host 白名单 + 鉴权(可能为空)。 */
+  httpAllow: HttpAllowRule[];
 }
