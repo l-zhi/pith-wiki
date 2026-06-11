@@ -9,6 +9,7 @@ import { buildContext } from '../tools/index.js';
 import { makeSkillTool } from '../tools/skill.js';
 import { runCommandTool } from '../tools/run_command.js';
 import { buildSkillRegistry, SkillRegistry } from '../skills/index.js';
+import { installSkillFromSource, removeSkillByName, SkillExistsError } from '../skills/install.js';
 import {
   ensureOutputDir,
   ensureQueueDirs,
@@ -624,7 +625,7 @@ export function App({ config: initialConfig }: Props) {
       });
     } else if (cmd === '/skill' || cmd.startsWith('/skill ')) {
       const arg = cmd === '/skill' ? '' : cmd.slice('/skill '.length).trim();
-      handleSkill(arg);
+      void handleSkill(arg);
     } else if (cmd === '/exit' || cmd === '/quit') {
       exit();
     } else {
@@ -642,34 +643,115 @@ export function App({ config: initialConfig }: Props) {
   };
 
   /**
-   * `/skill`（无参）→ 列出已发现的 skill。调用一个 skill 用 `/<name> <问题>`
-   * （见 invokeSkillByName）；`/skill <name> <问题>` 也等价可用。
+   * `/skill`（无参）→ 列出已发现的 skill。
+   * `/skill add <source>` / `/skill remove <name>` → REPL 内安装/卸载（热生效）。
+   * `/skill <name> <问题>` → 调用某个 skill（等价于 /<name> <问题>）。
    */
-  const handleSkill = (arg: string): void => {
-    const all = skillRegistry.list();
+  const handleSkill = async (arg: string): Promise<void> => {
+    const firstSpace = arg.search(/\s/);
+    const head = firstSpace === -1 ? arg : arg.slice(0, firstSpace);
+    const rest = firstSpace === -1 ? '' : arg.slice(firstSpace + 1).trim();
+
+    if (head === 'add') {
+      // 解析可选的 --force（位置不限），其余 token 拼回 source。
+      const tokens = rest.split(/\s+/).filter(Boolean);
+      const force = tokens.includes('--force');
+      const source = tokens.filter((t) => t !== '--force').join(' ');
+      if (!source) {
+        append({ role: 'error', text: 'Usage: /skill add <path | git-url | owner/repo> [--force]' });
+        return;
+      }
+      await handleSkillAdd(source, force);
+      return;
+    }
+    if (head === 'remove') {
+      if (!rest) {
+        append({ role: 'error', text: 'Usage: /skill remove <name>' });
+        return;
+      }
+      handleSkillRemove(rest);
+      return;
+    }
+
     if (!arg) {
+      const all = skillRegistry.list();
       if (all.length === 0) {
         append({
           role: 'system',
           text:
-            'No skills installed.\nDrop a <name>/SKILL.md under ' +
+            'No skills installed.\nInstall with `/skill add <path | git-url | owner/repo>`,\n' +
+            'or drop a <name>/SKILL.md under ' +
             config.skillDirs.map((d) => shortenHome(d)).join(' or ') +
-            ',\nor use `pith-wiki skill add <path>`. Restart REPL to pick up changes.',
+            '.',
         });
         return;
       }
       const lines = all.map((s) => `  /${s.name}  —  ${s.description}`);
       append({
         role: 'system',
-        text: 'Installed skills (invoke with /<name> <your question>):\n' + lines.join('\n'),
+        text:
+          'Installed skills (invoke with /<name> <your question>):\n' +
+          lines.join('\n') +
+          '\n\nManage: /skill add <source> · /skill remove <name>',
       });
       return;
     }
-    // `/skill <name> <问题>`：拆出名字 + 问题，复用 invokeSkillByName。
-    const firstSpace = arg.search(/\s/);
-    const name = firstSpace === -1 ? arg : arg.slice(0, firstSpace);
-    const question = firstSpace === -1 ? '' : arg.slice(firstSpace + 1).trim();
-    invokeSkillByName(name, question);
+    // `/skill <name> <问题>`：复用 invokeSkillByName。
+    invokeSkillByName(head, rest);
+  };
+
+  /**
+   * REPL 内安装 skill：装完重新扫描 skillDirs 并 setSkillRegistry —— 触发
+   * agent useMemo 重建，新 skill 的 catalog/slash 命令立即生效，无需重启。
+   * 代价：与 /provider 切换同语义，会重置当前对话历史（agent 是新实例）。
+   */
+  const handleSkillAdd = async (source: string, force = false): Promise<void> => {
+    try {
+      const result = installSkillFromSource(source, config, { force });
+      const reg = await buildSkillRegistry({ skillDirs: config.skillDirs });
+      setSkillRegistry(reg); // 触发 agent 重建（热加载 + 对话重置）
+      const parts = [`✓ installed skill "${result.skill.name}" → ${shortenHome(result.dest)}`];
+      if (result.skill.commands.length > 0) {
+        parts.push(
+          `⚠ declares executable command(s): ${result.skill.commands.join(', ')} — ` +
+            'the agent can run these after you approve them.',
+        );
+      }
+      if (result.missingRequires.length > 0) {
+        parts.push(
+          `⚠ missing CLI(s) on PATH: ` +
+            result.missingRequires
+              .map((m) => (m.install ? `${m.bin} (install: ${m.install})` : m.bin))
+              .join(', '),
+        );
+      }
+      parts.push('（已重新加载 skill；本次安装重置了对话上下文）');
+      append({ role: 'system', text: parts.join('\n') });
+    } catch (err) {
+      if (err instanceof SkillExistsError) {
+        append({
+          role: 'error',
+          text: `${err.message}. 重装请加 --force：/skill add ${source} --force`,
+        });
+      } else {
+        append({ role: 'error', text: `skill add failed: ${(err as Error).message}` });
+      }
+    }
+  };
+
+  const handleSkillRemove = (name: string): void => {
+    const removed = removeSkillByName(name, config);
+    if (!removed) {
+      append({ role: 'error', text: `Skill not found: ${name}` });
+      return;
+    }
+    void buildSkillRegistry({ skillDirs: config.skillDirs }).then((reg) => {
+      setSkillRegistry(reg);
+      append({
+        role: 'system',
+        text: `✓ removed skill "${name}"（已重新加载；对话上下文已重置）`,
+      });
+    });
   };
 
   /**

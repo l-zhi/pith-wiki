@@ -62,7 +62,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   {
     name: '/skill',
     description:
-      'List installed skills. Invoke one directly with /<skill-name> <your question>.',
+      'List skills, or manage them: /skill add <path|git-url|owner/repo>, /skill remove <name>. Invoke one with /<name> <question>.',
     takesArg: true,
   },
   { name: '/exit', description: 'Exit the REPL.', aliases: ['/quit'] },
