@@ -51,14 +51,14 @@ export function buildSkillCommands(program: Command, args: BuildArgs): void {
       } else {
         console.log(`Installed skills (${all.length}):`);
         for (const s of all) {
-          console.log(`  ${chalk.cyan(s.name)}  ${s.description}`);
+          console.log(`  ${chalk.green(s.name)}  ${chalk.dim(s.description)}`);
           console.log(chalk.dim(`      ${s.dir}`));
         }
       }
       if (available.length > 0) {
         console.log('\nAvailable to install (bundled) — `pith-wiki skill add <name>`:');
         for (const b of available) {
-          console.log(`  ${chalk.green(b.name)}  ${b.description}`);
+          console.log(`  ${chalk.yellow(b.name)}  ${chalk.dim(b.description)}`);
         }
       }
       for (const w of warnings) console.warn(chalk.yellow(`⚠ ${w}`));
