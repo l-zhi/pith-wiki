@@ -78,5 +78,7 @@ describe('仓库真实 bundled-skills（集成）', () => {
     expect(r.skill.name).toBe('weread');
     expect(r.skill.httpAllow.map((h) => h.host)).toContain('i.weread.qq.com');
     expect(fs.existsSync(path.join(skillsRoot, 'weread', 'SKILL.md'))).toBe(true);
+    // 未设 WEREAD_API_KEY → missingEnv 引导用户去设
+    expect(r.missingEnv).toContain('WEREAD_API_KEY');
   });
 });
