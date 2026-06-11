@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { resolveSafePath, SafetyError } from './safety.js';
 import type { ToolDef } from './index.js';
@@ -16,7 +17,7 @@ const params = z.object({
 export const writeFileTool: ToolDef<typeof params> = {
   name: 'write_file',
   description:
-    "Write a UTF-8 text file into the wiki output directory (<wikiRoot>/output). The `path` is relative to that dir (don't include an \"output/\" prefix) and confined to it. No approval prompt — the output dir is pith-wiki's own scratch space, not the user's working directory.",
+    "Write a UTF-8 text file into the wiki output directory (<wikiRoot>/output). The `path` is relative to that dir (don't include an \"output/\" prefix) and confined to it. No approval prompt — the output dir is pith-wiki's own scratch space, not the user's working directory. The result has `path` (absolute) and `url` (file://…); when telling the user where the file is, give them the absolute path or the file:// url — NEVER a relative path (the terminal turns it into a broken http:// link).",
   parameters: params,
   handler: async ({ path: inputPath, content }, ctx) => {
     let safe: string;
@@ -48,7 +49,13 @@ export const writeFileTool: ToolDef<typeof params> = {
     const tmp = `${safe}.tmp`;
     fs.writeFileSync(tmp, content, 'utf8');
     fs.renameSync(tmp, safe);
-    // 返回实际落点（绝对路径），让模型/用户清楚写到了 output 区的哪里。
-    return { ok: true, path: safe, bytesWritten: Buffer.byteLength(content, 'utf8') };
+    // 返回实际落点：绝对路径 + file:// URL（可直接在浏览器打开）。模型据此给用户
+    // 可打开的链接，而不是会被终端误渲染成 http:// 的相对路径。
+    return {
+      ok: true,
+      path: safe,
+      url: pathToFileURL(safe).href,
+      bytesWritten: Buffer.byteLength(content, 'utf8'),
+    };
   },
 };

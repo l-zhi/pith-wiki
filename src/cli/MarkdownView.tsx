@@ -110,6 +110,17 @@ function renderInline(tokens: Token[] | undefined, key: string): React.ReactNode
       case 'link': {
         const tok = t as Tokens.Link;
         const label = plainText(tok.tokens) || tok.text;
+        // 无 scheme 的相对链接（如模型给的 "output/x.html"）在终端里点不开——
+        // OSC8 / 回退都会被补成坏的 http://。这类只渲染成文字，附原 href 作提示，
+        // 不生成超链接。有 scheme 的（http/https/file/mailto…）正常渲染。
+        const hasScheme = /^[a-z][a-z0-9+.-]*:/i.test(tok.href);
+        if (!hasScheme) {
+          return (
+            <Text key={k} color={C.cyan}>
+              {label === tok.href ? label : `${label} (${tok.href})`}
+            </Text>
+          );
+        }
         return (
           <Text key={k} color={C.cyan} underline>
             {terminalLink(label, tok.href)}
