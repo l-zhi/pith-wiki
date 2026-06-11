@@ -68,6 +68,18 @@ describe('renderMarkdown', () => {
     expect(out).toContain('https://example.com/x');
   });
 
+  it('相对链接（无 scheme）不渲染成超链接，避免终端补成坏 http://', () => {
+    const out = frame('see [output/report.html](output/report.html) here');
+    // 不应出现 http:// 前缀（terminal-link 会给无 scheme 的 href 补 http://）
+    expect(out).not.toContain('http://');
+    expect(out).toContain('output/report.html');
+  });
+
+  it('file:// 链接正常渲染（有 scheme）', () => {
+    const out = frame('open [report](file:///Users/me/.pith-wiki/wiki-data/output/r.html)');
+    expect(out).toContain('file:///Users/me/.pith-wiki/wiki-data/output/r.html');
+  });
+
   it('空输入返回 undefined（调用方回退原文）', () => {
     expect(renderMarkdown('')).toBeUndefined();
     expect(renderMarkdown('   \n  ')).toBeUndefined();
