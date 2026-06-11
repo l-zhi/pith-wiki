@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { Command } from 'commander';
 import chalk from 'chalk';
-import OpenAI from 'openai';
+import { createClient } from '../llm/client.js';
 import {
   ensureQueueDirs,
   ensureWikiRoot,
@@ -284,7 +284,8 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
         throw err;
       }
 
-      const client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
+      // 统一走 createClient 工厂：securityEnabled 时自动带上出站过滤/脱敏层
+      const client = createClient(config);
       const library = new LibraryService(config.wikiRoot, { ignoredDirs: [config.outputDir] });
       const hydrator = new HydrationService(client, config.model, library, config.supportsJsonMode);
 

@@ -3,8 +3,8 @@ import path from 'node:path';
 import { Command } from 'commander';
 import chalk from 'chalk';
 import matter from 'gray-matter';
-import OpenAI from 'openai';
 import fastGlob from 'fast-glob';
+import { createClient } from '../llm/client.js';
 import { requireApiKey, type Config } from '../config.js';
 import { LibraryService } from '../wiki/library.js';
 import { HydrationService } from '../wiki/hydration.js';
@@ -117,7 +117,8 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
         return;
       }
 
-      const client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseURL });
+      // 统一走 createClient 工厂：securityEnabled 时自动带上出站过滤/脱敏层
+      const client = createClient(config);
       const library = new LibraryService(config.wikiRoot, { ignoredDirs: [config.outputDir] });
       const hydrator = new HydrationService(client, config.model, library, config.supportsJsonMode);
       // 注意：commander `--no-cache` 会把 opts.cache 解析成 false（默认 true）。
