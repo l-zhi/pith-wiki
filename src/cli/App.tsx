@@ -11,6 +11,7 @@ import { runCommandTool } from '../tools/run_command.js';
 import { httpRequestTool } from '../tools/http_request.js';
 import { buildSkillRegistry, SkillRegistry } from '../skills/index.js';
 import { installSkillFromSource, removeSkillByName, SkillExistsError } from '../skills/install.js';
+import { listBundledSkills } from '../skills/bundled.js';
 import {
   ensureOutputDir,
   ensureQueueDirs,
@@ -677,25 +678,27 @@ export function App({ config: initialConfig }: Props) {
 
     if (!arg) {
       const all = skillRegistry.list();
+      const installed = new Set(skillRegistry.names());
+      const available = listBundledSkills().filter((b) => !installed.has(b.name));
+      const sections: string[] = [];
       if (all.length === 0) {
-        append({
-          role: 'system',
-          text:
-            'No skills installed.\nInstall with `/skill add <path | git-url | owner/repo>`,\n' +
-            'or drop a <name>/SKILL.md under ' +
-            config.skillDirs.map((d) => shortenHome(d)).join(' or ') +
-            '.',
-        });
-        return;
-      }
-      const lines = all.map((s) => `  /${s.name}  —  ${s.description}`);
-      append({
-        role: 'system',
-        text:
+        sections.push(
+          'No skills installed.\nInstall with `/skill add <name | path | git-url | owner/repo>`.',
+        );
+      } else {
+        sections.push(
           'Installed skills (invoke with /<name> <your question>):\n' +
-          lines.join('\n') +
-          '\n\nManage: /skill add <source> · /skill remove <name>',
-      });
+            all.map((s) => `  /${s.name}  —  ${s.description}`).join('\n'),
+        );
+      }
+      if (available.length > 0) {
+        sections.push(
+          'Available to install (bundled) — `/skill add <name>`:\n' +
+            available.map((b) => `  ${b.name}  —  ${b.description}`).join('\n'),
+        );
+      }
+      sections.push('Manage: /skill add <source> · /skill remove <name>');
+      append({ role: 'system', text: sections.join('\n\n') });
       return;
     }
     // `/skill <name> <问题>`：复用 invokeSkillByName。

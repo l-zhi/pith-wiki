@@ -46,7 +46,7 @@ describe('installSkillFromSource — 本地源', () => {
     expect(r.skill.name).toBe('alpha');
     expect(r.dest).toBe(path.join(skillsRoot, 'alpha'));
     expect(fs.existsSync(path.join(r.dest, 'SKILL.md'))).toBe(true);
-    expect(r.fromGit).toBe(false);
+    expect(r.source).toBe('local');
   });
 
   it('解析 commands 并返回缺失的 requires', () => {
