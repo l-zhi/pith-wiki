@@ -12,6 +12,7 @@ import { httpRequestTool } from '../tools/http_request.js';
 import { buildSkillRegistry, SkillRegistry } from '../skills/index.js';
 import { installSkillFromSource, removeSkillByName, SkillExistsError } from '../skills/install.js';
 import { listBundledSkills } from '../skills/bundled.js';
+import { pithWikiHome } from '../paths.js';
 import {
   ensureOutputDir,
   ensureQueueDirs,
@@ -676,7 +677,9 @@ export function App({ config: initialConfig }: Props) {
       return;
     }
 
-    if (!arg) {
+    // `/skill` 与 `/skill list` 都展示已装 + 可装（list 是 add/remove 的同级子命令，
+    // 不是 skill 名 —— 不显式接住会被 invokeSkillByName 当成 "skill list" 报错）。
+    if (!arg || (head === 'list' && !rest)) {
       const all = skillRegistry.list();
       const installed = new Set(skillRegistry.names());
       const available = listBundledSkills().filter((b) => !installed.has(b.name));
@@ -728,6 +731,16 @@ export function App({ config: initialConfig }: Props) {
             result.missingRequires
               .map((m) => (m.install ? `${m.bin} (install: ${m.install})` : m.bin))
               .join(', '),
+        );
+      }
+      // 需要 API key 的 skill（如 weread）：引导用户设置对应环境变量再用。
+      if (result.missingEnv.length > 0) {
+        parts.push(
+          `🔑 还需设置 ${result.missingEnv.join('、')} 才能使用：在 ` +
+            `${shortenHome(pithWikiHome())}/.env 写入（如 ${result.missingEnv[0]}=你的key），重启 REPL 生效。` +
+            (result.skill.name === 'weread'
+              ? '\n   微信读书的 key 到 https://weread.qq.com/r/weread-skills 登录获取。'
+              : ''),
         );
       }
       parts.push('（已重新加载 skill；本次安装重置了对话上下文）');

@@ -65,6 +65,11 @@ export interface InstallResult {
   gitUrl?: string;
   /** PATH 上缺失的依赖二进制(调用方决定怎么提示)。 */
   missingRequires: SkillRequirement[];
+  /**
+   * http_allow 声明了 auth_env 但当前 process.env 未设置的环境变量名(去重)。
+   * 调用方据此引导用户设置 API key（如 weread 的 WEREAD_API_KEY）。
+   */
+  missingEnv: string[];
 }
 
 export class SkillExistsError extends Error {
@@ -128,12 +133,22 @@ export function installSkillFromSource(
 
     // dest 上重新 loadSkill 一次，确保返回的 dir 指向已安装位置。
     const installed = loadSkill(dest);
+    // http_allow 里声明 auth_env 但当前未设的环境变量 → 引导用户去设 key。
+    const missingEnv = [
+      ...new Set(
+        installed.httpAllow
+          .map((h) => h.auth_env)
+          .filter((e): e is string => !!e && !process.env[e]),
+      ),
+    ];
+
     return {
       skill: installed,
       dest,
       source: sourceKind,
       ...(gitUrl ? { gitUrl } : {}),
       missingRequires: checkRequirements(installed),
+      missingEnv,
     };
   } finally {
     cleanup?.();

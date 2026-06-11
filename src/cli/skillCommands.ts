@@ -99,6 +99,20 @@ export function buildSkillCommands(program: Command, args: BuildArgs): void {
             );
           }
         }
+        // 需要 API key 的 skill（如 weread）：引导设置环境变量。
+        if (result.missingEnv.length > 0) {
+          console.log(
+            chalk.yellow(`\n🔑 Set ${result.missingEnv.join(', ')} before using this skill:`),
+          );
+          console.log(
+            chalk.dim(`  add it to ~/.pith-wiki/.env (e.g. ${result.missingEnv[0]}=your-key)`),
+          );
+          if (result.skill.name === 'weread') {
+            console.log(
+              chalk.dim('  get the weread key at https://weread.qq.com/r/weread-skills (login required)'),
+            );
+          }
+        }
       } catch (err) {
         if (err instanceof SkillExistsError) {
           console.error(chalk.red(`${err.message}. Use --force to overwrite.`));
