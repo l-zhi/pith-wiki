@@ -701,25 +701,21 @@ export function App({ config: initialConfig }: Props) {
             <Text color="gray">{'No skills installed.'}</Text>
           ) : (
             <>
-              <Text bold>{'Installed（已安装 · /<name> 调用）'}</Text>
+              <Text color="green" bold>
+                {'Installed（已安装 · /<name> 调用）'}
+              </Text>
               {all.map((s) => (
-                <Text key={`i-${s.name}`}>
-                  {'  '}
-                  <Text color="green">/{s.name}</Text>
-                  <Text color="gray">{`  —  ${s.description}`}</Text>
-                </Text>
+                <Text key={`i-${s.name}`}>{`  /${s.name}  —  ${s.description}`}</Text>
               ))}
             </>
           )}
           {available.length > 0 && (
             <>
-              <Text bold>{'Available（待安装 · /skill add <name>）'}</Text>
+              <Text color="yellow" bold>
+                {'Available（待安装 · /skill add <name>）'}
+              </Text>
               {available.map((b) => (
-                <Text key={`a-${b.name}`}>
-                  {'  '}
-                  <Text color="yellow">{b.name}</Text>
-                  <Text color="gray">{`  —  ${b.description}`}</Text>
-                </Text>
+                <Text key={`a-${b.name}`}>{`  ${b.name}  —  ${b.description}`}</Text>
               ))}
             </>
           )}
