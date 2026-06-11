@@ -247,6 +247,61 @@ describe('resolveSafePath — macOS 兼容性', () => {
   });
 });
 
+describe('resolveSafePath — writeRoot 收敛（write_file 用）', () => {
+  // write_file 把写入钳进 <wikiRoot>/output。传 writeRoot 后：相对路径相对它，
+  // 写目标必须落在它内，workspace/wiki 顶层其他位置一律拒绝。
+  const writeOpts = (writeRoot: string) => ({
+    workspaceRoot: workspace,
+    wikiRoot: wiki,
+    writeRoot,
+    maxPayloadBytes: 100,
+    readOnly: false,
+  });
+
+  it('相对路径相对 writeRoot 解析（而非 workspace）', () => {
+    const writeRoot = path.join(wiki, 'output');
+    const safe = resolveSafePath('note.md', 'write', writeOpts(writeRoot));
+    expect(safe.startsWith(path.join(fs.realpathSync(wiki), 'output'))).toBe(true);
+    expect(safe.startsWith(fs.realpathSync(workspace))).toBe(false);
+  });
+
+  it('writeRoot 下嵌套相对路径被接受（目录尚不存在）', () => {
+    const writeRoot = path.join(wiki, 'output');
+    const safe = resolveSafePath('books/三体.md', 'write', writeOpts(writeRoot));
+    expect(safe.startsWith(path.join(fs.realpathSync(wiki), 'output'))).toBe(true);
+    expect(safe.endsWith(path.join('books', '三体.md'))).toBe(true);
+  });
+
+  it('写到当前工作目录（../ 爬回 workspace）被拒绝', () => {
+    const writeRoot = path.join(wiki, 'output');
+    const escape = path.relative(writeRoot, path.join(workspace, 'evil.md'));
+    expect(() => resolveSafePath(escape, 'write', writeOpts(writeRoot))).toThrow(SafetyError);
+  });
+
+  it('绝对路径落在 writeRoot 外（workspace 内）被拒绝', () => {
+    const writeRoot = path.join(wiki, 'output');
+    expect(() =>
+      resolveSafePath(path.join(workspace, 'foo.md'), 'write', writeOpts(writeRoot)),
+    ).toThrow(SafetyError);
+  });
+
+  it('绝对路径落在 writeRoot 内被接受', () => {
+    const writeRoot = path.join(wiki, 'output');
+    const safe = resolveSafePath(path.join(writeRoot, 'ok.md'), 'write', writeOpts(writeRoot));
+    expect(safe.startsWith(path.join(fs.realpathSync(wiki), 'output'))).toBe(true);
+  });
+
+  it('不传 writeRoot 时写仍走 workspace ∪ wiki（旧行为不变）', () => {
+    const safe = resolveSafePath('legacy.md', 'write', {
+      workspaceRoot: workspace,
+      wikiRoot: wiki,
+      maxPayloadBytes: 100,
+      readOnly: false,
+    });
+    expect(safe.startsWith(fs.realpathSync(workspace))).toBe(true);
+  });
+});
+
 describe('truncatePayload — 按字节计数', () => {
   it('小于上限的内容原样返回', () => {
     expect(truncatePayload('hello', 100)).toBe('hello');
