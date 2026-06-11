@@ -683,25 +683,50 @@ export function App({ config: initialConfig }: Props) {
       const all = skillRegistry.list();
       const installed = new Set(skillRegistry.names());
       const available = listBundledSkills().filter((b) => !installed.has(b.name));
-      const sections: string[] = [];
-      if (all.length === 0) {
-        sections.push(
-          'No skills installed.\nInstall with `/skill add <name | path | git-url | owner/repo>`.',
-        );
-      } else {
-        sections.push(
-          'Installed skills (invoke with /<name> <your question>):\n' +
-            all.map((s) => `  /${s.name}  —  ${s.description}`).join('\n'),
-        );
-      }
+
+      // 纯文本 fallback（transcript / 无色环境）。node 负责着色：绿=已装，黄=待装。
+      const textParts: string[] = [];
+      textParts.push(
+        all.length === 0
+          ? 'No skills installed. Install: /skill add <name>'
+          : 'Installed: ' + all.map((s) => `/${s.name}`).join(', '),
+      );
       if (available.length > 0) {
-        sections.push(
-          'Available to install (bundled) — `/skill add <name>`:\n' +
-            available.map((b) => `  ${b.name}  —  ${b.description}`).join('\n'),
-        );
+        textParts.push('Available (bundled): ' + available.map((b) => b.name).join(', '));
       }
-      sections.push('Manage: /skill add <source> · /skill remove <name>');
-      append({ role: 'system', text: sections.join('\n\n') });
+
+      const node = (
+        <Box flexDirection="column">
+          {all.length === 0 ? (
+            <Text color="gray">{'No skills installed.'}</Text>
+          ) : (
+            <>
+              <Text bold>{'Installed（已安装 · /<name> 调用）'}</Text>
+              {all.map((s) => (
+                <Text key={`i-${s.name}`}>
+                  {'  '}
+                  <Text color="green">/{s.name}</Text>
+                  <Text color="gray">{`  —  ${s.description}`}</Text>
+                </Text>
+              ))}
+            </>
+          )}
+          {available.length > 0 && (
+            <>
+              <Text bold>{'Available（待安装 · /skill add <name>）'}</Text>
+              {available.map((b) => (
+                <Text key={`a-${b.name}`}>
+                  {'  '}
+                  <Text color="yellow">{b.name}</Text>
+                  <Text color="gray">{`  —  ${b.description}`}</Text>
+                </Text>
+              ))}
+            </>
+          )}
+          <Text color="gray">{'Manage: /skill add <source> · /skill remove <name>'}</Text>
+        </Box>
+      );
+      append({ role: 'system', text: textParts.join('\n'), node });
       return;
     }
     // `/skill <name> <问题>`：复用 invokeSkillByName。
