@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { type Config } from '../config.js';
 import { buildSkillRegistry } from '../skills/index.js';
+import { listBundledSkills } from '../skills/bundled.js';
 import {
   installSkillFromSource,
   SkillExistsError,
@@ -40,16 +41,25 @@ export function buildSkillCommands(program: Command, args: BuildArgs): void {
         onWarn: (m) => warnings.push(m),
       });
       const all = reg.list();
+      const installed = new Set(reg.names());
+      // 可装内置 skill（捆绑分发、尚未安装的）—— 提升可发现性。
+      const available = listBundledSkills().filter((b) => !installed.has(b.name));
+
       if (all.length === 0) {
-        console.log('No skills found. Searched:');
+        console.log('No skills installed. Searched:');
         for (const d of config.skillDirs) console.log(`  ${d}`);
-        console.log('\nDrop a <name>/SKILL.md into one of those dirs, or use `pith-wiki skill add <path>`.');
-        return;
+      } else {
+        console.log(`Installed skills (${all.length}):`);
+        for (const s of all) {
+          console.log(`  ${chalk.cyan(s.name)}  ${s.description}`);
+          console.log(chalk.dim(`      ${s.dir}`));
+        }
       }
-      console.log(`Skills (${all.length}):`);
-      for (const s of all) {
-        console.log(`  ${chalk.cyan(s.name)}  ${s.description}`);
-        console.log(chalk.dim(`      ${s.dir}`));
+      if (available.length > 0) {
+        console.log('\nAvailable to install (bundled) — `pith-wiki skill add <name>`:');
+        for (const b of available) {
+          console.log(`  ${chalk.green(b.name)}  ${b.description}`);
+        }
       }
       for (const w of warnings) console.warn(chalk.yellow(`⚠ ${w}`));
     });

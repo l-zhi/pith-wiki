@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ensureSkillsDir, type Config } from '../config.js';
 import { loadSkill } from './index.js';
+import { resolveBundledSkill } from './bundled.js';
 import type { Skill, SkillRequirement } from './types.js';
 
 /**
@@ -59,8 +60,8 @@ export interface InstallResult {
   skill: Skill;
   /** 最终落地目录(skillDirs[0]/<name>)。 */
   dest: string;
-  /** 来源是否为 git(用于输出层措辞)。 */
-  fromGit: boolean;
+  /** 来源类型(用于输出层措辞)。 */
+  source: 'git' | 'bundled' | 'local';
   gitUrl?: string;
   /** PATH 上缺失的依赖二进制(调用方决定怎么提示)。 */
   missingRequires: SkillRequirement[];
@@ -74,11 +75,14 @@ export class SkillExistsError extends Error {
 }
 
 /**
- * 从本地目录 / git URL / owner-repo 短名安装一个 skill。
+ * 从 内置名 / git URL / owner-repo 短名 / 本地目录 安装一个 skill。
  *
- * 流程:(git 源)clone 到临时目录 → loadSkill 校验 → 复制进 skillDirs[0](剥离
- * .git)。已存在同名且未 force → 抛 SkillExistsError。任何校验失败抛普通 Error。
- * 临时目录在 finally 清理。
+ * 来源解析顺序：
+ *   1. git URL / owner-repo 短名 → clone 到临时目录
+ *   2. 内置名（命中 bundled-skills/<name>）→ 从捆绑目录复制，零下载
+ *   3. 本地目录路径
+ * 之后统一：loadSkill 校验 → 复制进 skillDirs[0]（剥离 .git）。已存在同名且未
+ * force → 抛 SkillExistsError；任何校验失败抛普通 Error；临时目录在 finally 清理。
  */
 export function installSkillFromSource(
   source: string,
@@ -86,17 +90,25 @@ export function installSkillFromSource(
   opts: { force?: boolean } = {},
 ): InstallResult {
   const gitUrl = resolveGitSource(source);
+  const bundledDir = gitUrl ? null : resolveBundledSkill(source);
   let srcDir: string;
   let cleanup: (() => void) | null = null;
+  let sourceKind: InstallResult['source'];
 
   if (gitUrl) {
     srcDir = cloneToTemp(gitUrl);
     cleanup = () => fs.rmSync(srcDir, { recursive: true, force: true });
+    sourceKind = 'git';
+  } else if (bundledDir) {
+    // 内置 skill：源是只读的捆绑目录，复制流程不变（不需要清理）。
+    srcDir = bundledDir;
+    sourceKind = 'bundled';
   } else {
     srcDir = path.resolve(source);
     if (!fs.existsSync(srcDir) || !fs.statSync(srcDir).isDirectory()) {
       throw new Error(`Not a directory: ${srcDir}`);
     }
+    sourceKind = 'local';
   }
 
   try {
@@ -119,7 +131,7 @@ export function installSkillFromSource(
     return {
       skill: installed,
       dest,
-      fromGit: !!gitUrl,
+      source: sourceKind,
       ...(gitUrl ? { gitUrl } : {}),
       missingRequires: checkRequirements(installed),
     };
