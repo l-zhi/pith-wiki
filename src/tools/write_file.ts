@@ -1,25 +1,42 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { resolveSafePath, SafetyError } from './safety.js';
 import type { ToolDef } from './index.js';
 
 const params = z.object({
-  path: z.string().describe('Target path (relative to workspace, or absolute inside it).'),
+  path: z
+    .string()
+    .describe(
+      'File name or sub-path INSIDE the wiki output dir (<wikiRoot>/output). Give just the file (e.g. "report.html") or a sub-path (e.g. "books/三体.md") — do NOT prefix with "output/", you are already inside it. Writes are confined here.',
+    ),
   content: z.string().describe('Full file content to write. Existing file is overwritten.'),
 });
 
 export const writeFileTool: ToolDef<typeof params> = {
   name: 'write_file',
   description:
-    'Write a UTF-8 text file. Sandboxed to the workspace root; the user must approve the write.',
+    "Write a UTF-8 text file into the wiki output directory (<wikiRoot>/output). The `path` is relative to that dir (don't include an \"output/\" prefix) and confined to it. No approval prompt — the output dir is pith-wiki's own scratch space, not the user's working directory. The result has `path` (absolute) and `url` (file://…); when telling the user where the file is, give them the absolute path or the file:// url — NEVER a relative path (the terminal turns it into a broken http:// link).",
   parameters: params,
   handler: async ({ path: inputPath, content }, ctx) => {
     let safe: string;
     try {
-      safe = resolveSafePath(inputPath, 'write', {
+      // 写入硬收敛到 <wikiRoot>/output：agent 的产物落在 pith-wiki 自己的输出区，
+      // 不污染用户运行 pith-wiki 的当前目录/项目。既然写不出这个受控目录，就不再
+      // 逐次审批（审批本是防乱写用户文件；收敛后已无此风险，免审批更顺手）。
+      const writeRoot = path.join(ctx.config.wikiRoot, 'output');
+      // 防呆：模型/skill 常给 "output/xxx"（以为相对 wiki 根），而写入已在 output 内，
+      // 直接拼会得到 output/output/xxx。剥掉相对路径开头与 output 同名的冗余一层。
+      let rel = inputPath;
+      if (!path.isAbsolute(rel)) {
+        const segs = rel.split(/[/\\]+/).filter(Boolean);
+        if (segs.length > 1 && segs[0] === 'output') rel = segs.slice(1).join('/');
+      }
+      safe = resolveSafePath(rel, 'write', {
         workspaceRoot: ctx.config.workspaceRoot,
         wikiRoot: ctx.config.wikiRoot,
+        writeRoot,
         maxPayloadBytes: ctx.config.maxToolPayloadBytes,
         readOnly: ctx.config.readOnly,
       });
@@ -28,22 +45,17 @@ export const writeFileTool: ToolDef<typeof params> = {
       throw err;
     }
 
-    if (!ctx.approvedWritePaths.has(safe)) {
-      const previewSlice = content.slice(0, 400);
-      const preview = previewSlice + (content.length > 400 ? '\n…' : '');
-      const answer = await ctx.requestApproval(safe, preview);
-      if (answer === 'no') {
-        return { ok: false, error: 'User declined the write.' };
-      }
-      if (answer === 'always') {
-        ctx.approvedWritePaths.add(safe);
-      }
-    }
-
     fs.mkdirSync(path.dirname(safe), { recursive: true });
     const tmp = `${safe}.tmp`;
     fs.writeFileSync(tmp, content, 'utf8');
     fs.renameSync(tmp, safe);
-    return { ok: true, path: inputPath, bytesWritten: Buffer.byteLength(content, 'utf8') };
+    // 返回实际落点：绝对路径 + file:// URL（可直接在浏览器打开）。模型据此给用户
+    // 可打开的链接，而不是会被终端误渲染成 http:// 的相对路径。
+    return {
+      ok: true,
+      path: safe,
+      url: pathToFileURL(safe).href,
+      bytesWritten: Buffer.byteLength(content, 'utf8'),
+    };
   },
 };

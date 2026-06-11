@@ -95,6 +95,13 @@ const ConfigSchema = z.object({
    * SDK 仍会按默认重试策略对超时/网络错误重试。
    */
   requestTimeoutMs: z.number().int().positive(),
+  /**
+   * run_command 工具的默认超时（毫秒），默认 60_000。单次工具调用可用
+   * timeout_ms 参数覆盖。超时先 SIGTERM、5s 后 SIGKILL。
+   */
+  commandTimeoutMs: z.number().int().positive(),
+  /** http_request 工具的默认超时（毫秒），默认 30_000。单次可用 timeout_ms 覆盖。 */
+  httpTimeoutMs: z.number().int().positive(),
   maxToolPayloadBytes: z.number().int().positive(),
   historyFile: z.string().min(1),
   /**
@@ -214,6 +221,8 @@ export interface ConfigOverrides {
   wikiRoot?: string;
   readOnly?: boolean;
   requestTimeoutMs?: number;
+  commandTimeoutMs?: number;
+  httpTimeoutMs?: number;
   maxToolPayloadBytes?: number;
   additionalReadPaths?: string[];
   queueStatePath?: string;
@@ -245,6 +254,8 @@ const DEFAULTS = {
   baseURL: 'https://api.deepseek.com',
   model: 'deepseek-chat',
   requestTimeoutMs: 120_000,
+  commandTimeoutMs: 60_000,
+  httpTimeoutMs: 30_000,
   maxToolPayloadBytes: 100_000,
   queueConcurrency: 2,
   queueMaxAttempts: 3,
@@ -439,6 +450,9 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
       parsePositiveIntEnv(process.env.PITH_WIKI_TIMEOUT_MS) ??
       file.requestTimeoutMs ??
       DEFAULTS.requestTimeoutMs,
+    commandTimeoutMs:
+      overrides.commandTimeoutMs ?? file.commandTimeoutMs ?? DEFAULTS.commandTimeoutMs,
+    httpTimeoutMs: overrides.httpTimeoutMs ?? file.httpTimeoutMs ?? DEFAULTS.httpTimeoutMs,
     maxToolPayloadBytes:
       overrides.maxToolPayloadBytes ?? file.maxToolPayloadBytes ?? DEFAULTS.maxToolPayloadBytes,
     historyFile: path.join(pithWikiHome(), 'history'),

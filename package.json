@@ -30,6 +30,7 @@
   },
   "files": [
     "dist",
+    "bundled-skills",
     "README.md",
     "README.zh-CN.md",
     "LICENSE"

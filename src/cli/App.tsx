@@ -8,7 +8,12 @@ import { createClient } from '../llm/client.js';
 import { composeSystemPrompt, loadSoul, type LoadedSoul } from '../llm/soul.js';
 import { buildContext } from '../tools/index.js';
 import { makeSkillTool } from '../tools/skill.js';
+import { runCommandTool } from '../tools/run_command.js';
+import { httpRequestTool } from '../tools/http_request.js';
 import { buildSkillRegistry, SkillRegistry } from '../skills/index.js';
+import { installSkillFromSource, removeSkillByName, SkillExistsError } from '../skills/install.js';
+import { listBundledSkills } from '../skills/bundled.js';
+import { pithWikiHome } from '../paths.js';
 import {
   ensureOutputDir,
   ensureQueueDirs,
@@ -334,8 +339,26 @@ export function App({ config: initialConfig }: Props) {
     () => (path: string, preview: string) =>
       new Promise<'yes' | 'no' | 'always'>((resolve) => {
         setApproval({
+          kind: 'write',
           path,
           preview,
+          resolve: (answer) => {
+            setApproval(null);
+            resolve(answer);
+          },
+        });
+      }),
+    [],
+  );
+
+  // 命令执行审批：与写入审批共用 setApproval 队列，靠 kind='exec' 区分文案。
+  const requestCommandApproval = useMemo(
+    () => (command: string, argvPreview: string) =>
+      new Promise<'yes' | 'no' | 'always'>((resolve) => {
+        setApproval({
+          kind: 'exec',
+          path: command,
+          preview: argvPreview,
           resolve: (answer) => {
             setApproval(null);
             resolve(answer);
@@ -375,12 +398,16 @@ export function App({ config: initialConfig }: Props) {
       converterRegistry: converters.registry,
       converterCache: converters.cache,
       skillRegistry,
+      requestCommandApproval,
     });
     const systemPrompt = composeSystemPrompt(defaultSystemPrompt, soul);
     // skill 走单个 `skill` 工具（仅当存在 skill 时才挂，避免空 catalog 的死工具）。
     const extraTools = skillRegistry.list().length > 0 ? [makeSkillTool(skillRegistry)] : [];
+    // run_command / http_request 仅当有 skill 声明过对应能力时才挂（否则是永远失败的死工具）。
+    if (skillRegistry.allowedCommands().size > 0) extraTools.push(runCommandTool);
+    if (skillRegistry.allowedHosts().size > 0) extraTools.push(httpRequestTool);
     return new Agent(client, config.model, ctx, { systemPrompt, extraTools });
-  }, [config, client, requestApproval, library, converters, soul, skillRegistry]);
+  }, [config, client, requestApproval, requestCommandApproval, library, converters, soul, skillRegistry]);
 
   const append = (msg: Omit<DisplayMessage, 'id'>) =>
     setMessages((prev) => [...prev, { ...msg, id: nextId() }]);
@@ -626,7 +653,7 @@ export function App({ config: initialConfig }: Props) {
       });
     } else if (cmd === '/skill' || cmd.startsWith('/skill ')) {
       const arg = cmd === '/skill' ? '' : cmd.slice('/skill '.length).trim();
-      handleSkill(arg);
+      void handleSkill(arg);
     } else if (cmd === '/exit' || cmd === '/quit') {
       exit();
     } else {
@@ -644,34 +671,150 @@ export function App({ config: initialConfig }: Props) {
   };
 
   /**
-   * `/skill`（无参）→ 列出已发现的 skill。调用一个 skill 用 `/<name> <问题>`
-   * （见 invokeSkillByName）；`/skill <name> <问题>` 也等价可用。
+   * `/skill`（无参）→ 列出已发现的 skill。
+   * `/skill add <source>` / `/skill remove <name>` → REPL 内安装/卸载（热生效）。
+   * `/skill <name> <问题>` → 调用某个 skill（等价于 /<name> <问题>）。
    */
-  const handleSkill = (arg: string): void => {
-    const all = skillRegistry.list();
-    if (!arg) {
-      if (all.length === 0) {
-        append({
-          role: 'system',
-          text:
-            'No skills installed.\nDrop a <name>/SKILL.md under ' +
-            config.skillDirs.map((d) => shortenHome(d)).join(' or ') +
-            ',\nor use `pith-wiki skill add <path>`. Restart REPL to pick up changes.',
-        });
+  const handleSkill = async (arg: string): Promise<void> => {
+    const firstSpace = arg.search(/\s/);
+    const head = firstSpace === -1 ? arg : arg.slice(0, firstSpace);
+    const rest = firstSpace === -1 ? '' : arg.slice(firstSpace + 1).trim();
+
+    if (head === 'add') {
+      // 解析可选的 --force（位置不限），其余 token 拼回 source。
+      const tokens = rest.split(/\s+/).filter(Boolean);
+      const force = tokens.includes('--force');
+      const source = tokens.filter((t) => t !== '--force').join(' ');
+      if (!source) {
+        append({ role: 'error', text: 'Usage: /skill add <path | git-url | owner/repo> [--force]' });
         return;
       }
-      const lines = all.map((s) => `  /${s.name}  —  ${s.description}`);
-      append({
-        role: 'system',
-        text: 'Installed skills (invoke with /<name> <your question>):\n' + lines.join('\n'),
-      });
+      await handleSkillAdd(source, force);
       return;
     }
-    // `/skill <name> <问题>`：拆出名字 + 问题，复用 invokeSkillByName。
-    const firstSpace = arg.search(/\s/);
-    const name = firstSpace === -1 ? arg : arg.slice(0, firstSpace);
-    const question = firstSpace === -1 ? '' : arg.slice(firstSpace + 1).trim();
-    invokeSkillByName(name, question);
+    if (head === 'remove') {
+      if (!rest) {
+        append({ role: 'error', text: 'Usage: /skill remove <name>' });
+        return;
+      }
+      handleSkillRemove(rest);
+      return;
+    }
+
+    // `/skill` 与 `/skill list` 都展示已装 + 可装（list 是 add/remove 的同级子命令，
+    // 不是 skill 名 —— 不显式接住会被 invokeSkillByName 当成 "skill list" 报错）。
+    if (!arg || (head === 'list' && !rest)) {
+      const all = skillRegistry.list();
+      const installed = new Set(skillRegistry.names());
+      const available = listBundledSkills().filter((b) => !installed.has(b.name));
+
+      // 纯文本 fallback（transcript / 无色环境）。node 负责着色：绿=已装，黄=待装。
+      const textParts: string[] = [];
+      textParts.push(
+        all.length === 0
+          ? 'No skills installed. Install: /skill add <name>'
+          : 'Installed: ' + all.map((s) => `/${s.name}`).join(', '),
+      );
+      if (available.length > 0) {
+        textParts.push('Available (bundled): ' + available.map((b) => b.name).join(', '));
+      }
+
+      const node = (
+        <Box flexDirection="column">
+          {all.length === 0 ? (
+            <Text color="gray">{'No skills installed.'}</Text>
+          ) : (
+            <>
+              <Text color="green" bold>
+                {'Installed（已安装 · /<name> 调用）'}
+              </Text>
+              {all.map((s) => (
+                <Text key={`i-${s.name}`}>{`  /${s.name}  —  ${s.description}`}</Text>
+              ))}
+            </>
+          )}
+          {available.length > 0 && (
+            <>
+              <Text color="yellow" bold>
+                {'Available（待安装 · /skill add <name>）'}
+              </Text>
+              {available.map((b) => (
+                <Text key={`a-${b.name}`}>{`  ${b.name}  —  ${b.description}`}</Text>
+              ))}
+            </>
+          )}
+          <Text color="gray">{'Manage: /skill add <source> · /skill remove <name>'}</Text>
+        </Box>
+      );
+      append({ role: 'system', text: textParts.join('\n'), node });
+      return;
+    }
+    // `/skill <name> <问题>`：复用 invokeSkillByName。
+    invokeSkillByName(head, rest);
+  };
+
+  /**
+   * REPL 内安装 skill：装完重新扫描 skillDirs 并 setSkillRegistry —— 触发
+   * agent useMemo 重建，新 skill 的 catalog/slash 命令立即生效，无需重启。
+   * 代价：与 /provider 切换同语义，会重置当前对话历史（agent 是新实例）。
+   */
+  const handleSkillAdd = async (source: string, force = false): Promise<void> => {
+    try {
+      const result = installSkillFromSource(source, config, { force });
+      const reg = await buildSkillRegistry({ skillDirs: config.skillDirs });
+      setSkillRegistry(reg); // 触发 agent 重建（热加载 + 对话重置）
+      const parts = [`✓ installed skill "${result.skill.name}" → ${shortenHome(result.dest)}`];
+      if (result.skill.commands.length > 0) {
+        parts.push(
+          `⚠ declares executable command(s): ${result.skill.commands.join(', ')} — ` +
+            'the agent can run these after you approve them.',
+        );
+      }
+      if (result.missingRequires.length > 0) {
+        parts.push(
+          `⚠ missing CLI(s) on PATH: ` +
+            result.missingRequires
+              .map((m) => (m.install ? `${m.bin} (install: ${m.install})` : m.bin))
+              .join(', '),
+        );
+      }
+      // 需要 API key 的 skill（如 weread）：引导用户设置对应环境变量再用。
+      if (result.missingEnv.length > 0) {
+        parts.push(
+          `🔑 还需设置 ${result.missingEnv.join('、')} 才能使用：在 ` +
+            `${shortenHome(pithWikiHome())}/.env 写入（如 ${result.missingEnv[0]}=你的key），重启 REPL 生效。` +
+            (result.skill.name === 'weread'
+              ? '\n   微信读书的 key 到 https://weread.qq.com/r/weread-skills 登录获取。'
+              : ''),
+        );
+      }
+      parts.push('（已重新加载 skill；本次安装重置了对话上下文）');
+      append({ role: 'system', text: parts.join('\n') });
+    } catch (err) {
+      if (err instanceof SkillExistsError) {
+        append({
+          role: 'error',
+          text: `${err.message}. 重装请加 --force：/skill add ${source} --force`,
+        });
+      } else {
+        append({ role: 'error', text: `skill add failed: ${(err as Error).message}` });
+      }
+    }
+  };
+
+  const handleSkillRemove = (name: string): void => {
+    const removed = removeSkillByName(name, config);
+    if (!removed) {
+      append({ role: 'error', text: `Skill not found: ${name}` });
+      return;
+    }
+    void buildSkillRegistry({ skillDirs: config.skillDirs }).then((reg) => {
+      setSkillRegistry(reg);
+      append({
+        role: 'system',
+        text: `✓ removed skill "${name}"（已重新加载；对话上下文已重置）`,
+      });
+    });
   };
 
   /**

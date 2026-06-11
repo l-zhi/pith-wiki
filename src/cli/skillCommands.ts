@@ -1,9 +1,17 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { ensureSkillsDir, type Config } from '../config.js';
-import { buildSkillRegistry, loadSkill } from '../skills/index.js';
+import { type Config } from '../config.js';
+import { buildSkillRegistry } from '../skills/index.js';
+import { listBundledSkills } from '../skills/bundled.js';
+import {
+  installSkillFromSource,
+  SkillExistsError,
+  resolveGitSource,
+} from '../skills/install.js';
+
+// resolveGitSource 现在定义在 skills/install.ts;这里 re-export 保持现有导入方。
+export { resolveGitSource } from '../skills/install.js';
 
 interface BuildArgs {
   configFor: (overrides?: Partial<Config>) => Config;
@@ -33,60 +41,88 @@ export function buildSkillCommands(program: Command, args: BuildArgs): void {
         onWarn: (m) => warnings.push(m),
       });
       const all = reg.list();
+      const installed = new Set(reg.names());
+      // 可装内置 skill（捆绑分发、尚未安装的）—— 提升可发现性。
+      const available = listBundledSkills().filter((b) => !installed.has(b.name));
+
       if (all.length === 0) {
-        console.log('No skills found. Searched:');
+        console.log('No skills installed. Searched:');
         for (const d of config.skillDirs) console.log(`  ${d}`);
-        console.log('\nDrop a <name>/SKILL.md into one of those dirs, or use `pith-wiki skill add <path>`.');
-        return;
+      } else {
+        console.log(chalk.green(`Installed skills (${all.length}):`));
+        for (const s of all) {
+          console.log(`  ${s.name}  ${chalk.dim(s.description)}`);
+          console.log(chalk.dim(`      ${s.dir}`));
+        }
       }
-      console.log(`Skills (${all.length}):`);
-      for (const s of all) {
-        console.log(`  ${chalk.cyan(s.name)}  ${s.description}`);
-        console.log(chalk.dim(`      ${s.dir}`));
+      if (available.length > 0) {
+        console.log(
+          chalk.yellow('\nAvailable to install (bundled) — `pith-wiki skill add <name>`:'),
+        );
+        for (const b of available) {
+          console.log(`  ${b.name}  ${chalk.dim(b.description)}`);
+        }
       }
       for (const w of warnings) console.warn(chalk.yellow(`⚠ ${w}`));
     });
 
   skill
-    .command('add <path>')
-    .description('Install a skill by copying its directory (containing SKILL.md) into the user skills dir.')
+    .command('add <source>')
+    .description(
+      'Install a skill from a local directory, a git URL, or a GitHub owner/repo short name. ' +
+        'The source must contain a SKILL.md.',
+    )
     .option('--force', 'Overwrite an existing skill of the same name.')
-    .action(async (srcPath: string, opts: { force?: boolean }) => {
+    .action(async (source: string, opts: { force?: boolean }) => {
       const config = args.configFor();
-      const src = path.resolve(srcPath);
-      if (!fs.existsSync(src) || !fs.statSync(src).isDirectory()) {
-        console.error(chalk.red(`Not a directory: ${src}`));
-        process.exitCode = 1;
-        return;
-      }
-      // 校验源目录是个合法 skill（frontmatter + 非空正文）。
-      let name: string;
-      try {
-        name = loadSkill(src).name;
-      } catch (err) {
-        console.error(chalk.red(`Invalid skill at ${src}: ${(err as Error).message}`));
-        process.exitCode = 1;
-        return;
-      }
+      const gitUrl = resolveGitSource(source);
+      if (gitUrl) console.log(chalk.dim(`Cloning ${gitUrl} …`));
 
-      ensureSkillsDir(config);
-      const destRoot = config.skillDirs[0];
-      if (!destRoot) {
-        console.error(chalk.red('No skillDirs configured to install into.'));
-        process.exitCode = 1;
-        return;
-      }
-      const dest = path.join(destRoot, name);
-      if (fs.existsSync(dest)) {
-        if (!opts.force) {
-          console.error(chalk.red(`Skill "${name}" already exists at ${dest}. Use --force to overwrite.`));
-          process.exitCode = 1;
-          return;
+      try {
+        const result = installSkillFromSource(source, config, { force: opts.force });
+        console.log(chalk.green(`Installed skill "${result.skill.name}" → ${result.dest}`));
+        if (result.skill.commands.length > 0) {
+          console.log(
+            chalk.yellow(
+              `\n⚠ Skill "${result.skill.name}" declares executable command(s): ${result.skill.commands.join(', ')}`,
+            ),
+          );
+          console.log(
+            chalk.dim('  The agent will be able to run these after you approve them in the REPL.'),
+          );
         }
-        fs.rmSync(dest, { recursive: true, force: true });
+        if (result.missingRequires.length > 0) {
+          console.warn(
+            chalk.yellow(`\n⚠ This skill needs ${result.missingRequires.length} CLI(s) not on PATH:`),
+          );
+          for (const m of result.missingRequires) {
+            console.warn(
+              chalk.yellow(`  - ${m.bin}`) + (m.install ? chalk.dim(`   install: ${m.install}`) : ''),
+            );
+          }
+        }
+        // 需要 API key 的 skill（如 weread）：引导设置环境变量。
+        if (result.missingEnv.length > 0) {
+          console.log(
+            chalk.yellow(`\n🔑 Set ${result.missingEnv.join(', ')} before using this skill:`),
+          );
+          console.log(
+            chalk.dim(`  add it to ~/.pith-wiki/.env (e.g. ${result.missingEnv[0]}=your-key)`),
+          );
+          if (result.skill.name === 'weread') {
+            console.log(
+              chalk.dim('  get the weread key at https://weread.qq.com/r/weread-skills (login required)'),
+            );
+          }
+        }
+      } catch (err) {
+        if (err instanceof SkillExistsError) {
+          console.error(chalk.red(`${err.message}. Use --force to overwrite.`));
+        } else {
+          console.error(chalk.red((err as Error).message));
+        }
+        process.exitCode = 1;
       }
-      fs.cpSync(src, dest, { recursive: true });
-      console.log(chalk.green(`Installed skill "${name}" → ${dest}`));
     });
 
   skill
