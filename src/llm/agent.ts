@@ -6,6 +6,7 @@ import type {
   ChatCompletionMessageToolCall,
 } from 'openai/resources/chat/completions';
 import { ALL_TOOLS, ToolContext, toolsForOpenAI, type AnyToolDef } from '../tools/index.js';
+import { SecurityBlockError } from '../security/index.js';
 import type { QueryScope } from '../wiki/assembler.js';
 
 /**
@@ -231,6 +232,11 @@ export class Agent {
     const scope = normalizeScope(opts.scope);
     this.currentScope = scope;
 
+    // 安全阻断的回滚点：SecurityBlockError 时把本轮压入的所有消息（scope preamble、
+    // user 提问、中间 assistant/tool 轮）整体弹掉。否则违禁内容驻留历史，
+    // 之后每一轮请求都会再次命中 block，会话被永久卡死。
+    const historyMark = this.messages.length;
+
     // @-mention 钉死保证：本轮范围非空时，先用 scope-aware query 预算一段上下文，
     // 作为一条临时 user 消息压在真实问题前——即使模型本轮不调 wiki_query，
     // @文件 / @目录 的内容也已经在模型眼前。集合 scope 同时靠 currentScope 持续收窄。
@@ -262,6 +268,10 @@ export class Agent {
       } catch (err) {
         const e = err as { status?: number; message?: string; name?: string };
         if (e.name === 'AbortError') throw err;
+        if (err instanceof SecurityBlockError) {
+          this.messages.splice(historyMark);
+          throw err;
+        }
         throw new AgentError(classifyError(e), e.message ?? 'LLM request failed');
       }
 

@@ -3,6 +3,7 @@ import path from 'node:path';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import { Agent, AgentError, defaultSystemPrompt } from '../llm/agent.js';
+import { SecurityBlockError, type SecurityNoticeKind } from '../security/index.js';
 import { createClient } from '../llm/client.js';
 import { composeSystemPrompt, loadSoul, type LoadedSoul } from '../llm/soul.js';
 import { buildContext } from '../tools/index.js';
@@ -69,8 +70,18 @@ export function App({ config: initialConfig }: Props) {
     };
   }, [initialConfig, activeProviderName]);
 
+  // 安全模块提示（脱敏/还原异常）→ UI 系统消息。client 的 useMemo 声明早于
+  // append，用 ref 间接转发，避免闭包捕获声明顺序问题。
+  const securityNoticeRef = useRef<(msg: string, kind: SecurityNoticeKind) => void>(() => {});
+
   // OpenAI client 跟随 config；切换 provider 时自动重建。
-  const client = useMemo(() => createClient(config), [config]);
+  const client = useMemo(
+    () =>
+      createClient(config, {
+        onSecurityNotice: (msg, kind) => securityNoticeRef.current(msg, kind),
+      }),
+    [config],
+  );
 
   // SOUL.md：启动时按 (config.soulFile > env > 默认双层) 解析一次。
   // useState lazy init 保证整个 session 只读一次盘——切 provider 不需要重读
@@ -93,7 +104,8 @@ export function App({ config: initialConfig }: Props) {
           : '\ntranscript off') +
         (soul.sources.length > 0
           ? `\nsoul loaded from ${soul.sources.map((p) => shortenHome(p)).join(' + ')}`
-          : ''),
+          : '') +
+        (config.securityEnabled ? `\nsecurity filter on (outbound mask/block + restore)` : ''),
     },
   ]);
   const [inFlight, setInFlight] = useState(false);
@@ -373,6 +385,14 @@ export function App({ config: initialConfig }: Props) {
   const append = (msg: Omit<DisplayMessage, 'id'>) =>
     setMessages((prev) => [...prev, { ...msg, id: nextId() }]);
 
+  // append 就绪后接通安全提示（ref 赋值幂等，每次 render 重设无副作用）。
+  // masked（常规脱敏计数）对用户透明：对话里显示的本来就是原文，脱敏只发生在
+  // 出站链路上 —— 默认不打扰，verbose 模式才显示。warning/info 始终显示。
+  securityNoticeRef.current = (msg, kind) => {
+    if (kind === 'masked' && !verbose) return;
+    append({ role: 'system', text: `🔒 ${msg}` });
+  };
+
   // `@`-mention 数据：flat 候选给 parseScope 校验、目录树给 InputBox 导航。
   // 随 messages 长度变化重算，让本会话内 ingest / worker 新增的条目也能进 picker
   // （list() 走内存索引，廉价）。
@@ -495,6 +515,10 @@ export function App({ config: initialConfig }: Props) {
     } catch (err) {
       if ((err as Error).name === 'AbortError') {
         // Already surfaced via the cancel handler.
+      } else if (err instanceof SecurityBlockError) {
+        const text = `🔒 ${err.message} — 本轮输入已从会话历史回滚，可改写后重新提问。`;
+        append({ role: 'error', text });
+        transcript?.recordError(text);
       } else if (err instanceof AgentError) {
         const text = `[${err.kind}] ${err.message}`;
         append({ role: 'error', text });
