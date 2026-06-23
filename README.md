@@ -93,4 +93,4 @@ are resolved at run time so "yesterday" is always correct.
 
 ## License
 
-[MIT](LICENSE) · Copyright (c) 2026 lizhi
+[Apache 2.0](LICENSE) · Copyright (c) 2026 lizhi

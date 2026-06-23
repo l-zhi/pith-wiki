@@ -82,4 +82,4 @@ inbox folder），有变动就自动入队、后台 worker 自动消化。内置
 
 ## License
 
-[MIT](LICENSE) · Copyright (c) 2026 lizhi
+[Apache 2.0](LICENSE) · Copyright (c) 2026 lizhi
