@@ -1,7 +1,7 @@
 {
   "name": "@pith/desktop",
-  "version": "0.1.0",
-  "description": "pith — local-first LLM second brain, macOS desktop app (Electron shell over the pith-wiki core)",
+  "version": "0.4.0",
+  "description": "pith — local-first LLM second brain, desktop app (Electron shell over the pith-wiki core)",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
@@ -11,7 +11,9 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "pack": "electron-vite build && electron-builder --dir",
+    "dist": "electron-vite build && electron-builder"
   },
   "dependencies": {
     "chokidar": "^5.0.0",
@@ -41,6 +43,7 @@
     "@types/turndown": "^5.0.6",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
     "electron-vite": "^3.0.0",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
@@ -51,5 +54,58 @@
     "vite": "^6.0.3",
     "vitest": "^2.1.8",
     "zustand": "^5.0.2"
+  },
+  "build": {
+    "appId": "io.opensci.pith",
+    "productName": "pith",
+    "directories": {
+      "buildResources": "resources"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      }
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "l-zhi",
+        "repo": "pith-wiki"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "resources/icon.icns",
+      "identity": null,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64", "x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["arm64", "x64"]
+        }
+      ]
+    },
+    "win": {
+      "icon": "resources/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

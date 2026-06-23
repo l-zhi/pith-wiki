@@ -1,0 +1,44 @@
+name: release
+
+# 推送 v* tag（如 v0.4.0）或手动触发时，分别在原生 macOS / Windows runner 上打包桌面 app，
+# 用 electron-builder 发布到 GitHub Releases。未签名版本：mac 走 ad-hoc、win 不签名。
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write # electron-builder 创建/上传 Release 需要
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # 引擎 import 仓库根 src（@core）；根依赖装上以防构建期解析需要
+      - name: Install root deps
+        run: npm ci
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build + package + publish
+        working-directory: desktop
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 不做自动签名发现：未签名发布（避免 CI 上找证书失败）
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        # electron-builder 默认按当前 runner 平台打对应目标（mac→dmg/zip，win→nsis）
+        run: npm run dist -- --publish always
