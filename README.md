@@ -4,8 +4,8 @@
 
 A local-first LLM wiki, Karpathy-style: don't shove raw documents into a vector
 DB and pray. Hydrate them into dense Markdown entries, retrieve by keyword + link
-traversal. File-based, works with any OpenAI-compatible LLM endpoint — drive it
-from a terminal REPL **or a native desktop app**.
+traversal. File-based, works with any OpenAI-compatible LLM endpoint — and runs
+as a **native desktop app**.
 
 ![Obsidian vault + pith-wiki side by side](docs/screenshots/Obsidian-pithwiki.png)
 
@@ -28,65 +28,27 @@ theoretically usable but **not in CI** — `fs.rename` atomicity, chokidar
 fs-events, `path.delimiter` all differ from POSIX. PRs welcome; not a launch
 priority.
 
-## Install
+## Run the app
 
-```bash
-npm install -g pith-wiki
-```
-
-Then:
-
-```bash
-# Interactive one-shot setup — pick provider, paste API key, set a watch dir.
-# All prompts are skippable; press Enter to accept defaults.
-pith-wiki init
-
-# Or non-interactive (for scripts / CI):
-pith-wiki init --provider deepseek \
-               --api-key sk-xxxxxxxxxxxxxxxx \
-               --watch-dir ~/Obsidian \
-               --no-prompt
-
-# Enter the REPL
-pith-wiki
-```
-
-`init` writes a minimal `~/.pith-wiki/.env` (single API-key line, `chmod 600`)
-and — only if you picked a non-default provider or set a watch dir —
-a minimal `~/.pith-wiki/config.json`.
-
-> Five minutes from zero to first ingest → [docs/quickstart.md](docs/quickstart.md).
-
-### Developers: build from source
-
-Want to change code, contribute, or run `main`:
+The desktop app (Electron) is the way to use pith — chat, inbox, dashboard, link
+graph, skills, and a **scheduled-tasks** view with a calendar, all over the same
+engine and on-disk library. No packaged installer yet, so run it from source:
 
 ```bash
 git clone https://github.com/l-zhi/pith-wiki.git
-cd pith-wiki
-npm install
-npm run dev -- init      # tsx compiles + runs without `npm run build`
-npm run dev              # launch REPL
-```
-
-Other dev scripts: `npm test` / `npm run typecheck` / `npm run lint` /
-`npm run build` / `npm run release:check`.
-
-For a side-by-side dev/prod setup (so production data isn't disturbed while you
-iterate), see the `bin/pith-wiki-dev` shim and the `PITH_WIKI_HOME` env var.
-Detailed contributor flow in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-### Desktop app
-
-A native desktop app (Electron) wraps the same engine and library — chat, inbox,
-dashboard, link graph, skills, and a **scheduled-tasks** view with a calendar.
-Run it from source:
-
-```bash
-cd desktop
+cd pith-wiki/desktop
 npm install
 npm run dev      # electron-vite dev (HMR)
 ```
+
+On first launch, onboarding walks you through setup — pick a provider, paste an
+API key, and point it at a notes folder to watch. Everything lives under
+`~/.pith-wiki/` (config + wiki data); set `PITH_WIKI_HOME` for an isolated
+profile.
+
+Dev scripts: `npm test` / `npm run typecheck` / `npm run build` (run inside
+`desktop/`, or at the repo root for the engine/core). Contribution flow in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## What it does
 
@@ -104,51 +66,27 @@ plain Markdown; Obsidian, VS Code, and Git all open them natively.
 (`wiki_query` fuzzy search, `wiki_grep` exact search, `wiki_get`,
 `wiki_read_source`, `wiki_ingest`, `read_file` / `write_file` / `list_dir`, …).
 Every turn writes a transcript; `/digest` distills the conversation back into a
-wiki entry, closing the loop chat → store → retrieve. Same agent in the terminal
-REPL and the desktop app.
+wiki entry, closing the loop chat → store → retrieve.
 
-**4. Auto-ingest** — configure `watchDirs` and changes in your notes folder
-(Obsidian vault, inbox, etc.) are auto-enqueued. A background worker hydrates
-them. `pith-wiki doctor` periodically checks library health (orphan links,
-broken frontmatter, ID collisions).
+**4. Auto-ingest** — point a watch folder (Obsidian vault, inbox, etc.) at pith
+in Settings, and changes are auto-enqueued for a background worker to hydrate.
+Built-in health checks flag orphan links, broken frontmatter, and ID collisions.
 
 **5. Schedule** *(desktop)* — set tasks that run an agent prompt on a schedule
 (once, or cron) — e.g. a daily digest of everything added yesterday. Each fire
 opens a fresh session you can reopen; `${yyyy-mm-dd -1}`-style date placeholders
 are resolved at run time so "yesterday" is always correct.
 
-## Command cheatsheet
-
-| Command | One-liner |
-|---|---|
-| `pith-wiki init [--force] [--provider <id>] [--api-key <k>] [--watch-dir <p>] [--no-initial-scan] [--no-prompt]` | Interactive (or flagged) one-shot setup of `~/.pith-wiki/` |
-| `pith-wiki` | Enter REPL (chat + auto worker + auto transcript) |
-| `pith-wiki ingest --collection <c> --file <p>` | Hydrate a single file into the library |
-| `pith-wiki ingest --collection <c> --dir <d>` | Recursively ingest a directory |
-| `pith-wiki queue add\|status\|run\|retry\|clear` | Manage the persistent ingest queue |
-| `pith-wiki watch` | Start the directory watcher (REPL does this automatically) |
-| `pith-wiki get <id>` / `list` / `query "..."` | Retrieve (no LLM call needed) |
-| `pith-wiki doctor [--json] [--check ...]` | Library health check (no LLM call needed) |
-| `pith-wiki converters` / `status` | List converters / open the dashboard |
-| `pith-wiki --help` | All subcommands |
-
-Detailed flags, REPL slash commands, watcher / queue configuration:
-[docs/usage.md](docs/usage.md).
-
 ## Full documentation
 
 | Document | When to read it |
 |---|---|
-| [docs/quickstart.md](docs/quickstart.md) | Five-minute zero-to-first-ingest |
-| [docs/usage.md](docs/usage.md) | All CLI commands, REPL, queue, watcher, doctor, multi-provider |
-| [docs/repl-workflow.md](docs/repl-workflow.md) | Multi-terminal workflow, transcripts, `/digest`, daily routine |
 | [docs/config.md](docs/config.md) | Configuration field reference, `additionalReadPaths`, on-disk layout |
 | [docs/config.example.json](docs/config.example.json) | Full `~/.pith-wiki/config.json` example (multi-provider + watchDirs + queue) |
 | [docs/entry-format.md](docs/entry-format.md) | YAML frontmatter spec for entries |
 | [docs/architecture.md](docs/architecture.md) | Three core services + data-flow diagram |
 | [docs/security-model.md](docs/security-model.md) | Sandbox invariants (required reading for contributors) |
-| [docs/release.md](docs/release.md) | Release checklist + historical regressions |
-| [docs/roadmap.md](docs/roadmap.md) | Likely next / maybe someday / explicit non-goals |
+| [docs/usage.md](docs/usage.md) | CLI reference (advanced / automation — the app is the primary way to run) |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution flow |
 | [CHANGELOG.md](CHANGELOG.md) | Version history |
