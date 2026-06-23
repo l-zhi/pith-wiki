@@ -75,7 +75,8 @@
       {
         "provider": "github",
         "owner": "l-zhi",
-        "repo": "pith-wiki"
+        "repo": "pith-wiki",
+        "releaseType": "release"
       }
     ],
     "mac": {
