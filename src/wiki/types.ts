@@ -20,7 +20,8 @@ import { z } from 'zod';
  *
  * 兼容旧条目：旧的纯 ASCII kebab-case ids 仍属于新正则的子集，迁移零成本。
  */
-export const ID_RE = /^[a-z0-9\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}][a-z0-9\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}-]*$/u;
+export const ID_RE =
+  /^[a-z0-9\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}][a-z0-9\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}-]*$/u;
 
 export const SourceSchema = z.object({
   type: z.enum(['url', 'file', 'inline', 'unknown']),
@@ -65,12 +66,10 @@ export function isValidSubpath(s: string): boolean {
   return true;
 }
 
-export const SubpathSchema = z
-  .string()
-  .refine(isValidSubpath, {
-    message:
-      'subpath must be POSIX-style relative path (no leading/trailing slash, no .. or dot segments, no \\ or NUL)',
-  });
+export const SubpathSchema = z.string().refine(isValidSubpath, {
+  message:
+    'subpath must be POSIX-style relative path (no leading/trailing slash, no .. or dot segments, no \\ or NUL)',
+});
 
 export const EntrySchema = z.object({
   id: z
@@ -94,7 +93,18 @@ export const EntrySchema = z.object({
   links: z.array(z.string()).default([]),
   content: z.string(),
   source: SourceSchema.default({ type: 'unknown' }),
+  /** 最后一次水合/写入的时刻（ISO）。会随再水合刷新——不是「入库时间」。 */
   updated: z.string(),
+  /**
+   * 首次入库时刻（ISO，稳定，不随再水合变动）。「某天新增到 pith 的」按这个查。
+   * 旧条目缺省 → 读取时回退到 updated。由 LibraryService.put 维护（保留既有值或首次置now）。
+   */
+  ingestedAt: z.string().optional(),
+  /**
+   * 内容**自身**的日期（YYYY-MM-DD），与何时导入无关：文档修改日 / 读书笔记日 /
+   * 文章发布日等。水合时由 LLM 从原文抽取，或 ingest 时显式传入；抽不到则缺省。
+   */
+  date: z.string().optional(),
   compressionRatio: z.number().min(0).max(1).optional(),
 });
 
@@ -108,5 +118,7 @@ export const HydrationOutputSchema = z.object({
   tags: z.array(z.string()).default([]),
   links: z.array(z.string()).default([]),
   content: z.string().min(1),
+  /** 内容自身日期（YYYY-MM-DD）：原文有明确日期才给，否则省略。 */
+  date: z.string().optional(),
 });
 export type HydrationOutput = z.infer<typeof HydrationOutputSchema>;

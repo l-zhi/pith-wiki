@@ -1,0 +1,151 @@
+/* pith Design System tokens — verbatim copies from design/pith-design-system/project/tokens */
+@import './colors.css';
+@import './typography.css';
+@import './spacing.css';
+@import './elevation.css';
+@import './base.css';
+
+/* ───── app shell ───── */
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* 红绿灯所在的标题栏区域可拖拽窗口；交互控件自身排除 */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+.titlebar-drag button,
+.titlebar-drag input {
+  -webkit-app-region: no-drag;
+}
+
+/* markdown 正文（assistant 消息 / Reader） */
+.pith-md {
+  font-size: var(--text-body);
+  line-height: var(--leading-relaxed);
+  color: var(--text-primary);
+  word-wrap: break-word;
+}
+.pith-md > :first-child {
+  margin-top: 0;
+}
+.pith-md > :last-child {
+  margin-bottom: 0;
+}
+.pith-md h1,
+.pith-md h2,
+.pith-md h3 {
+  letter-spacing: var(--tracking-tight);
+  line-height: var(--leading-snug);
+  margin: 1.2em 0 0.45em;
+}
+.pith-md h1 {
+  font-size: var(--text-title-3);
+}
+.pith-md h2 {
+  font-size: var(--text-headline);
+}
+.pith-md h3 {
+  font-size: var(--text-body);
+}
+.pith-md p,
+.pith-md ul,
+.pith-md ol {
+  margin: 0.55em 0;
+}
+.pith-md ul,
+.pith-md ol {
+  padding-left: 1.4em;
+}
+.pith-md li {
+  margin: 0.25em 0;
+}
+.pith-md code {
+  font: var(--font-code);
+  background: var(--surface-sunken);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+.pith-md pre {
+  background: var(--surface-sunken);
+  box-shadow: var(--ring-card);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+.pith-md pre code {
+  background: transparent;
+  padding: 0;
+}
+.pith-md blockquote {
+  margin: 0.6em 0;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--accent);
+  color: var(--text-secondary);
+}
+.pith-md a {
+  color: var(--text-link);
+}
+.pith-md table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: var(--text-subhead);
+}
+.pith-md th,
+.pith-md td {
+  border: 0.5px solid var(--separator-strong);
+  padding: 5px 10px;
+  text-align: left;
+}
+
+/* 细微动画 */
+@keyframes pith-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  70% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes pith-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes pith-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.pith-fade-up {
+  animation: pith-fade-up var(--dur-base) var(--ease-out);
+}
+
+/* composer textarea */
+.pith-composer {
+  width: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: 1.5;
+}
+.pith-composer::placeholder {
+  color: var(--text-tertiary);
+}

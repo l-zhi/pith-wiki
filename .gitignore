@@ -1,6 +1,8 @@
 # --- dependencies & build ---
 node_modules/
 dist/
+# electron-vite 构建产物（desktop/out）
+out/
 *.tsbuildinfo
 
 # `npm pack` 产物（release-check 用）。不该入库。

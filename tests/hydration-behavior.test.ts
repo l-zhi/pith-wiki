@@ -381,3 +381,48 @@ describe('hydrate — supportsJsonMode 开关', () => {
     expect(out.id).toBe('test-entry'); // extractJson 剥 fence 成功
   });
 });
+
+describe('hydrate — JSON 自修复轮（repairJsonViaModel）', () => {
+  // 病灶样本：summary 字符串值内有未转义的西文双引号（doubao prompt 模式实测形态）
+  const brokenOutput =
+    '{"id": "test-entry", "title": "Test", "summary": "挂在"深圳市赞达贸易"名下", "tags": ["t1"], "links": [], "content": "# Test"}';
+  const repairedOutput = JSON.stringify({
+    id: 'test-entry',
+    title: 'Test',
+    summary: '挂在"深圳市赞达贸易"名下',
+    tags: ['t1'],
+    links: [],
+    content: '# Test',
+  });
+
+  it('首轮输出非法 JSON → 自动追加修复轮，修好即成功', async () => {
+    const { client, calls } = makeMockClient([brokenOutput, repairedOutput]);
+    const hydrator = new HydrationService(client, 'test-model', lib);
+
+    const out = await hydrator.hydrate({
+      rawContent: 'short content',
+      source: { type: 'inline' },
+      collectionId: 'tech',
+    });
+
+    expect(out.summary).toBe('挂在"深圳市赞达贸易"名下');
+    expect(calls).toHaveLength(2); // 写入轮 + 修复轮
+    // 修复轮收到的就是原始坏输出，且 system prompt 是修复器指令
+    expect(calls[1].userMessage).toBe(brokenOutput);
+    expect(calls[1].systemPrompt).toContain('JSON syntax repairer');
+  });
+
+  it('修复轮仍不合法 → 回抛原始 HydrationJsonError（带原始 raw）', async () => {
+    const { client, calls } = makeMockClient([brokenOutput, 'still { not json']);
+    const hydrator = new HydrationService(client, 'test-model', lib);
+
+    await expect(
+      hydrator.hydrate({
+        rawContent: 'short content',
+        source: { type: 'inline' },
+        collectionId: 'tech',
+      }),
+    ).rejects.toMatchObject({ name: 'HydrationJsonError', rawResponse: brokenOutput });
+    expect(calls).toHaveLength(2); // 只修一次，不无限重试
+  });
+});

@@ -115,6 +115,8 @@ const ConfigSchema = z.object({
   queueStatePath: z.string().min(1),
   /** 每个 job 的独立 log 文件存放目录（绝对路径）。 */
   queueLogDir: z.string().min(1),
+  /** 定时任务状态文件的绝对路径（默认 ~/.pith-wiki/schedule/state.json）。 */
+  scheduleStatePath: z.string().min(1),
   /** `queue run` 默认并发数。CLI `--concurrency` 可覆盖。 */
   queueConcurrency: z.number().int().positive(),
   /** 队列级别的最大尝试次数。第 N 次失败后 job 标 dead。 */
@@ -227,6 +229,7 @@ export interface ConfigOverrides {
   additionalReadPaths?: string[];
   queueStatePath?: string;
   queueLogDir?: string;
+  scheduleStatePath?: string;
   queueConcurrency?: number;
   queueMaxAttempts?: number;
   queueAutoStart?: boolean;
@@ -432,6 +435,13 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
   const queueLogDir = path.resolve(
     expandHome(overrides.queueLogDir ?? file.queueLogDir ?? path.join(defaultQueueDir, 'logs')),
   );
+  const scheduleStatePath = path.resolve(
+    expandHome(
+      overrides.scheduleStatePath ??
+        file.scheduleStatePath ??
+        path.join(pithWikiHome(), 'schedule', 'state.json'),
+    ),
+  );
 
   const merged = {
     apiKey: overrides.apiKey ?? process.env.DEEPSEEK_API_KEY ?? file.apiKey ?? '',
@@ -459,6 +469,7 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     additionalReadPaths,
     queueStatePath,
     queueLogDir,
+    scheduleStatePath,
     queueConcurrency:
       overrides.queueConcurrency ?? file.queueConcurrency ?? DEFAULTS.queueConcurrency,
     queueMaxAttempts:

@@ -69,6 +69,8 @@ export interface LibraryServiceOptions {
 export class LibraryService {
   private indexCache: Map<string, LinkIndexEntry> | null = null;
   private entryCache: Map<string, Entry> | null = null;
+  /** 上次建/载索引时各 collection 子树 mtime 快照，供 refreshIfStale 运行时比对。 */
+  private loadedMtimes: Record<string, number> | null = null;
 
   private readonly persistEnabled: boolean;
   private readonly persistDelayMs: number;
@@ -146,13 +148,16 @@ export class LibraryService {
     // 找到 prior subpath 删除老文件，避免 subpath 变更后留下幽灵 entry。
     this.ensureIndex();
     const prior = this.entryCache!.get(validated.id);
-    const file = this.filePath(validated.id, validated.collection, validated.subpath);
+    // ingestedAt 稳定：保留显式传入 > 既有条目的值 > 首次入库置 now。再水合不刷新它。
+    const stable: Entry = {
+      ...validated,
+      ingestedAt: validated.ingestedAt ?? prior?.ingestedAt ?? new Date().toISOString(),
+    };
+    const file = this.filePath(stable.id, stable.collection, stable.subpath);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const tmp = `${file}.tmp`;
-    const { content, ...rest } = validated;
-    const frontmatter = Object.fromEntries(
-      Object.entries(rest).filter(([, v]) => v !== undefined),
-    );
+    const { content, ...rest } = stable;
+    const frontmatter = Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
     const body = matter.stringify(content, frontmatter);
     fs.writeFileSync(tmp, body, 'utf8');
     fs.renameSync(tmp, file);
@@ -170,7 +175,7 @@ export class LibraryService {
     }
     this.invalidate();
     this.schedulePersist();
-    return validated;
+    return stable;
   }
 
   delete(id: string, collection: string): boolean {
@@ -227,9 +232,42 @@ export class LibraryService {
     }
     this.indexCache = index;
     this.entryCache = new Map(entries.map((e) => [e.id, e]));
+    // 记录此刻的 mtime 快照，作为 refreshIfStale 的运行时比对基线。
+    this.loadedMtimes = this.computeCollectionMtimes();
 
     // 从 scanAll 重建（说明磁盘 cache 不在或已陈旧）→ 安排持久化，让下次启动直接命中
     if (!fromDisk) this.schedulePersist();
+  }
+
+  /**
+   * 运行时新鲜度检查（startup 的 mtime 比对在会话中再跑一次）。
+   *
+   * 为什么需要：ensureIndex 一旦建好内存索引就常驻不再回看磁盘，而 write_file（agent
+   * 把产物写进 <wikiRoot>/output）等**绕过 put 的直接写盘**不会让索引失效——于是新文件
+   * 在重启前都不出现（曾导致「写入 output 后点开看不到新内容」）。
+   *
+   * 实现：比对各 collection 子树最深目录 mtime 与上次载入快照（含顶层 collection 增删）。
+   * 有变化 → invalidate + 重扫，返回 true；否则只做若干次 dir stat，零文件读，返回 false。
+   * 注意：和 startup 一样抓不到「原地改现有 .md 内容但目录 mtime 不变」——那仍走 watcher / put。
+   */
+  refreshIfStale(): boolean {
+    this.ensureIndex(); // 确保有基线（首次调用时建索引）
+    const current = this.computeCollectionMtimes();
+    const base = this.loadedMtimes ?? {};
+    const curNames = Object.keys(current);
+    let changed = curNames.length !== Object.keys(base).length;
+    if (!changed) {
+      for (const name of curNames) {
+        if (current[name] !== base[name]) {
+          changed = true;
+          break;
+        }
+      }
+    }
+    if (!changed) return false;
+    this.invalidate();
+    this.ensureIndex(); // 重扫 + 重设 loadedMtimes
+    return true;
   }
 
   /**
@@ -453,6 +491,9 @@ export class LibraryService {
       content: parsed.content.trim(),
       source: parsed.data.source ?? { type: 'unknown' },
       updated,
+      // 旧条目没有 ingestedAt → 回退到 updated（至少不为空，且对未再水合的条目就等于入库时间）
+      ingestedAt: (parsed.data.ingestedAt as string) ?? updated,
+      date: parsed.data.date as string | undefined,
       compressionRatio: parsed.data.compressionRatio,
     };
     return EntrySchema.parse(candidate);

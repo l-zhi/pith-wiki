@@ -41,6 +41,7 @@ import { formatConvertersTable } from './converterFormat.js';
 import { collectDashboardData, formatDashboard } from './dashboardData.js';
 import { Dashboard } from './Dashboard.js';
 import { clearDead, formatDeadList, formatQueueStatus, resetDead, shortError } from './queueOps.js';
+import { C } from './theme.js';
 
 interface Props {
   /**
@@ -409,8 +410,9 @@ export function App({ config: initialConfig }: Props) {
     return new Agent(client, config.model, ctx, { systemPrompt, extraTools });
   }, [config, client, requestApproval, requestCommandApproval, library, converters, soul, skillRegistry]);
 
+  // 统一盖时间戳（HH:MM，design 稿消息头的 time）；显式传了 ts 的不覆盖。
   const append = (msg: Omit<DisplayMessage, 'id'>) =>
-    setMessages((prev) => [...prev, { ...msg, id: nextId() }]);
+    setMessages((prev) => [...prev, { ts: nowHM(), ...msg, id: nextId() }]);
 
   // append 就绪后接通安全提示（ref 赋值幂等，每次 render 重设无副作用）。
   // masked（常规脱敏计数）对用户透明：对话里显示的本来就是原文，脱敏只发生在
@@ -525,7 +527,21 @@ export function App({ config: initialConfig }: Props) {
           onToolRound: ({ name, args, ok, preview }) => {
             const head = `${name}(${truncateJson(args)})`;
             if (verbose) {
-              append({ role: 'process', text: `· ${head}\n${indent(preview)}` });
+              // design 稿的 inset tool card：●/✗ + name(args) + ↳ result。
+              append({
+                role: 'tool',
+                text: `· ${head}\n${indent(preview)}`,
+                node: (
+                  <Box flexDirection="column">
+                    <Text>
+                      <Text color={ok ? C.green : C.pink}>{ok ? '●' : '✗'}</Text>
+                      <Text color={C.fg2}> {name}</Text>
+                      <Text color={C.dim2}>({truncateJson(args)})</Text>
+                    </Text>
+                    <Text color={C.dim}>{indent(preview, '  ↳ ', '    ')}</Text>
+                  </Box>
+                ),
+              });
             } else {
               setActivity(`${head} → ${ok ? '✓' : `✗ ${shortError(preview)}`}`);
             }
@@ -1082,12 +1098,21 @@ function truncateJson(args: unknown): string {
   return json.length > 80 ? `${json.slice(0, 80)}…` : json;
 }
 
-/** verbose 模式下把多行内容缩进 2 空格，挂在过程档标题行下面。 */
-function indent(text: string, prefix = '  '): string {
+/**
+ * verbose 模式下把多行内容缩进挂在标题行下面。
+ * firstPrefix 只用于首行（tool 卡片的 `↳ ` 引导符），其余行用 prefix 对齐。
+ */
+function indent(text: string, firstPrefix = '  ', prefix = firstPrefix): string {
   return text
     .split('\n')
-    .map((l) => prefix + l)
+    .map((l, i) => (i === 0 ? firstPrefix : prefix) + l)
     .join('\n');
+}
+
+/** 消息头时间戳：HH:MM（design 稿 .msg .time）。 */
+function nowHM(): string {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
 /** 显示路径时把 `<homedir>/...` 压缩成 `~/...`，让 dashboard 一行装得下。 */

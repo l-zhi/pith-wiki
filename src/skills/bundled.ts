@@ -11,20 +11,33 @@ import matter from 'gray-matter';
  * 它们对每次对话的上下文零成本（不污染）。用户 `skill add <name>` 时才从这里
  * 复制到生效的 skillDirs[0]，零下载、离线可用。
  *
- * 定位：本模块在 dev 是 `<pkg>/src/skills/bundled.ts`，发布后是
- * `<pkg>/dist/skills/bundled.js` —— 两种布局下「上两级」都是包根，bundled-skills
- * 与 src/dist 平级。package.json 的 files 必须带上 "bundled-skills" 才会进发布包。
+ * 定位：从本模块所在目录向上查找含 `bundled-skills` 的祖先目录。兼容多种布局：
+ *   - CLI 源码：`<pkg>/src/skills/bundled.ts` → 上溯命中 `<pkg>/bundled-skills`
+ *   - 发布包：`<pkg>/dist/skills/bundled.js` → 同上
+ *   - 桌面端打包：@core 被 electron-vite 内联进 `desktop/out/main/chunks/*.js`，
+ *     运行时 import.meta.url 指向该 chunk → 上溯命中仓库根 `bundled-skills`
+ * 固定「上两级」在桌面端布局下会落到 `out/` 而失配，故改为上溯搜索。
+ * package.json 的 files 必须带上 "bundled-skills" 才会进发布包。
  */
 
 const SKILL_FILE = 'SKILL.md';
 
-/** 包根下的 bundled-skills 目录绝对路径（上两级 = 包根：skills → src|dist → 包根）。 */
-export const BUNDLED_SKILLS_DIR = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  'bundled-skills',
-);
+/** 从模块目录向上查找含 bundled-skills 的祖先；找不到回退到「上两级」规则。 */
+function findBundledSkillsDir(): string {
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  let dir = moduleDir;
+  for (let i = 0; i < 8; i++) {
+    const cand = path.join(dir, 'bundled-skills');
+    if (fs.existsSync(cand)) return cand;
+    const parent = path.dirname(dir);
+    if (parent === dir) break; // 到达文件系统根
+    dir = parent;
+  }
+  return path.resolve(moduleDir, '..', '..', 'bundled-skills');
+}
+
+/** 包根下的 bundled-skills 目录绝对路径。 */
+export const BUNDLED_SKILLS_DIR = findBundledSkillsDir();
 
 export interface BundledSkillInfo {
   name: string;

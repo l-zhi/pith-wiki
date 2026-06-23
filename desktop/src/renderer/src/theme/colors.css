@@ -1,0 +1,156 @@
+/* ============================================================
+   pith · Color tokens
+   Apple HIG-aligned. Light is the base; dark overrides via
+   prefers-color-scheme AND an explicit [data-theme="dark"] hook.
+   Non-text elements never use pure black; text is near-black.
+   ============================================================ */
+
+:root {
+  /* ---- Raw Apple system palette (light) ---- */
+  --apple-blue: #007aff;       /* info only (links/blue accents) */
+  --apple-amber: #c8870f;      /* done / ready — warm, red-analogous (replaces green) */
+  --apple-plum: #a85689;       /* watch / system — warm, red-analogous (replaces blue) */
+  --apple-orange: #ff8a00;     /* running / busy */
+  --apple-red: #9e0018;        /* danger: dead / error / destructive (darkest red) */
+  --apple-brand-red: #e11d2a;  /* THE brand accent — deeper red-black identity */
+  --apple-green: #34c759;      /* retained raw — not used by brand UI */
+  --apple-cyan: #32ade6;       /* retained raw — not used by brand UI */
+  --apple-purple: #af52de;     /* legacy secondary (unused by brand) */
+  --apple-yellow: #ffcc00;     /* warning */
+  --apple-pink: #ff2d55;
+  --apple-indigo: #5856d6;
+  --apple-teal: #30b0c7;
+
+  /* ---- Neutral ramp (light) ---- */
+  --gray-0: #ffffff;
+  --gray-50: #f5f5f7;   /* window background */
+  --gray-100: #ececee;
+  --gray-200: #e3e3e6;
+  --gray-300: #d2d2d7;
+  --gray-400: #b0b0b8;
+  --gray-500: #8e8e93;
+  --gray-600: #6e6e73;
+  --gray-700: #48484a;
+  --gray-800: #2c2c2e;
+  --gray-900: #1d1d1f;  /* near-black text */
+
+  /* ---- Surfaces ---- */
+  --surface-window: var(--gray-50);     /* the app canvas */
+  --surface-card: var(--gray-0);        /* pure white cards */
+  --surface-raised: var(--gray-0);      /* popovers, menus */
+  --surface-sunken: #efeff1;            /* wells, inputs at rest */
+  --surface-hover: rgba(0, 0, 0, 0.035);
+  --surface-active: rgba(0, 0, 0, 0.06);
+  --surface-selected: rgba(225, 29, 42, 0.10);
+
+  /* ---- Glass material (sidebar / toolbars) ---- */
+  --material-glass: rgba(255, 255, 255, 0.60);
+  --material-glass-thick: rgba(255, 255, 255, 0.78);
+  --material-toolbar: rgba(245, 245, 247, 0.72);
+
+  /* ---- Text ---- */
+  --text-primary: var(--gray-900);
+  --text-secondary: var(--gray-600);
+  --text-tertiary: var(--gray-500);
+  --text-quaternary: var(--gray-400);
+  --text-on-accent: #ffffff;
+  --text-link: var(--accent);
+
+  /* ---- Hairlines / separators (never harsh black) ---- */
+  --separator: rgba(60, 60, 67, 0.12);
+  --separator-strong: rgba(60, 60, 67, 0.20);
+  --border-control: rgba(60, 60, 67, 0.18);
+
+  /* ---- Accent (semantic) — deep brand red ---- */
+  --accent: var(--apple-brand-red);
+  --accent-hover: #f0333f;
+  --accent-active: #b3101c;
+  --accent-soft: rgba(225, 29, 42, 0.12);
+  --accent-ring: rgba(225, 29, 42, 0.35);
+
+  /* ---- Status (domain semantics carried over from the TUI) ---- */
+  --status-ready: var(--apple-amber);
+  --status-done: var(--apple-amber);
+  --status-watch: var(--apple-plum);
+  --status-system: var(--apple-plum);
+  --status-running: var(--apple-orange);
+  --status-pending: var(--gray-500);
+  --status-dead: var(--apple-red);
+  --status-error: var(--apple-red);
+  --status-brand: var(--apple-brand-red);
+
+  --status-done-soft: rgba(200, 135, 15, 0.16);
+  --status-watch-soft: rgba(168, 86, 137, 0.16);
+  --status-running-soft: rgba(255, 138, 0, 0.16);
+  --status-dead-soft: rgba(158, 0, 24, 0.14);
+  --status-brand-soft: rgba(225, 29, 42, 0.14);
+
+  color-scheme: light;
+}
+
+/* ============================================================
+   Dark mode — applied via [data-theme="dark"]. For system-following
+   ("auto"), set data-theme from matchMedia in JS (see the app shell).
+   ============================================================ */
+[data-theme="dark"] {
+  --apple-blue: #0a84ff;
+  --apple-amber: #eab04a;
+  --apple-plum: #d78bbe;
+  --apple-orange: #ff9f0a;
+  --apple-red: #d11a26;        /* danger on dark */
+  --apple-brand-red: #ff5247;  /* brand accent — deep red, pops on black */
+  --apple-green: #30d158;
+  --apple-cyan: #64d2ff;
+  --apple-purple: #bf5af3;
+  --apple-yellow: #ffd60a;
+  --apple-pink: #ff375f;
+  --apple-indigo: #5e5ce6;
+  --apple-teal: #40c8e0;
+
+  --gray-0: #1c1c1e;
+  --gray-50: #161618;
+  --gray-100: #2c2c2e;
+  --gray-200: #3a3a3c;
+  --gray-300: #48484a;
+  --gray-400: #636366;
+  --gray-500: #8e8e93;
+  --gray-600: #aeaeb2;
+  --gray-700: #c7c7cc;
+  --gray-800: #e5e5ea;
+  --gray-900: #f5f5f7;
+
+  --surface-window: #0e0e10;
+  --surface-card: #18181b;
+  --surface-raised: #232327;
+  --surface-sunken: #0a0a0b;
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --surface-active: rgba(255, 255, 255, 0.10);
+  --surface-selected: rgba(255, 82, 71, 0.22);
+
+  --material-glass: rgba(16, 16, 18, 0.62);
+  --material-glass-thick: rgba(16, 16, 18, 0.80);
+  --material-toolbar: rgba(16, 16, 18, 0.72);
+
+  --text-primary: #f5f5f7;
+  --text-secondary: #aeaeb2;
+  --text-tertiary: #8e8e93;
+  --text-quaternary: #636366;
+  --text-on-accent: #ffffff;
+
+  --separator: rgba(255, 255, 255, 0.10);
+  --separator-strong: rgba(255, 255, 255, 0.16);
+  --border-control: rgba(255, 255, 255, 0.16);
+
+  --accent-hover: #ff6f66;
+  --accent-active: #e11d2a;
+  --accent-soft: rgba(255, 82, 71, 0.22);
+  --accent-ring: rgba(255, 82, 71, 0.45);
+
+  --status-done-soft: rgba(234, 176, 74, 0.20);
+  --status-watch-soft: rgba(215, 139, 190, 0.20);
+  --status-running-soft: rgba(255, 159, 10, 0.20);
+  --status-dead-soft: rgba(209, 26, 38, 0.26);
+  --status-brand-soft: rgba(255, 82, 71, 0.20);
+
+  color-scheme: dark;
+}

@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { completeOnTab, filterCommands, type SlashCommand } from './slashCommands.js';
+import { C } from './theme.js';
 import {
   ascendValue,
   confirmDirValue,
@@ -185,54 +186,76 @@ export function InputBox({ disabled, onSubmit, history, mentionTree, extraComman
   if (disabled) {
     return (
       <Box>
-        <Text color="gray">… (Ctrl+C to cancel)</Text>
+        <Text color={C.dim2}>… (Ctrl+C to cancel)</Text>
       </Box>
     );
   }
 
   return (
     <Box flexDirection="column">
-      {pickerKind === 'slash' ? <SlashSuggestionList items={slashItems} selected={sel} /> : null}
+      {pickerKind === 'slash' ? (
+        <SlashSuggestionList items={slashItems} selected={sel} extraCommands={extraCommands} />
+      ) : null}
       {pickerKind === 'mention' ? (
         <MentionSuggestionList items={mentionItems} selected={sel} atRoot={mentionInput?.pathSegs.length === 0} />
       ) : null}
       <Box>
-        <Text color="green">› </Text>
-        <TextInput
-          key={`${historyIndex}-${tabBump}`}
-          value={value}
-          onChange={(v) => {
-            setValue(v);
-            setSelectedIndex(0);
-          }}
-          onSubmit={handleSubmit}
-        />
+        <Text color={C.purple}>› </Text>
+        <Box flexGrow={1}>
+          <TextInput
+            key={`${historyIndex}-${tabBump}`}
+            value={value}
+            onChange={(v) => {
+              setValue(v);
+              setSelectedIndex(0);
+            }}
+            onSubmit={handleSubmit}
+          />
+        </Box>
+        {/* design 稿 .prompt .hint：输入行右缘的快捷键提示。仅在草稿为空时显示，
+            打字后让位给长输入，避免和内容挤一行。 */}
+        {value === '' ? <Text color={C.dim2}>↵ send · / commands</Text> : null}
       </Box>
     </Box>
   );
 }
 
-/** Slash 命令提示。高亮项前缀 `›` + 反色。 */
-function SlashSuggestionList({ items, selected }: { items: SlashCommand[]; selected: number }) {
+/**
+ * Slash 命令提示（design 稿 SlashMenu）：高亮项前缀紫色 `❯`，命令名选中加粗，
+ * 描述 dim；尾行 `N of M commands · type more to filter`。
+ */
+function SlashSuggestionList({
+  items,
+  selected,
+  extraCommands,
+}: {
+  items: SlashCommand[];
+  selected: number;
+  extraCommands?: SlashCommand[];
+}) {
   const nameWidth = Math.max(...items.map((c) => c.name.length));
+  const total = filterCommands('/', extraCommands ?? []).length;
   return (
     <Box flexDirection="column" marginBottom={0}>
       {items.map((c, i) => {
         const active = i === selected;
         return (
           <Box key={c.name}>
-            <Text color={active ? 'cyan' : undefined}>{active ? '› ' : '  '}</Text>
-            <Text color="cyan" inverse={active}>
+            <Text color={C.purple}>{active ? '❯ ' : '  '}</Text>
+            <Text color={active ? C.fg : C.fg2} bold={active}>
               {c.name.padEnd(nameWidth)}
             </Text>
-            <Text color="gray">  {c.description}</Text>
+            <Text color={C.dim}>  {c.description}</Text>
             {c.aliases && c.aliases.length > 0 ? (
-              <Text color="gray"> (alias: {c.aliases.join(', ')})</Text>
+              <Text color={C.dim2}> (alias: {c.aliases.join(', ')})</Text>
             ) : null}
           </Box>
         );
       })}
-      <Text color="gray">  ↑↓ select · Enter confirm · Tab complete</Text>
+      <Text color={C.dim2}>
+        {'  '}
+        {items.length} of {total} commands · ↑↓ navigate · ↵ run · Tab completes
+      </Text>
     </Box>
   );
 }

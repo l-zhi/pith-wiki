@@ -33,7 +33,8 @@ const SCORING_PROBE_CHARS = 4000;
 // 改一处极易漏另一处。这里抽成可组合片段，两个 prompt 由 builder 拼装。
 // 任何措辞改动都应被 tests/hydration-prompt.test.ts 的子串断言守住。
 
-const STRICT_JSON_PREAMBLE = 'Output STRICT JSON in exactly this shape (no commentary, no code fences):';
+const STRICT_JSON_PREAMBLE =
+  'Output STRICT JSON in exactly this shape (no commentary, no code fences):';
 
 /** LANGUAGE 规则。sourceNoun 区分 "raw input"（文档）/ "conversation"（对话）。 */
 function languageRule(sourceNoun: string): string {
@@ -41,7 +42,8 @@ function languageRule(sourceNoun: string): string {
 }
 
 /** WORD LIMIT 公共前半句；各 prompt 各自补 drop-list 尾巴。 */
-const WORD_LIMIT_CORE = '`content` MUST be under 400 words (or ~600 Chinese characters for CJK content).';
+const WORD_LIMIT_CORE =
+  '`content` MUST be under 400 words (or ~600 Chinese characters for CJK content).';
 
 /** CROSS-REFS 公共前半句；各 prompt 各自补 link 表匹配规则。 */
 const CROSS_REF_CORE = 'Inline references use [[concept-id]] format.';
@@ -107,7 +109,8 @@ ${STRICT_JSON_PREAMBLE}
   "summary": "One-sentence routing summary.",
   "tags": ["tag1", "tag2"],         // 1-6 short topical tags
   "links": ["other-entry-id"],      // entry ids you cross-reference; use [] if none
-  "content": "# Title\\n- bullet ..."   // pure Markdown body, no frontmatter
+  "content": "# Title\\n- bullet ...",  // pure Markdown body, no frontmatter
+  "date": "2026-06-15"              // OPTIONAL: the content's OWN date (publish/modified/note date) if the source states one, as YYYY-MM-DD; OMIT the field entirely if no explicit date is present. Do NOT guess or use today.
 }
 
 Hard rules — violating any of these is a failure:
@@ -290,13 +293,11 @@ export interface HydrateInput {
 export class HydrationJsonError extends Error {
   readonly rawResponse: string;
   constructor(rawResponse: string, cause?: Error) {
-    const preview = rawResponse.length > 200
-      ? rawResponse.slice(0, 200) + '…'
-      : rawResponse;
+    const preview = rawResponse.length > 200 ? rawResponse.slice(0, 200) + '…' : rawResponse;
     super(
       `Hydration output was not valid JSON (even after rescue attempts). ` +
-      `Preview: ${JSON.stringify(preview)}` +
-      (cause ? ` — last parser error: ${cause.message}` : ''),
+        `Preview: ${JSON.stringify(preview)}` +
+        (cause ? ` — last parser error: ${cause.message}` : ''),
     );
     this.name = 'HydrationJsonError';
     this.rawResponse = rawResponse;
@@ -379,6 +380,42 @@ export class HydrationService {
     return this.supportsJsonMode ? { response_format: { type: 'json_object' as const } } : {};
   }
 
+  /**
+   * JSON 自修复轮：extractJson 三招都失败时，把原始输出交还模型只修语法。
+   *
+   * 为什么不机械修复（补引号/逗号）：见 extractJson 的设计取舍注释——"看似
+   * parse 成功但语义错"比直接失败更危险。让产出 JSON 的模型自己修则两全：
+   * 它知道每个字符串值的语义边界。典型病灶是 prompt 模式下（supportsJsonMode
+   * =false 的 provider）字符串值内的未转义西文双引号。
+   *
+   * 只试一次；修复轮的任何失败（请求错误 / 修完仍不合法）都回抛**原始**
+   * HydrationJsonError——raw 是排错的第一现场，比修复轮的二手错误有价值。
+   */
+  private async repairJsonViaModel(raw: string, original: HydrationJsonError): Promise<unknown> {
+    try {
+      const completion = await this.client.chat.completions.create({
+        model: this.model,
+        ...this.jsonModeArg,
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are a JSON syntax repairer. The user message is text that is ALMOST valid JSON ' +
+              '(typical defects: unescaped double quotes inside string values, trailing commas, a truncated tail). ' +
+              'Output ONLY the corrected JSON object — no code fences, no commentary. ' +
+              'Fix syntax ONLY: never add, remove, translate, or rephrase any content.',
+          },
+          { role: 'user', content: raw },
+        ],
+      });
+      const fixed = completion.choices[0]?.message?.content;
+      if (!fixed) throw original;
+      return extractJson(fixed);
+    } catch {
+      throw original;
+    }
+  }
+
   async hydrate(input: HydrateInput): Promise<Entry> {
     // ── 候选链接来源（与旧版一致）───────────────────────────────────────────
     //   1. 显式注入的 linkCandidates（批量场景，由 runner / batch 一次性 snapshot）
@@ -396,11 +433,7 @@ export class HydrationService {
     // pool ≤ TOP_N 时不筛（省一次 tokenize），> TOP_N 才走 scoring。
     const filteredCandidates =
       candidatePool && candidatePool.length > TOP_N_LINK_CANDIDATES
-        ? topNByQuery(
-            this.scoringProbe(input),
-            candidatePool,
-            TOP_N_LINK_CANDIDATES,
-          )
+        ? topNByQuery(this.scoringProbe(input), candidatePool, TOP_N_LINK_CANDIDATES)
         : candidatePool;
     const candidates = filteredCandidates
       ? filteredCandidates.map((e) => `- ${e.id}: ${e.title} — ${e.summary}`).join('\n')
@@ -417,9 +450,7 @@ export class HydrationService {
     // ── write pass ───────────────────────────────────────────────────────
     const filenameLine = input.filenameHint ? `Filename: ${input.filenameHint}\n\n` : '';
     const planBlock = plan ? this.formatPlanBlock(plan) : '';
-    const linksBlock = candidates
-      ? `Existing entries you may link to:\n${candidates}\n\n`
-      : '';
+    const linksBlock = candidates ? `Existing entries you may link to:\n${candidates}\n\n` : '';
     const userMessage = `${filenameLine}${planBlock}${linksBlock}Raw input:\n---\n${input.rawContent}\n---`;
 
     const systemPrompt = systemPromptFor(input);
@@ -436,8 +467,18 @@ export class HydrationService {
     if (!text) throw new Error('Hydration LLM returned no content');
 
     // extractJson 会先直 parse，失败时依次试剥 markdown fence、找首 {…末 }。
-    // 三招都不行抛 HydrationJsonError，带 rawResponse 字段给 processJob 落日志。
-    const parsed = extractJson(text);
+    // 三招都不行抛 HydrationJsonError —— 此时再给模型一次"自修复"机会（见
+    // repairJsonViaModel）：机械补引号有"看似成功但语义错"的风险（extractJson
+    // 的设计取舍注释），让产出 JSON 的模型自己修语法则没有这个问题。
+    // 典型触发场景：prompt 模式下（supportsJsonMode=false 的 provider，如
+    // doubao coding 端点）字符串值内出现未转义的西文双引号。
+    let parsed: unknown;
+    try {
+      parsed = extractJson(text);
+    } catch (err) {
+      if (!(err instanceof HydrationJsonError)) throw err;
+      parsed = await this.repairJsonViaModel(text, err);
+    }
 
     // id 自愈：模型偶尔会照抄文件名输出形如 "华硕Zenbo72p_07" 的 id —— 下划线、
     // 全角字符等会让 HydrationOutputSchema 在 id 正则上挂掉。但我们对文件源
@@ -491,6 +532,8 @@ export class HydrationService {
       content: out.content,
       source: input.source,
       updated: new Date().toISOString(),
+      // 内容自身日期（LLM 抽取）；ingestedAt 不在这里设——交给 LibraryService.put 维护稳定值。
+      date: out.date,
       compressionRatio,
     };
   }

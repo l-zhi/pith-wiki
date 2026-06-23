@@ -1,0 +1,103 @@
+/* ============================================================
+   pith · Base layer
+   Reset + global defaults + a few material/utility helpers that
+   components and UI kits lean on. Pure CSS; tokens only.
+   ============================================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  color: var(--text-primary);
+  background: var(--surface-window);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-synthesis: none;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+:where(button, input, textarea, select) {
+  font-family: inherit;
+}
+
+:where(a) {
+  color: var(--text-link);
+  text-decoration: none;
+}
+
+/* Custom thin scrollbars — match the quiet aesthetic */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--separator-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--separator-strong);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-quaternary);
+  background-clip: content-box;
+}
+
+/* ---------- Material helpers ---------- */
+
+.pith-glass {
+  background: var(--material-glass);
+  -webkit-backdrop-filter: var(--blur-glass);
+  backdrop-filter: var(--blur-glass);
+}
+
+.pith-toolbar {
+  background: var(--material-toolbar);
+  -webkit-backdrop-filter: var(--blur-glass);
+  backdrop-filter: var(--blur-glass);
+  border-bottom: 0.5px solid var(--separator);
+}
+
+.pith-card {
+  background: var(--surface-card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--ring-card), var(--shadow-card);
+}
+
+.pith-container {
+  background: var(--surface-card);
+  border-radius: var(--radius-container);
+  box-shadow: var(--ring-card), var(--shadow-card);
+}
+
+.pith-hairline {
+  border: none;
+  border-top: 0.5px solid var(--separator);
+  margin: 0;
+}
+
+/* eyebrow / section label */
+.pith-eyebrow {
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-wide);
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}

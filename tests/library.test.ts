@@ -375,15 +375,9 @@ describe('LibraryService — 扫描器容错', () => {
     expect(() =>
       lib.put(makeEntry({ id: 'bad', collection: 'tech', subpath: '../escape' })),
     ).toThrow();
-    expect(() =>
-      lib.put(makeEntry({ id: 'bad', collection: 'tech', subpath: '/abs' })),
-    ).toThrow();
-    expect(() =>
-      lib.put(makeEntry({ id: 'bad', collection: 'tech', subpath: '.git' })),
-    ).toThrow();
-    expect(() =>
-      lib.put(makeEntry({ id: 'bad', collection: 'tech', subpath: 'a//b' })),
-    ).toThrow();
+    expect(() => lib.put(makeEntry({ id: 'bad', collection: 'tech', subpath: '/abs' }))).toThrow();
+    expect(() => lib.put(makeEntry({ id: 'bad', collection: 'tech', subpath: '.git' }))).toThrow();
+    expect(() => lib.put(makeEntry({ id: 'bad', collection: 'tech', subpath: 'a//b' }))).toThrow();
   });
 
   it('递归 scanAll 跳过任意层级的 dotdir（.cache/.git 等）', () => {
@@ -410,7 +404,15 @@ describe('LibraryService — 扫描器容错', () => {
     fs.mkdirSync(cacheDir, { recursive: true });
     fs.writeFileSync(
       path.join(cacheDir, 'cached.md'),
-      ['---', 'id: cached', 'collection: tech', 'title: cached', 'updated: 2026-01-01T00:00:00Z', '---', '# cached body'].join('\n'),
+      [
+        '---',
+        'id: cached',
+        'collection: tech',
+        'title: cached',
+        'updated: 2026-01-01T00:00:00Z',
+        '---',
+        '# cached body',
+      ].join('\n'),
     );
     // 模拟 wikiRoot 顶层的 dotdir（.git / 别的工具放的）
     fs.mkdirSync(path.join(tmpDir, '.scratch'), { recursive: true });
@@ -688,5 +690,88 @@ describe('LibraryService — index.json 持久化', () => {
 
     const lib = new LibraryService(tmpDir, { persistDelayMs: 60_000 });
     expect(lib.list().map((e) => e.id)).toEqual(['real']);
+  });
+});
+
+describe('LibraryService — refreshIfStale（运行时新鲜度）', () => {
+  it('捕捉绕过 put 直接写盘的新文件（write_file 写 output 的场景）', () => {
+    const lib = new LibraryService(tmpDir);
+    lib.put(makeEntry({ id: 'a', collection: 'output' }));
+    expect(lib.list('output')).toHaveLength(1);
+
+    // 模拟 write_file：直接写一个无 frontmatter 的 .md 进 output/（不经过 put）
+    const dir = path.join(tmpDir, 'output');
+    fs.writeFileSync(path.join(dir, '2026-06-15-每日新知.md'), '# 每日新知\n\n正文');
+    // 把目录 mtime 明确推后，规避同秒 mtime 粒度导致的漏检（真实场景天然有时间差）
+    const future = new Date(Date.now() + 5000);
+    fs.utimesSync(dir, future, future);
+
+    // 刷新前：内存索引仍是旧的（这正是「点开 output 看不到新文件」的根因）
+    expect(lib.list('output')).toHaveLength(1);
+    // 刷新：检测到变化 → 重扫
+    expect(lib.refreshIfStale()).toBe(true);
+    const entries = lib.list('output');
+    expect(entries).toHaveLength(2);
+    // 无 frontmatter 的文件按文件名派生 id 入索引
+    expect(entries.find((e) => e.id === '2026-06-15-每日新知')?.title).toBe('2026-06-15-每日新知');
+    // 再次刷新：无变化 → false，不做无谓重扫
+    expect(lib.refreshIfStale()).toBe(false);
+  });
+
+  it('捕捉新增的顶层 collection 目录', () => {
+    const lib = new LibraryService(tmpDir);
+    lib.put(makeEntry({ id: 'a', collection: 'tech' }));
+    expect(lib.list()).toHaveLength(1);
+
+    fs.mkdirSync(path.join(tmpDir, 'notes'));
+    fs.writeFileSync(path.join(tmpDir, 'notes', 'raw.md'), '# Raw\n\nbody');
+    expect(lib.refreshIfStale()).toBe(true);
+    expect(
+      lib
+        .list()
+        .map((e) => e.id)
+        .sort(),
+    ).toEqual(['a', 'raw']);
+  });
+});
+
+describe('LibraryService — ingestedAt / date 时间戳', () => {
+  it('ingestedAt 首次入库置位，再水合保持稳定（updated 变、ingestedAt 不变）', () => {
+    const lib = new LibraryService(tmpDir);
+    const first = lib.put(makeEntry({ id: 'a', updated: '2026-06-10T00:00:00.000Z' }));
+    expect(first.ingestedAt).toBeDefined();
+    const ing = first.ingestedAt!;
+
+    // 再 put（再水合）：updated 不同，ingestedAt 必须保持
+    const second = lib.put(makeEntry({ id: 'a', updated: '2026-06-17T00:00:00.000Z' }));
+    expect(second.updated).toBe('2026-06-17T00:00:00.000Z');
+    expect(second.ingestedAt).toBe(ing);
+
+    // round-trip：落盘再读仍是同一个 ingestedAt
+    expect(lib.get('a')?.ingestedAt).toBe(ing);
+  });
+
+  it('显式传入的 ingestedAt / date 被保留并 round-trip', () => {
+    const lib = new LibraryService(tmpDir);
+    lib.put({
+      ...makeEntry({ id: 'a' }),
+      ingestedAt: '2026-06-16T08:00:00.000Z',
+      date: '2026-06-15',
+    });
+    const got = lib.get('a');
+    expect(got?.ingestedAt).toBe('2026-06-16T08:00:00.000Z');
+    expect(got?.date).toBe('2026-06-15');
+  });
+
+  it('旧条目（frontmatter 无 ingestedAt）读取时回退到 updated', () => {
+    const lib = new LibraryService(tmpDir);
+    const dir = path.join(tmpDir, 'tech');
+    fs.mkdirSync(dir, { recursive: true });
+    // 手写一个带 updated 但无 ingestedAt 的文件（模拟旧数据）
+    fs.writeFileSync(
+      path.join(dir, 'old.md'),
+      '---\nid: old\ntitle: Old\nupdated: 2026-06-01T00:00:00.000Z\n---\nbody',
+    );
+    expect(lib.get('old')?.ingestedAt).toBe('2026-06-01T00:00:00.000Z');
   });
 });

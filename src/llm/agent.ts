@@ -170,6 +170,24 @@ export class Agent {
   }
 
   /**
+   * 导出当前对话历史的深拷贝（含 system）。桌面端 SessionManager 据此做
+   * 会话持久化（增量 append 到 JSONL）；拷贝保证外部持有者不会污染内部状态。
+   */
+  exportHistory(): ChatCompletionMessageParam[] {
+    return structuredClone(this.messages);
+  }
+
+  /**
+   * 用持久化历史重建对话（会话恢复）。传入序列中的 system 消息被丢弃——
+   * system prompt 永远由当前 Agent 配置自持（skill catalog / SOUL 可能已更新，
+   * 旧 prompt 不应复活）。
+   */
+  restoreHistory(messages: ChatCompletionMessageParam[]): void {
+    const rest = messages.filter((m) => m.role !== 'system');
+    this.messages = [{ role: 'system', content: this.systemPrompt }, ...structuredClone(rest)];
+  }
+
+  /**
    * 把一段上下文（典型：用户用 `/skill <name>` 手动调出的 skill 指令）作为一条
    * 前置 user 消息压入历史，但 **不** 触发 LLM 请求。下一次 send() 时模型才会
    * 看到它——等价于用户在提问前先粘了一段说明。空串 no-op。

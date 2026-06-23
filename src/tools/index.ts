@@ -11,6 +11,7 @@ import {
   type ConverterCache,
 } from '../wiki/converters/index.js';
 import { SkillRegistry } from '../skills/registry.js';
+import type { ScheduleService } from '../schedule/service.js';
 import { readFileTool } from './read_file.js';
 import { writeFileTool } from './write_file.js';
 import { listDirTool } from './list_dir.js';
@@ -54,6 +55,11 @@ export interface ToolContext {
    */
   skillRegistry: SkillRegistry;
   /**
+   * 定时任务服务。仅桌面 engine 注入（它是触发宿主）；缺省 undefined →
+   * schedule_* 工具返回「仅桌面可用」。见 src/schedule/service.ts。
+   */
+  scheduleService?: ScheduleService;
+  /**
    * 本轮检索范围（REPL `@`-mention 解析得到）。仅在该轮的 tool 调用里出现：
    * Agent 把它 spread 进一份 per-turn ctx 副本。wiki_query 据此收窄召回。
    * 缺省 undefined → 整库召回（CLI / 旧路径零影响）。
@@ -85,6 +91,8 @@ export interface BuildContextExtras {
   skillRegistry?: SkillRegistry;
   /** 命令执行审批通道（仅 REPL 提供）。见 ToolContext.requestCommandApproval。 */
   requestCommandApproval?: ToolContext['requestCommandApproval'];
+  /** 定时任务服务（仅桌面 engine 提供）。见 ToolContext.scheduleService。 */
+  scheduleService?: ScheduleService;
 }
 
 export function buildContext(
@@ -132,6 +140,7 @@ export function buildContext(
     converterRegistry: registry,
     converterCache: cache,
     skillRegistry: extras.skillRegistry ?? new SkillRegistry(),
+    scheduleService: extras.scheduleService,
   };
 }
 

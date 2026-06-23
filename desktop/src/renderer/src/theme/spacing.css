@@ -1,0 +1,40 @@
+/* ============================================================
+   pith · Spacing, radii & sizing tokens
+   4px base grid. Generous defaults — gap-6 (24px) is the
+   workhorse for breathing room.
+   ============================================================ */
+
+:root {
+  /* ---- Spacing scale ---- */
+  --space-0: 0;
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 8px;
+  --space-4: 12px;
+  --space-5: 16px;
+  --space-6: 24px;   /* gap-6 / space-y-6 — the default rhythm */
+  --space-7: 32px;
+  --space-8: 40px;
+  --space-9: 48px;
+  --space-10: 64px;
+
+  /* ---- Corner radii ---- */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-control: 10px;   /* buttons, inputs */
+  --radius-md: 12px;
+  --radius-card: 16px;      /* rounded-2xl — core content cards */
+  --radius-container: 24px; /* rounded-3xl — large panels */
+  --radius-pill: 999px;
+
+  /* ---- Control sizing ---- */
+  --control-h-sm: 28px;
+  --control-h-md: 34px;
+  --control-h-lg: 42px;
+
+  /* ---- Layout ---- */
+  --sidebar-w: 264px;
+  --list-col-w: 320px;
+  --titlebar-h: 52px;
+  --content-max: 720px;     /* comfortable reading measure for entries */
+}

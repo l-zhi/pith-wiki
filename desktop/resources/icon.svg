@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <rect width="120" height="120" rx="27" fill="#0e0e10"/>
+  <circle cx="60" cy="60" r="40" fill="none" stroke="rgba(255,255,255,0.26)" stroke-width="1.5"/>
+  <g fill="none" stroke="#ff5247" stroke-linecap="round">
+    <path d="M60 55 Q60 44 60 33" stroke-width="2.4"/>
+    <path d="M60 35 Q55 29 49 24" stroke-width="1.6"/>
+    <path d="M60 35 Q65 29 71 24" stroke-width="1.6"/>
+    <path d="M64.33 57.5 Q73.86 52 83.38 46.5" stroke-width="2.4"/>
+    <path d="M81.65 47.5 Q84.35 40.17 85.68 32.47" stroke-width="1.6"/>
+    <path d="M81.65 47.5 Q89.35 48.83 96.68 51.53" stroke-width="1.6"/>
+    <path d="M64.33 62.5 Q73.86 68 83.38 73.5" stroke-width="2.4"/>
+    <path d="M81.65 72.5 Q89.35 71.17 96.68 68.47" stroke-width="1.6"/>
+    <path d="M81.65 72.5 Q84.35 79.83 85.68 87.53" stroke-width="1.6"/>
+    <path d="M60 65 Q60 76 60 87" stroke-width="2.4"/>
+    <path d="M60 85 Q65 91 71 96" stroke-width="1.6"/>
+    <path d="M60 85 Q55 91 49 96" stroke-width="1.6"/>
+    <path d="M55.67 62.5 Q46.14 68 36.62 73.5" stroke-width="2.4"/>
+    <path d="M38.35 72.5 Q35.65 79.83 34.32 87.53" stroke-width="1.6"/>
+    <path d="M38.35 72.5 Q30.65 71.17 23.32 68.47" stroke-width="1.6"/>
+    <path d="M55.67 57.5 Q46.14 52 36.62 46.5" stroke-width="2.4"/>
+    <path d="M38.35 47.5 Q30.65 48.83 23.32 51.53" stroke-width="1.6"/>
+    <path d="M38.35 47.5 Q35.65 40.17 34.32 32.47" stroke-width="1.6"/>
+  </g>
+  <circle cx="49" cy="24" r="1.9" fill="#ff5247"/>
+  <circle cx="71" cy="24" r="1.9" fill="#ff5247"/>
+  <circle cx="85.68" cy="32.47" r="1.9" fill="#ff5247"/>
+  <circle cx="96.68" cy="51.53" r="1.9" fill="#ff5247"/>
+  <circle cx="96.68" cy="68.47" r="1.9" fill="#ff5247"/>
+  <circle cx="85.68" cy="87.53" r="1.9" fill="#ff5247"/>
+  <circle cx="71" cy="96" r="1.9" fill="#ff5247"/>
+  <circle cx="49" cy="96" r="1.9" fill="#ff5247"/>
+  <circle cx="34.32" cy="87.53" r="1.9" fill="#ff5247"/>
+  <circle cx="23.32" cy="68.47" r="1.9" fill="#ff5247"/>
+  <circle cx="23.32" cy="51.53" r="1.9" fill="#ff5247"/>
+  <circle cx="34.32" cy="32.47" r="1.9" fill="#ff5247"/>
+  <circle cx="60" cy="60" r="6.5" fill="#ff5247"/>
+</svg>

@@ -13,4 +13,13 @@ export const C = {
   amber: '#fbbf24',
   pink: '#f472b6',
   purple: '#a78bfa',
+
+  // 中性灰阶（design tokens --fg / --fg-2 / --dim / --dim-2 / --dim-3 / --rule）。
+  // 正文/角色条/分隔线用这一组，避免到处手写 'gray' 导致观感漂移。
+  fg: '#e7e8ec',
+  fg2: '#c4c6cd',
+  dim: '#8a8d96',
+  dim2: '#5e616a',
+  dim3: '#3a3c43',
+  rule: '#23252c',
 } as const;
