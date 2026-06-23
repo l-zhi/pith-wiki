@@ -2,19 +2,14 @@
 
 > 中文版 → [README.zh-CN.md](./README.zh-CN.md)
 
-A terminal-native LLM wiki, Karpathy-style: don't shove raw documents into a
-vector DB and pray. Hydrate them into dense Markdown entries, retrieve by keyword
-+ link traversal. Local, file-based, works with any OpenAI-compatible LLM endpoint.
+A local-first LLM wiki, Karpathy-style: don't shove raw documents into a vector
+DB and pray. Hydrate them into dense Markdown entries, retrieve by keyword + link
+traversal. File-based, works with any OpenAI-compatible LLM endpoint — drive it
+from a terminal REPL **or a native desktop app**.
 
-![pith-wiki REPL dashboard](docs/screenshots/pith-wiki.gif)
+![Obsidian vault + pith-wiki side by side](docs/screenshots/Obsidian-pithwiki.png)
 
-![pith-wiki entry graph + link traversal](docs/screenshots/nodes.gif)
-
-*Live dashboard: watching a notes folder, hydrating files into collections as they appear.*
-
-![Obsidian vault + pith-wiki side by side](docs/screenshots/Obsidian-pithwiki.jpg)
-
-*Drop a note into your Obsidian vault — pith-wiki auto-ingests it on the right.*
+*Drop a note into your Obsidian vault — pith-wiki auto-ingests it into entries the LLM can pull from mid-conversation.*
 
 Current input formats: `.docx` `.eml` `.htm` `.html` `.markdown` `.md` `.pdf`
 `.text` `.txt`.
@@ -81,6 +76,18 @@ For a side-by-side dev/prod setup (so production data isn't disturbed while you
 iterate), see the `bin/pith-wiki-dev` shim and the `PITH_WIKI_HOME` env var.
 Detailed contributor flow in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+### Desktop app
+
+A native desktop app (Electron) wraps the same engine and library — chat, inbox,
+dashboard, link graph, skills, and a **scheduled-tasks** view with a calendar.
+Run it from source:
+
+```bash
+cd desktop
+npm install
+npm run dev      # electron-vite dev (HMR)
+```
+
 ## What it does
 
 **1. Hydrate** — compress raw documents (markdown / PDF / DOCX / HTML / email)
@@ -88,19 +95,27 @@ into Markdown entries roughly 30% of the original size. Strip filler, keep
 signal. LLMs read these directly.
 
 **2. Retrieve** — no embeddings, no vector DB. Weighted keyword search (title × 2,
-tags × 2, summary × 1, content × 0.5) + BFS link traversal. Boring on purpose.
-Entries are plain Markdown; Obsidian, VS Code, and Git all open them natively.
+tags × 2, summary × 1, content × 0.5) + BFS link traversal, plus exact
+substring/regex search (`wiki_grep`) and date-range filters (when an entry was
+added to the library, or the content's own date). Boring on purpose. Entries are
+plain Markdown; Obsidian, VS Code, and Git all open them natively.
 
-**3. Chat** — the REPL agent talks to your library through 8 tools
-(`read_file` / `write_file` / `list_dir` / `wiki_ingest` / `wiki_get` /
-`wiki_query` / `wiki_list` / `wiki_read_source`). Every turn writes a transcript;
-`/digest` distills the conversation back into a wiki entry, closing the loop
-chat → store → retrieve.
+**3. Chat** — the agent talks to your library through file + wiki tools
+(`wiki_query` fuzzy search, `wiki_grep` exact search, `wiki_get`,
+`wiki_read_source`, `wiki_ingest`, `read_file` / `write_file` / `list_dir`, …).
+Every turn writes a transcript; `/digest` distills the conversation back into a
+wiki entry, closing the loop chat → store → retrieve. Same agent in the terminal
+REPL and the desktop app.
 
 **4. Auto-ingest** — configure `watchDirs` and changes in your notes folder
 (Obsidian vault, inbox, etc.) are auto-enqueued. A background worker hydrates
 them. `pith-wiki doctor` periodically checks library health (orphan links,
 broken frontmatter, ID collisions).
+
+**5. Schedule** *(desktop)* — set tasks that run an agent prompt on a schedule
+(once, or cron) — e.g. a daily digest of everything added yesterday. Each fire
+opens a fresh session you can reopen; `${yyyy-mm-dd -1}`-style date placeholders
+are resolved at run time so "yesterday" is always correct.
 
 ## Command cheatsheet
 
