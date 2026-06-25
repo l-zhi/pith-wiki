@@ -9,6 +9,7 @@ import {
   FileText,
   MessageCircle,
   Plus,
+  Quote,
   Sparkles,
   Square,
 } from 'lucide-react';
@@ -78,7 +79,7 @@ export function ChatPane() {
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto' }}>
         <div
           style={{
-            maxWidth: 1000,
+            maxWidth: 720,
             margin: '0 auto',
             padding: '28px 32px 24px',
             display: 'flex',
@@ -224,36 +225,7 @@ function Item({ item }: { item: ChatItem }) {
       );
 
     case 'error':
-      return (
-        <div style={{ display: 'flex', gap: 12 }}>
-          <div
-            style={{
-              width: 28,
-              height: 28,
-              flex: 'none',
-              borderRadius: '50%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              background: 'var(--status-dead-soft)',
-              color: 'var(--status-dead)',
-            }}
-          >
-            <AlertTriangle size={15} />
-          </div>
-          <div
-            style={{
-              flex: 1,
-              minWidth: 0,
-              fontSize: 'var(--text-body)',
-              color: 'var(--status-dead)',
-              lineHeight: 'var(--leading-relaxed)',
-            }}
-          >
-            {item.text}
-          </div>
-        </div>
-      );
+      return <ErrorItem text={item.text} />;
 
     case 'note':
       return (
@@ -273,6 +245,100 @@ function Item({ item }: { item: ChatItem }) {
   }
 }
 
+/** 把 LLM/网络层的技术报错粗分类，映射到一句人话提示；无法识别返回 null（显示原文）。 */
+function classifyChatError(raw: string): 'Auth' | 'Network' | 'Timeout' | 'Rate' | null {
+  const s = raw.toLowerCase();
+  if (/401|unauthor|invalid.*key|authentication|forbidden|\bapi[ _-]?key\b/.test(s)) return 'Auth';
+  if (/enotfound|econnrefused|fetch failed|network|getaddrinfo|socket hang|\bdns\b/.test(s))
+    return 'Network';
+  if (/timeout|etimedout|timed out|\baborted\b/.test(s)) return 'Timeout';
+  if (/429|rate[ _-]?limit|quota|insufficient|too many/.test(s)) return 'Rate';
+  return null;
+}
+
+/** 会话出错气泡：识别得出的错误显示人话 + 「打开设置」入口，原始报错收进可展开详情。 */
+function ErrorItem({ text }: { text: string }) {
+  const { t } = useTranslation();
+  const setNav = useStore((s) => s.setNav);
+  const cls = classifyChatError(text);
+  const friendly = cls ? t(`error.chat${cls}`) : null;
+  const showSettings = cls === 'Auth' || cls === 'Network';
+  return (
+    <div style={{ display: 'flex', gap: 12 }}>
+      <div
+        style={{
+          width: 28,
+          height: 28,
+          flex: 'none',
+          borderRadius: '50%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'var(--status-dead-soft)',
+          color: 'var(--status-dead)',
+        }}
+      >
+        <AlertTriangle size={15} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 'var(--text-body)',
+            color: 'var(--status-dead)',
+            lineHeight: 'var(--leading-relaxed)',
+            wordBreak: 'break-word',
+          }}
+        >
+          {friendly ?? text}
+        </div>
+        {showSettings && (
+          <button
+            type="button"
+            onClick={() => setNav('settings')}
+            style={{
+              marginTop: 6,
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+              padding: 0,
+              fontSize: 'var(--text-subhead)',
+              fontWeight: 600,
+              color: 'var(--accent)',
+            }}
+          >
+            {t('error.openSettings')} →
+          </button>
+        )}
+        {friendly && (
+          <details style={{ marginTop: 6 }}>
+            <summary
+              style={{ cursor: 'pointer', fontSize: 'var(--text-caption)', color: 'var(--text-tertiary)' }}
+            >
+              {t('error.detail')}
+            </summary>
+            <pre
+              style={{
+                margin: '6px 0 0',
+                padding: '8px 10px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'var(--surface-sunken)',
+                font: 'var(--font-code)',
+                fontSize: 'var(--text-caption)',
+                color: 'var(--text-secondary)',
+                whiteSpace: 'pre-wrap',
+                overflow: 'auto',
+                maxHeight: 140,
+              }}
+            >
+              {text}
+            </pre>
+          </details>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /**
  * assistant 消息底部操作行：复制原始 markdown / 总结入库。
  * 「总结」= 把当前对话快照水合成新 Entry 落进 output 集合（/digest 同链路），
@@ -285,13 +351,16 @@ function Item({ item }: { item: ChatItem }) {
 function ReferencesBlock({ refs, kind }: { refs: EntryRefDTO[]; kind: 'cited' | 'browsed' }) {
   const { t } = useTranslation();
   const openEntry = useStore((s) => s.openEntry);
-  const [open, setOpen] = React.useState(false);
   const label =
     kind === 'cited'
       ? t('chat.cited', { count: refs.length })
       : t('chat.browsed', { count: refs.length });
+  // 默认收起：只显示 eyebrow 标签 + 数量 + 折叠箭头；点击展开为一排 .pith-cite chips。
+  // browsed（仅浏览过的候选）可能很多（截图里 47 个），收起避免占满半屏；cited 同样收起保持一致。
+  const [open, setOpen] = React.useState(false);
+  const accent = kind === 'cited';
   return (
-    <div style={{ marginTop: 8 }}>
+    <div style={{ marginTop: 12 }}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -302,65 +371,42 @@ function ReferencesBlock({ refs, kind }: { refs: EntryRefDTO[]; kind: 'cited' | 
           border: 'none',
           background: 'transparent',
           cursor: 'pointer',
-          padding: '2px 0',
-          color: 'var(--text-tertiary)',
+          padding: 0,
           fontSize: 'var(--text-caption)',
+          fontWeight: 600,
+          letterSpacing: 'var(--tracking-wide)',
+          textTransform: 'uppercase',
+          color: 'var(--text-quaternary)',
         }}
       >
+        <Quote size={12} />
+        {label}
         <ChevronRight
-          size={13}
+          size={12}
           style={{
             transform: open ? 'rotate(90deg)' : 'none',
             transition: 'transform var(--dur-fast) var(--ease-standard)',
           }}
         />
-        {label}
       </button>
       {open && (
-        <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
           {refs.map((r) => (
             <button
               key={r.id}
               type="button"
+              className="pith-cite"
               onClick={() => void openEntry(r.id, r.collection)}
               title={r.collection ? `${r.collection} / ${r.title}` : r.title}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 7,
-                border: 'none',
-                background: 'transparent',
-                cursor: 'pointer',
-                textAlign: 'left',
-                padding: '3px 6px',
-                borderRadius: 'var(--radius-xs)',
-                color: 'var(--text-secondary)',
-              }}
+              style={accent ? undefined : { color: 'var(--text-tertiary)', fontWeight: 500 }}
             >
-              <FileText size={13} style={{ color: 'var(--text-tertiary)', flex: 'none' }} />
-              <span
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  fontSize: 'var(--text-caption)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
+              <FileText
+                size={12}
+                style={{ color: accent ? 'var(--accent)' : 'var(--text-quaternary)', flex: 'none' }}
+              />
+              <span style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {r.title}
               </span>
-              {r.collection && (
-                <span
-                  style={{
-                    fontSize: 'var(--text-caption)',
-                    color: 'var(--text-quaternary)',
-                    flex: 'none',
-                  }}
-                >
-                  {r.collection}
-                </span>
-              )}
             </button>
           ))}
         </div>
@@ -550,7 +596,7 @@ function Composer() {
 
   return (
     <div style={{ flex: 'none', padding: '0 32px 22px' }}>
-      <div style={{ maxWidth: 1000, margin: '0 auto', position: 'relative' }}>
+      <div style={{ maxWidth: 720, margin: '0 auto', position: 'relative' }}>
         {showSlash && slashMatches.length > 0 && (
           <div
             style={{
@@ -620,7 +666,16 @@ function Composer() {
               {t('chat.sendHint')}
             </span>
             <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 'var(--text-caption)', color: 'var(--text-quaternary)' }}>
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: 'var(--text-caption)',
+                  color: 'var(--text-quaternary)',
+                }}
+              >
+                <Sparkles size={12} />
                 {boot?.model ?? ''}
               </span>
               {busy ? (

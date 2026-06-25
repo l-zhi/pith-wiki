@@ -26,11 +26,19 @@ import { wikiQueueStatusTool } from './wiki_queue_status.js';
 
 export type ApprovalAnswer = 'yes' | 'no' | 'always';
 
+/**
+ * 本会话的触发来源。`scheduled` = 定时任务无人值守跑的；`interactive` = 用户在
+ * REPL/桌面端主动对话。wiki_ingest 据此给产出条目盖来源 tag（scheduled/manual）。
+ */
+export type RunOrigin = 'scheduled' | 'interactive';
+
 export interface ToolContext {
   config: Config;
   library: LibraryService;
   assembler: ContextAssembler;
   hydrator: HydrationService;
+  /** 会话触发来源；缺省构造（buildContext 不传）视为 interactive。 */
+  origin: RunOrigin;
   approvedWritePaths: Set<string>;
   requestApproval: (path: string, preview: string) => Promise<ApprovalAnswer>;
   /**
@@ -93,6 +101,8 @@ export interface BuildContextExtras {
   requestCommandApproval?: ToolContext['requestCommandApproval'];
   /** 定时任务服务（仅桌面 engine 提供）。见 ToolContext.scheduleService。 */
   scheduleService?: ScheduleService;
+  /** 会话触发来源；缺省 'interactive'。见 ToolContext.origin。 */
+  origin?: RunOrigin;
 }
 
 export function buildContext(
@@ -133,6 +143,7 @@ export function buildContext(
     library: lib,
     assembler,
     hydrator,
+    origin: extras.origin ?? 'interactive',
     approvedWritePaths: new Set(),
     requestApproval,
     approvedCommands: new Set(),

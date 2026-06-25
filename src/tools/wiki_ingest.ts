@@ -27,8 +27,12 @@ export const wikiIngestTool: ToolDef<typeof params> = {
       autoLink: args.auto_link,
       source: { type: args.source_type, value: args.source_value },
     });
+    // 来源 tag：系统按会话来源盖戳（不靠 LLM 自觉）。scheduled = 定时任务产出，
+    // manual = 用户对话里主动整理。让 output 等 collection 能按来源区分/筛选。
+    const originTag = ctx.origin === 'scheduled' ? 'scheduled' : 'manual';
+    const tags = entry.tags.includes(originTag) ? entry.tags : [...entry.tags, originTag];
     // 显式传入的内容日期优先于水合抽取的（调用方比 LLM 更确定数据源日期）。
-    const saved = ctx.library.put(args.date ? { ...entry, date: args.date } : entry);
+    const saved = ctx.library.put({ ...entry, tags, ...(args.date ? { date: args.date } : {}) });
     return {
       ok: true,
       id: saved.id,

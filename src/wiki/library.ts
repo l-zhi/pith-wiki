@@ -474,10 +474,14 @@ export class LibraryService {
     const parsed = matter(raw);
     const id = (parsed.data.id as string) ?? path.basename(file, '.md');
     const updatedRaw = parsed.data.updated;
+    // frontmatter 缺 updated 时（如 agent 用 write_file 直接写的产物）回退到文件 mtime，
+    // 而非 epoch 0——否则这类条目会显示成「20629d」并永远沉到列表底部。
     const updated =
       updatedRaw instanceof Date
         ? updatedRaw.toISOString()
-        : (updatedRaw ?? new Date(0).toISOString());
+        : typeof updatedRaw === 'string' && updatedRaw
+          ? updatedRaw
+          : fs.statSync(file).mtime.toISOString();
     // frontmatter 的 subpath 优先（明确写入的总比目录派生的可信），缺省回退到目录派生
     const fmSubpath = parsed.data.subpath as string | undefined;
     const candidate = {

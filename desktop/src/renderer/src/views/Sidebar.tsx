@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   MessageCircle,
   Settings2,
+  Sparkles,
   Waypoints,
   Zap,
 } from 'lucide-react';
@@ -29,6 +30,9 @@ export function Sidebar() {
   const { t } = useTranslation();
 
   const inboxCount = queue ? queue.counts.pending + queue.counts.dead : 0;
+  // output（生成产物）从普通 collection 列表里抽出，提升为顶部固定导航 tab
+  const outputCol = collections.find((c) => c.output);
+  const normalCols = collections.filter((c) => !c.output);
 
   return (
     <aside
@@ -99,11 +103,23 @@ export function Sidebar() {
         <SidebarItem icon={<CalendarClock size={16} />} selected={nav === 'schedule'} onClick={() => setNav('schedule')}>
           {t('nav.schedule')}
         </SidebarItem>
+        {/* output 是 pith 自己的产物，提升为固定 tab（✨ + amber），区别于知识 collection */}
+        {outputCol && (
+          <SidebarItem
+            icon={<Sparkles size={16} />}
+            iconTone="var(--status-done)"
+            count={outputCol.count}
+            selected={nav === 'library' && collection === outputCol.id}
+            onClick={() => void openCollection(outputCol.id)}
+          >
+            {t('nav.output')}
+          </SidebarItem>
+        )}
 
         <div style={{ padding: '14px 8px 5px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span className="pith-eyebrow">{t('nav.collections')}</span>
         </div>
-        {collections.map((c) => (
+        {normalCols.map((c) => (
           <SidebarItem
             key={c.id}
             icon={<Folder size={16} />}
@@ -115,7 +131,7 @@ export function Sidebar() {
             {c.id}
           </SidebarItem>
         ))}
-        {collections.length === 0 && (
+        {normalCols.length === 0 && (
           <p style={{ padding: '8px 10px', fontSize: 'var(--text-caption)', color: 'var(--text-tertiary)' }}>
             {t('nav.noCollections')}
           </p>

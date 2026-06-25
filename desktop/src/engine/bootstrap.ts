@@ -197,7 +197,7 @@ async function initServices(): Promise<Services> {
 
   /* —— SessionManager —— */
   const sessionStore = new SessionStore(path.join(home, 'sessions'));
-  const agentFactory: AgentFactory = (_sessionId, approvals) => {
+  const agentFactory: AgentFactory = (_sessionId, approvals, origin) => {
     const ctx = buildContext(
       config,
       client,
@@ -209,6 +209,7 @@ async function initServices(): Promise<Services> {
         skillRegistry,
         scheduleService,
         requestCommandApproval: (cmd, argv) => approvals.request('exec', cmd, argv),
+        origin,
       },
     );
     const extraTools = skillRegistry.list().length > 0 ? [makeSkillTool(skillRegistry)] : [];
@@ -476,10 +477,11 @@ async function handle(req: EngineRequest): Promise<unknown> {
       const s = requireSvc();
       s.library.refreshIfStale(); // 捕捉 write_file 等绕过 put 的直接写盘（如定时任务写 output）
       const watch = watchSet(s.config);
+      const output = s.config.digestCollection;
       const byCol = new Map<string, number>();
       for (const e of s.library.list()) byCol.set(e.collection, (byCol.get(e.collection) ?? 0) + 1);
       return [...byCol.entries()]
-        .map(([id, count]) => ({ id, count, watch: watch.has(id) }))
+        .map(([id, count]) => ({ id, count, watch: watch.has(id), output: id === output }))
         .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
     }
     case 'library.entries': {

@@ -1,38 +1,36 @@
-# pith-wiki
+# pith
 
 > 中文版 → [README.zh-CN.md](./README.zh-CN.md)
 
-A local-first LLM wiki, Karpathy-style: don't shove raw documents into a vector
-DB and pray. Hydrate them into dense Markdown entries, retrieve by keyword + link
-traversal. File-based, works with any OpenAI-compatible LLM endpoint — and runs
-as a **native desktop app**.
+**A local-first LLM knowledge base.** Drop in your notes, PDFs, and emails — pith
+hydrates each into a dense Markdown entry an LLM can read, then lets you chat with
+your whole library, retrieved by keyword + link traversal. **No embeddings, no
+vector DB.** Everything stays in plain files on your disk.
 
-![Obsidian vault + pith-wiki side by side](docs/screenshots/Obsidian-pithwiki.png)
+![Obsidian vault + pith side by side](docs/screenshots/Obsidian-pithwiki.png)
 
-*Drop a note into your Obsidian vault — pith-wiki auto-ingests it into entries the LLM can pull from mid-conversation.*
+*Drop a note into your Obsidian vault — pith auto-ingests it into an entry the LLM
+can pull from mid-conversation.*
 
-Current input formats: `.docx` `.eml` `.htm` `.html` `.markdown` `.md` `.pdf`
-`.text` `.txt`.
-
-> **Best practice**: point `watchDirs` at your Obsidian vault — every new
-> document is automatically hydrated into an entry the LLM can pull from
-> mid-conversation.
+- 🗂️ **Plain files, not a black box** — every entry is Markdown + YAML frontmatter; Obsidian, VS Code, and Git open them natively.
+- 🔍 **Retrieval you can reason about** — weighted keyword search + link-graph traversal + exact grep. No embedding drift, no vendor lock-in.
+- 💬 **Chat that writes back** — the agent reads your library through file/wiki tools; `/digest` distills a conversation into a new entry.
+- 🤖 **Auto-ingest + schedule** — watch a folder for new files; run agent tasks on a cron (e.g. a daily digest of yesterday's additions).
+- 🔒 **Local-first** — all data under `~/.pith-wiki/`; outbound PII filtering on by default. No cloud, no lock-in.
 
 > **Design philosophy: data engineering > retrieval algorithms.** Don't dump raw
-> docs into a store and hope embedding will pull them back. Use an LLM to
-> _hydrate_ each source into a high-density Markdown entry, then retrieve by
-> keyword + link traversal. Simple, file-based, human-readable.
+> docs into a store and hope embeddings pull them back. Use an LLM to _hydrate_
+> each source into a high-density Markdown entry, then retrieve by keyword + link
+> traversal. Simple, file-based, human-readable.
 
-**Platforms**: Linux and macOS, both covered by CI (Node 20 / 22). Windows is
-theoretically usable but **not in CI** — `fs.rename` atomicity, chokidar
-fs-events, `path.delimiter` all differ from POSIX. PRs welcome; not a launch
-priority.
+Input formats: `.docx` `.eml` `.htm` `.html` `.md` `.pdf` `.txt`. The product is
+**pith**; the npm package and repo are historically named `pith-wiki`.
 
-## Run the app
+## Install
 
-The desktop app (Electron) is the way to use pith — chat, inbox, dashboard, link
-graph, skills, and a **scheduled-tasks** view with a calendar, all over the same
-engine and on-disk library. No packaged installer yet, so run it from source:
+**Desktop app (recommended)** — the full experience: chat, inbox, dashboard, link
+graph, skills, and a scheduled-tasks calendar, all over the same engine and
+on-disk library. No packaged installer yet, so run it from source:
 
 ```bash
 git clone https://github.com/l-zhi/pith-wiki.git
@@ -41,14 +39,21 @@ npm install
 npm run dev      # electron-vite dev (HMR)
 ```
 
+**CLI** *(optional — for automation / headless use)*:
+
+```bash
+npm install -g pith-wiki
+pith-wiki        # launch the REPL
+```
+
 On first launch, onboarding walks you through setup — pick a provider, paste an
 API key, and point it at a notes folder to watch. Everything lives under
 `~/.pith-wiki/` (config + wiki data); set `PITH_WIKI_HOME` for an isolated
 profile.
 
-Dev scripts: `npm test` / `npm run typecheck` / `npm run build` (run inside
-`desktop/`, or at the repo root for the engine/core). Contribution flow in
-[CONTRIBUTING.md](CONTRIBUTING.md).
+**Platforms**: macOS + Linux are CI-tested (Node 20 / 22); Windows is usable but
+not yet CI-covered. Dev scripts: `npm test` / `npm run typecheck` / `npm run build`
+(inside `desktop/`, or repo root for engine/core). See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## What it does
 

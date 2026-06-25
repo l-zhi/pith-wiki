@@ -101,3 +101,33 @@ body {
   text-transform: uppercase;
   color: var(--text-tertiary);
 }
+
+/* citation / reference chip — a quiet pill that lifts on hover */
+.pith-cite {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 8px;
+  border: 0.5px solid var(--separator);
+  cursor: pointer;
+  border-radius: var(--radius-pill);
+  background: var(--surface-card);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
+  color: var(--text-secondary);
+  letter-spacing: var(--tracking-snug);
+  box-shadow: var(--ring-card);
+  transition:
+    background var(--dur-fast) var(--ease-standard),
+    border-color var(--dur-fast) var(--ease-standard),
+    color var(--dur-fast) var(--ease-standard),
+    transform var(--dur-fast) var(--ease-standard);
+}
+.pith-cite:hover {
+  border-color: var(--accent-ring);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+.pith-cite:active {
+  transform: translateY(0);
+}

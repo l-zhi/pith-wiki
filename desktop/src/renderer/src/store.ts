@@ -527,6 +527,19 @@ export const useStore = create<PithStore>((set, get) => {
     },
 
     handleEvent(evt) {
+      // 重拉侧边栏 Collections + 图谱 + 当前打开的 collection 条目列表。
+      // 后台写入 wiki（队列水合、定时任务产物）后调用，让新文件即时可见。
+      const reloadLibraryView = () => {
+        void get().refreshCollections();
+        if (get().graph) void get().loadGraph();
+        const col = get().collection;
+        if (col && get().nav === 'library') {
+          void bridge
+            .request<EntrySummary[]>({ kind: 'library.entries', collection: col })
+            .then((entries) => set({ entries }))
+            .catch(() => {});
+        }
+      };
       switch (evt.kind) {
         case 'engine.ready':
           void get().bootstrap();
@@ -535,22 +548,15 @@ export const useStore = create<PithStore>((set, get) => {
           // 后台水合推进 → 侧边栏 Collections / 当前条目列表跟着长
           const prevDone = get().queue?.counts.completed ?? -1;
           set({ queue: evt.digest });
-          if (evt.digest.counts.completed !== prevDone) {
-            void get().refreshCollections();
-            if (get().graph) void get().loadGraph();
-            const col = get().collection;
-            if (col && get().nav === 'library') {
-              void bridge
-                .request<EntrySummary[]>({ kind: 'library.entries', collection: col })
-                .then((entries) => set({ entries }))
-                .catch(() => {});
-            }
-          }
+          if (evt.digest.counts.completed !== prevDone) reloadLibraryView();
           return;
         }
         case 'schedule.update':
-          // tick 触发 / run 完成 / CRUD → 若正在看 Schedule 视图就重拉
+          // tick 触发 / run 完成 / CRUD → 若正在看 Schedule 视图就重拉。
+          // run 完成可能已写入 wiki（如定时日报写 output），故顺带刷新 library 视图，
+          // 让产物无需手动切换 collection 即可显现。
           if (get().nav === 'schedule') void get().loadSchedule();
+          reloadLibraryView();
           return;
         case 'engine.notice':
           set((s) => ({

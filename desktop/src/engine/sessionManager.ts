@@ -5,6 +5,7 @@ import type {
   ScopeDTO,
   SessionMeta,
 } from '../shared/protocol.js';
+import type { RunOrigin } from '@core/tools/index.js';
 import type { SessionStore } from './sessionStore.js';
 
 /**
@@ -53,7 +54,11 @@ export interface MadeAgent {
   provider?: string;
 }
 
-export type AgentFactory = (sessionId: string, approvals: ApprovalBridge) => MadeAgent;
+export type AgentFactory = (
+  sessionId: string,
+  approvals: ApprovalBridge,
+  origin: RunOrigin,
+) => MadeAgent;
 
 interface Live {
   agent: AgentLike;
@@ -123,10 +128,17 @@ export class SessionManager {
 
   /* ───────────── 生命周期 ───────────── */
 
-  create(provider?: string, opts: { autoApprove?: boolean } = {}): SessionMeta {
+  create(
+    provider?: string,
+    opts: { autoApprove?: boolean; origin?: RunOrigin } = {},
+  ): SessionMeta {
     const id = this.store.newId();
     const createdAt = new Date().toISOString();
-    const made = this.makeAgent(id, this.approvalBridge(id, opts.autoApprove));
+    const made = this.makeAgent(
+      id,
+      this.approvalBridge(id, opts.autoApprove),
+      opts.origin ?? 'interactive',
+    );
     const meta = {
       id,
       title: NEW_TITLE,
@@ -153,7 +165,8 @@ export class SessionManager {
     if (!existing && !stored) throw new Error(`session not found: ${sessionId}`);
 
     if (!existing) {
-      const made = this.makeAgent(sessionId, this.approvalBridge(sessionId));
+      // 恢复历史会话 = 用户在 UI 打开继续 → interactive（即便原是定时任务跑出来的）
+      const made = this.makeAgent(sessionId, this.approvalBridge(sessionId), 'interactive');
       made.agent.restoreHistory(stored!.messages);
       this.live.set(sessionId, {
         agent: made.agent,
@@ -283,7 +296,7 @@ export class SessionManager {
     opts: { requireApproval?: boolean } = {},
   ): Promise<{ sessionId: string; status: 'ok' | 'failed'; preview?: string; error?: string }> {
     // 默认自动放行；requireApproval 的任务沿用交互式审批（有人批才过，否则整轮超时记 failed）
-    const meta = this.create(undefined, { autoApprove: !opts.requireApproval });
+    const meta = this.create(undefined, { autoApprove: !opts.requireApproval, origin: 'scheduled' });
     try {
       this.rename(meta.id, title);
     } catch {

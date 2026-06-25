@@ -10,6 +10,7 @@ import { GraphView } from './views/GraphView';
 import { Skills } from './views/Skills';
 import { Schedule } from './views/Schedule';
 import { Onboarding } from './views/Onboarding';
+import { ErrorBoundary } from './ErrorBoundary';
 import { useStore } from './store';
 
 /** pith 桌面壳：三栏布局（设计稿 App.jsx）+ 主题 + 通知 toast。 */
@@ -53,8 +54,9 @@ export function App() {
   }, [refreshQueue, refreshCollections]);
 
   return (
-    <div style={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden' }}>
-      <Sidebar />
+    <ErrorBoundary>
+      <div style={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden' }}>
+        <Sidebar />
       <MiddleColumn />
       <main style={{ flex: 1, minWidth: 0, height: '100%' }}>
         {nav === 'chat' && <ChatPane />}
@@ -124,6 +126,7 @@ export function App() {
           </button>
         ))}
       </div>
-    </div>
+      </div>
+    </ErrorBoundary>
   );
 }

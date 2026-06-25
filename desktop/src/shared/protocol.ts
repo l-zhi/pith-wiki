@@ -49,6 +49,8 @@ export interface CollectionInfo {
   id: string;
   count: number;
   watch: boolean;
+  /** 是否为生成产物 collection（= config.digestCollection，默认 output）——侧边栏据此特殊标记。 */
+  output: boolean;
 }
 
 export interface EntrySummary {

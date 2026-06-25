@@ -516,6 +516,7 @@ export function SidebarItem({
   count,
   selected = false,
   dotTone,
+  iconTone,
   onClick,
 }: {
   icon?: React.ReactNode;
@@ -523,6 +524,8 @@ export function SidebarItem({
   count?: number | null;
   selected?: boolean;
   dotTone?: string;
+  /** 非选中态下图标的强调色（如 output collection 用 amber 区分于普通 folder）。选中态恒用 on-accent。 */
+  iconTone?: string;
   onClick?: () => void;
 }) {
   const [hover, setHover] = React.useState(false);
@@ -553,7 +556,7 @@ export function SidebarItem({
           style={{
             display: 'inline-flex',
             flex: 'none',
-            color: selected ? 'var(--text-on-accent)' : 'var(--text-secondary)',
+            color: selected ? 'var(--text-on-accent)' : (iconTone ?? 'var(--text-secondary)'),
           }}
         >
           {icon}
@@ -764,14 +767,29 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-export function TokenMeter({ inTokens = 0, outTokens = 0 }: { inTokens?: number; outTokens?: number }) {
-  if (inTokens === 0 && outTokens === 0) return null;
+export function TokenMeter({
+  inTokens = 0,
+  outTokens = 0,
+  contextUsed,
+  contextMax,
+}: {
+  inTokens?: number;
+  outTokens?: number;
+  /** 本会话已占用的上下文 token；与 contextMax 同时给出才显示预算进度条。 */
+  contextUsed?: number;
+  /** 上下文窗口上限 token。 */
+  contextMax?: number;
+}) {
+  const hasBudget = typeof contextUsed === 'number' && typeof contextMax === 'number' && contextMax > 0;
+  if (inTokens === 0 && outTokens === 0 && !hasBudget) return null;
+  const frac = hasBudget ? Math.min(1, contextUsed! / contextMax!) : 0;
+  const near = frac > 0.85; // 接近上限 → 橙色预警
   return (
     <div
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 12,
+        gap: 10,
         padding: '6px 12px',
         borderRadius: 'var(--radius-pill)',
         background: 'var(--surface-sunken)',
@@ -787,6 +805,37 @@ export function TokenMeter({ inTokens = 0, outTokens = 0 }: { inTokens?: number;
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--accent)', fontVariantNumeric: 'tabular-nums' }}>
         ↓ {fmtTokens(outTokens)}
       </span>
+      {hasBudget && (
+        <>
+          <span style={{ width: '0.5px', height: 13, background: 'var(--separator-strong)' }} />
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+            <span
+              style={{
+                position: 'relative',
+                width: 52,
+                height: 5,
+                borderRadius: 'var(--radius-pill)',
+                background: 'var(--gray-200)',
+                overflow: 'hidden',
+              }}
+            >
+              <span
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  width: `${frac * 100}%`,
+                  borderRadius: 'var(--radius-pill)',
+                  background: near ? 'var(--status-running)' : 'var(--accent)',
+                  transition: 'width var(--dur-slow) var(--ease-standard)',
+                }}
+              />
+            </span>
+            <span style={{ color: near ? 'var(--status-running)' : 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
+              {Math.round(frac * 100)}%
+            </span>
+          </span>
+        </>
+      )}
     </div>
   );
 }
