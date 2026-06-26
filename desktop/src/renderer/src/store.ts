@@ -133,6 +133,8 @@ interface PithStore {
   loadSettings(): Promise<void>;
   loadGraph(force?: boolean): Promise<void>;
   saveSettings(payload: SettingsSaveDTO): Promise<void>;
+  switchProvider(name: string): Promise<void>;
+  setHydrationProvider(name: string): Promise<void>;
   loadSkills(): Promise<void>;
   installSkill(name: string): Promise<void>;
   removeSkill(name: string): Promise<void>;
@@ -471,6 +473,33 @@ export const useStore = create<PithStore>((set, get) => {
       // 保存 = Engine 全量重建：busy 轮次被中断，落盘会话随 engine.ready 自动恢复
       await bridge.request({ kind: 'settings.save', payload });
       await get().loadSettings();
+    },
+
+    async switchProvider(name) {
+      // 即时切聊天 provider：改 activeProvider + Engine 全量重建（engine.ready 后刷新 boot）。
+      // 失败要显式冒泡成通知——否则请求 reject 后 select 会静默弹回原值，看起来"切不动"。
+      try {
+        await bridge.request({ kind: 'settings.setActiveProvider', name });
+      } catch (err) {
+        set((s) => ({
+          notices: [...s.notices, { id: nid(), level: 'error', text: `切换 provider 失败：${(err as Error).message}` }],
+        }));
+      } finally {
+        await get().loadSettings(); // 同步设置页选择器到持久化值（失败时即回滚乐观更新）
+      }
+    },
+
+    async setHydrationProvider(name) {
+      // 即时切水合 provider（设置「水合模型」选择器）：写 hydrationProvider + Engine 全量重建。
+      try {
+        await bridge.request({ kind: 'settings.setHydrationProvider', name });
+      } catch (err) {
+        set((s) => ({
+          notices: [...s.notices, { id: nid(), level: 'error', text: `切换水合 provider 失败：${(err as Error).message}` }],
+        }));
+      } finally {
+        await get().loadSettings();
+      }
     },
 
     async saveOnboarding(p) {

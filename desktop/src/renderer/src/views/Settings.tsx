@@ -13,6 +13,7 @@ import type { SettingsDTO, SettingsSaveDTO, WatchDirDTO } from '../../../shared/
 
 interface ProviderDraft {
   name: string;
+  kind: 'openai' | 'claude-code';
   baseURL: string;
   model: string;
   supportsJsonMode: boolean;
@@ -27,6 +28,7 @@ interface ProviderDraft {
 
 interface Draft {
   activeProvider: string;
+  hydrationProvider: string;
   providers: ProviderDraft[];
   watchDirs: WatchDirDTO[];
   readOnly: boolean;
@@ -35,6 +37,7 @@ interface Draft {
 function toDraft(s: SettingsDTO): Draft {
   return {
     activeProvider: s.activeProvider,
+    hydrationProvider: s.hydrationProvider,
     providers: s.providers.map((p) => ({ ...p, newApiKey: '' })),
     watchDirs: s.watchDirs.map((w) => ({ ...w })),
     readOnly: s.readOnly,
@@ -44,8 +47,10 @@ function toDraft(s: SettingsDTO): Draft {
 function toPayload(d: Draft): SettingsSaveDTO {
   return {
     activeProvider: d.activeProvider,
+    hydrationProvider: d.hydrationProvider,
     providers: d.providers.map((p) => ({
       name: p.name.trim(),
+      kind: p.kind,
       baseURL: p.baseURL.trim(),
       model: p.model.trim(),
       supportsJsonMode: p.supportsJsonMode,
@@ -60,6 +65,8 @@ export function Settings() {
   const { t } = useTranslation();
   const settings = useStore((s) => s.settings);
   const saveSettings = useStore((s) => s.saveSettings);
+  const switchProvider = useStore((s) => s.switchProvider);
+  const setHydrationProvider = useStore((s) => s.setHydrationProvider);
   const theme = useStore((s) => s.theme);
   const setTheme = useStore((s) => s.setTheme);
   const lang = useStore((s) => s.lang);
@@ -79,7 +86,12 @@ export function Settings() {
 
   if (!settings || !draft) return <Shell><p style={{ color: 'var(--text-tertiary)' }}>{t('settings.loading')}</p></Shell>;
 
-  const dirty = JSON.stringify(toPayload(draft)) !== JSON.stringify(toPayload(toDraft(settings)));
+  // activeProvider / hydrationProvider 是「选了即生效」的即时选择器，不归 Save 管——
+  // 从 dirty 比对里剔除，避免切换它们时 Save 按钮在重建期间闪一下"可保存"。
+  const stripInstant = (p: SettingsSaveDTO) => ({ ...p, activeProvider: '', hydrationProvider: '' });
+  const dirty =
+    JSON.stringify(stripInstant(toPayload(draft))) !==
+    JSON.stringify(stripInstant(toPayload(toDraft(settings))));
   const anyBusy = Object.values(chat).some((c) => c.busy);
 
   const patch = (fn: (d: Draft) => Draft) => {
@@ -115,7 +127,7 @@ export function Settings() {
       ...d,
       providers: [
         ...d.providers,
-        { name: '', baseURL: 'https://', model: '', supportsJsonMode: true, newApiKey: '', isNew: true },
+        { name: '', kind: 'openai', baseURL: 'https://', model: '', supportsJsonMode: true, newApiKey: '', isNew: true },
       ],
     }));
 
@@ -129,96 +141,145 @@ export function Settings() {
     );
   };
 
+  // ── 三段所需的派生数据 ──
+  // 区域 1（Provider）只展示 openai 类（= API key 配置）；claude-code 不是 API 卡片。
+  const openaiProviders = draft.providers.filter((p) => p.kind === 'openai' && p.name.trim());
+  // 区域 3（对话模型）选项 = openai providers + 本机检测到的 CLI。
+  // 既没检测到、也没配置过的 CLI 选了也用不了 → 直接不列入。
+  const cliOptions = (settings.availableClis ?? [])
+    .map((cli) => ({ cli, entry: draft.providers.find((p) => p.kind === 'claude-code') }))
+    .filter(({ cli, entry }) => cli.present || entry)
+    .map(({ cli, entry }) => ({
+      value: entry?.name ?? cli.id,
+      label: `${cli.label}${cli.present ? '' : ` · ${t('settings.cliAbsent')}`}`,
+    }));
+  const chatOptions = [...openaiProviders.map((p) => ({ value: p.name, label: p.name })), ...cliOptions];
+  // 两个选择器都是「选了即刻生效」（不走 Save）——乐观更新草稿 + 即时持久化 + 重建。
+  // 未配置的 CLI（如本机检测到但没建 entry）由 engine 端在 setActiveProvider 里合成。
+  const onChatChange = (value: string) => {
+    patch((d) => ({ ...d, activeProvider: value }));
+    void switchProvider(value);
+  };
+  const onHydrationChange = (value: string) => {
+    patch((d) => ({ ...d, hydrationProvider: value }));
+    void setHydrationProvider(value);
+  };
+
   return (
     <Shell>
       <h1 style={{ margin: 0, fontSize: 'var(--text-title-1)', fontWeight: 700, letterSpacing: 'var(--tracking-tight)', color: 'var(--text-primary)' }}>
         {t('settings.title')}
       </h1>
 
-      {/* ───── Provider ───── */}
+      {/* ───── 区域 1：Provider（配置 API key） ───── */}
       <Section title={t('settings.provider')}>
-        {draft.providers.map((p, i) => (
-          <div key={p.isNew ? `new-${i}` : p.name} style={{ padding: '16px 20px', borderBottom: '0.5px solid var(--separator)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-              {p.isNew ? (
-                <Input
-                  size="sm"
-                  placeholder={t('settings.providerNamePlaceholder')}
-                  value={p.name}
-                  onChange={(e) => patch((d) => updateP(d, i, { name: e.target.value }))}
-                  wrapStyle={{ width: 160 }}
-                />
-              ) : (
-                <span style={{ fontSize: 'var(--text-callout)', fontWeight: 700, color: 'var(--text-primary)' }}>{p.name}</span>
-              )}
-              {draft.activeProvider === p.name && !p.isNew ? (
-                <Badge tone="brand" dot>{t('settings.active')}</Badge>
-              ) : (
-                <Button size="sm" variant="ghost" onClick={() => patch((d) => ({ ...d, activeProvider: p.name }))} disabled={!p.name}>
-                  {t('settings.setActive')}
-                </Button>
-              )}
-              <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 10 }}>
-                <span style={{ fontSize: 'var(--text-caption)', color: 'var(--text-tertiary)' }}>{t('settings.jsonMode')}</span>
-                <Switch checked={p.supportsJsonMode} onChange={(v) => patch((d) => updateP(d, i, { supportsJsonMode: v }))} />
-                <button
-                  type="button"
-                  title={draft.activeProvider === p.name ? t('settings.deleteActiveHint') : t('settings.deleteProvider')}
-                  disabled={draft.activeProvider === p.name}
-                  onClick={() => patch((d) => ({ ...d, providers: d.providers.filter((_, j) => j !== i) }))}
-                  style={{
-                    display: 'inline-flex',
-                    border: 'none',
-                    background: 'transparent',
-                    cursor: draft.activeProvider === p.name ? 'default' : 'pointer',
-                    color: draft.activeProvider === p.name ? 'var(--text-quaternary)' : 'var(--status-dead)',
-                    opacity: draft.activeProvider === p.name ? 0.5 : 1,
-                  }}
-                >
-                  <Trash2 size={14} />
-                </button>
-              </span>
-            </div>
-            <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-              <Field label={t('settings.baseURL')} flex={1.5}>
-                <Input size="sm" value={p.baseURL} onChange={(e) => patch((d) => updateP(d, i, { baseURL: e.target.value }))} />
-              </Field>
-              <Field label={t('settings.model')} flex={1}>
-                <Input size="sm" value={p.model} onChange={(e) => patch((d) => updateP(d, i, { model: e.target.value }))} />
-              </Field>
-            </div>
-            <Field label={t('settings.apiKey')}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Input
-                  size="sm"
-                  type="password"
-                  placeholder={
-                    p.keySource === 'literal'
-                      ? t('settings.keyLiteralPlaceholder', { masked: p.keyMasked })
-                      : p.keySource === 'env'
-                        ? t('settings.keyEnvPlaceholder')
-                        : t('settings.keyEmptyPlaceholder')
-                  }
-                  value={p.newApiKey}
-                  onChange={(e) => patch((d) => updateP(d, i, { newApiKey: e.target.value }))}
-                  iconLeft={<KeyRound size={14} />}
-                  wrapStyle={{ flex: 1 }}
-                />
-                {p.keySource === 'env' && (
-                  <Badge tone={p.keyResolved ? 'done' : 'dead'} dot>
-                    ${p.keyEnvVar}
-                  </Badge>
+        <div style={{ padding: '12px 20px 4px', fontSize: 'var(--text-caption)', color: 'var(--text-tertiary)' }}>
+          {t('settings.providerHint')}
+        </div>
+        {draft.providers.map((p, i) =>
+          p.kind !== 'openai' ? null : (
+            <div key={p.isNew ? `new-${i}` : p.name} style={{ padding: '16px 20px', borderTop: '0.5px solid var(--separator)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                {p.isNew ? (
+                  <Input
+                    size="sm"
+                    placeholder={t('settings.providerNamePlaceholder')}
+                    value={p.name}
+                    onChange={(e) => patch((d) => updateP(d, i, { name: e.target.value }))}
+                    wrapStyle={{ width: 160 }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 'var(--text-callout)', fontWeight: 700, color: 'var(--text-primary)' }}>{p.name}</span>
                 )}
-                {p.keySource === 'literal' && <Badge tone={p.keyResolved ? 'done' : 'dead'} dot>literal</Badge>}
+                <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+                  <span style={{ fontSize: 'var(--text-caption)', color: 'var(--text-tertiary)' }}>{t('settings.jsonMode')}</span>
+                  <Switch checked={p.supportsJsonMode} onChange={(v) => patch((d) => updateP(d, i, { supportsJsonMode: v }))} />
+                  {(() => {
+                    const used = draft.activeProvider === p.name || draft.hydrationProvider === p.name;
+                    return (
+                      <button
+                        type="button"
+                        title={used ? t('settings.deleteActiveHint') : t('settings.deleteProvider')}
+                        disabled={used}
+                        onClick={() => patch((d) => ({ ...d, providers: d.providers.filter((_, j) => j !== i) }))}
+                        style={{
+                          display: 'inline-flex',
+                          border: 'none',
+                          background: 'transparent',
+                          cursor: used ? 'default' : 'pointer',
+                          color: used ? 'var(--text-quaternary)' : 'var(--status-dead)',
+                          opacity: used ? 0.5 : 1,
+                        }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    );
+                  })()}
+                </span>
               </div>
-            </Field>
-          </div>
-        ))}
-        <div style={{ padding: '12px 20px' }}>
+              <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+                <Field label={t('settings.baseURL')} flex={1.5}>
+                  <Input size="sm" value={p.baseURL} onChange={(e) => patch((d) => updateP(d, i, { baseURL: e.target.value }))} />
+                </Field>
+                <Field label={t('settings.model')} flex={1}>
+                  <Input size="sm" value={p.model} onChange={(e) => patch((d) => updateP(d, i, { model: e.target.value }))} />
+                </Field>
+              </div>
+              <Field label={t('settings.apiKey')}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Input
+                    size="sm"
+                    type="password"
+                    placeholder={
+                      p.keySource === 'literal'
+                        ? t('settings.keyLiteralPlaceholder', { masked: p.keyMasked })
+                        : p.keySource === 'env'
+                          ? t('settings.keyEnvPlaceholder')
+                          : t('settings.keyEmptyPlaceholder')
+                    }
+                    value={p.newApiKey}
+                    onChange={(e) => patch((d) => updateP(d, i, { newApiKey: e.target.value }))}
+                    iconLeft={<KeyRound size={14} />}
+                    wrapStyle={{ flex: 1 }}
+                  />
+                  {p.keySource === 'env' && (
+                    <Badge tone={p.keyResolved ? 'done' : 'dead'} dot>
+                      ${p.keyEnvVar}
+                    </Badge>
+                  )}
+                  {p.keySource === 'literal' && <Badge tone={p.keyResolved ? 'done' : 'dead'} dot>literal</Badge>}
+                </div>
+              </Field>
+            </div>
+          ),
+        )}
+        <div style={{ padding: '12px 20px', borderTop: '0.5px solid var(--separator)' }}>
           <Button size="sm" variant="ghost" iconLeft={<Plus size={14} />} onClick={addProvider}>
             {t('settings.addProvider')}
           </Button>
         </div>
+      </Section>
+
+      {/* ───── 区域 2：知识库水合模型（选择器） ───── */}
+      <Section title={t('settings.hydrationTitle')}>
+        <Row title={t('settings.hydrationProvider')} desc={t('settings.hydrationHint')}>
+          <SegmentedControl
+            size="sm"
+            value={draft.hydrationProvider}
+            onChange={onHydrationChange}
+            options={[
+              { value: '', label: t('settings.hydrationAuto') },
+              ...openaiProviders.map((p) => ({ value: p.name, label: p.name })),
+            ]}
+          />
+        </Row>
+      </Section>
+
+      {/* ───── 区域 3：默认对话模型（选择器，含本机 CLI） ───── */}
+      <Section title={t('settings.chatTitle')}>
+        <Row title={t('nav.chat')} desc={t('settings.chatHint')}>
+          <SegmentedControl size="sm" value={draft.activeProvider} onChange={onChatChange} options={chatOptions} />
+        </Row>
       </Section>
 
       {/* ───── Library ───── */}

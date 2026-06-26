@@ -546,6 +546,7 @@ function Composer() {
   const activeSession = useStore((s) => s.activeSession);
   const chat = useStore((s) => (activeSession ? s.chat[activeSession] : undefined));
   const boot = useStore((s) => s.boot);
+  const switchProvider = useStore((s) => s.switchProvider);
   const composerDraft = useStore((s) => s.composerDraft);
 
   const [text, setText] = React.useState('');
@@ -676,7 +677,31 @@ function Composer() {
                 }}
               >
                 <Sparkles size={12} />
-                {boot?.model ?? ''}
+                {(boot?.providers?.length ?? 0) > 0 ? (
+                  <select
+                    value={boot?.provider ?? ''}
+                    onChange={(e) => void switchProvider(e.target.value)}
+                    title={t('chat.switchProvider')}
+                    style={{
+                      fontSize: 'var(--text-caption)',
+                      color: 'var(--text-quaternary)',
+                      background: 'transparent',
+                      border: 'none',
+                      outline: 'none',
+                      cursor: 'pointer',
+                      fontFamily: 'var(--font-sans)',
+                      padding: 0,
+                    }}
+                  >
+                    {boot?.providers.map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.model || p.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  (boot?.model ?? '')
+                )}
               </span>
               {busy ? (
                 <Button

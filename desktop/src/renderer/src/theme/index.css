@@ -18,7 +18,8 @@ body,
   -webkit-app-region: drag;
 }
 .titlebar-drag button,
-.titlebar-drag input {
+.titlebar-drag input,
+.titlebar-drag select {
   -webkit-app-region: no-drag;
 }
 

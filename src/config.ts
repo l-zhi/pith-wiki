@@ -50,25 +50,51 @@ function loadDotenvOnce(): void {
  *   - REPL 内：用 `/provider <name>` slash 命令，App.tsx 重建 client + agent
  *     （隐式 reset 对话——不同模型不该共享 history）
  */
-const ProviderSchema = z.object({
-  baseURL: z.string().url(),
-  model: z.string().min(1),
-  apiKey: z.string().optional(),
-  apiKeyEnv: z.string().optional(),
-  /**
-   * 该 provider 的 endpoint 是否支持 `response_format: { type: 'json_object' }`。
-   * 缺省视为 true（DeepSeek 官方 / OpenAI / Qwen 等主流 chat endpoint 都支持）。
-   *
-   * 已知需要设 false 的场景：
-   *   - 火山引擎 Ark `/api/coding/v3` 端点（DeepSeek-V4-Flash 等）—— 直接返回 HTTP 400，
-   *     连参数都不接受
-   *   - 部分本地推理框架（llama.cpp server / 旧版 vllm）
-   *
-   * 关掉后 HydrationService 不再传 `response_format`，靠 hydration.ts 内的 extractJson
-   * 三级抢救 (直 parse → 剥 markdown fence → 找首{...末}) 兜底解析非严格 JSON 输出。
-   */
-  supportsJsonMode: z.boolean().optional(),
-});
+const ProviderSchema = z
+  .object({
+    /**
+     * provider 类型：
+     *   - `openai`（默认）：OpenAI 兼容 HTTP endpoint，走 chat.completions（现有全部）。
+     *   - `claude-code`：委托本机 `claude` CLI（headless + pith-mcp），复用订阅额度。
+     *     仅供桌面端 chat 使用；hydration/queue 仍需一个 openai provider。
+     */
+    kind: z.enum(['openai', 'claude-code']).default('openai'),
+    /** OpenAI 兼容端点。openai 类型必填；claude-code 不需要（可省）。 */
+    baseURL: z.string().url().optional(),
+    model: z.string().min(1),
+    apiKey: z.string().optional(),
+    apiKeyEnv: z.string().optional(),
+    /**
+     * 该 provider 的 endpoint 是否支持 `response_format: { type: 'json_object' }`。
+     * 缺省视为 true（DeepSeek 官方 / OpenAI / Qwen 等主流 chat endpoint 都支持）。
+     *
+     * 已知需要设 false 的场景：
+     *   - 火山引擎 Ark `/api/coding/v3` 端点（DeepSeek-V4-Flash 等）—— 直接返回 HTTP 400，
+     *     连参数都不接受
+     *   - 部分本地推理框架（llama.cpp server / 旧版 vllm）
+     *
+     * 关掉后 HydrationService 不再传 `response_format`，靠 hydration.ts 内的 extractJson
+     * 三级抢救 (直 parse → 剥 markdown fence → 找首{...末}) 兜底解析非严格 JSON 输出。
+     */
+    supportsJsonMode: z.boolean().optional(),
+    /** claude-code 专属：claude 可执行路径（默认 'claude'，PATH 里能找到就不用填）。 */
+    binary: z.string().optional(),
+    /** claude-code 专属：走订阅的 OAuth token（`claude setup-token` 生成；设置页填写）。 */
+    oauthToken: z.string().optional(),
+    /** claude-code 专属：从该 env 变量读 OAuth token（oauthToken 的替代，避免明文落 config）。 */
+    oauthTokenEnv: z.string().optional(),
+    /** claude-code 专属：指向 pith-mcp 的 --mcp-config 文件路径（如 ~/pith-mcp.json）。 */
+    mcpConfigPath: z.string().optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.kind === 'openai' && !v.baseURL) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'baseURL is required for openai providers',
+        path: ['baseURL'],
+      });
+    }
+  });
 export type ProviderConfig = z.infer<typeof ProviderSchema>;
 
 const ConfigSchema = z.object({
@@ -81,10 +107,21 @@ const ConfigSchema = z.object({
    * 顶层（无 provider）的 v0 用法也走默认 true（DeepSeek 官方端点支持）。
    */
   supportsJsonMode: z.boolean().default(true),
+  /**
+   * 当前 active provider 的类型（由 applyActiveProvider 从 entry.kind 折下来）。
+   * claude-code → 桌面端该会话走委托 agent（spawn claude CLI），不走 chat.completions。
+   */
+  providerKind: z.enum(['openai', 'claude-code']).default('openai'),
   /** Multi-provider map（可选）。空 → 走顶层 apiKey/baseURL/model（v0 行为）。 */
   providers: z.record(z.string(), ProviderSchema).default({}),
-  /** 当前激活的 provider key（必须出现在 providers 里）。空 → 不切换。 */
+  /** 当前激活的 provider key（必须出现在 providers 里）。空 → 不切换。聊天用。 */
   activeProvider: z.string().optional(),
+  /**
+   * 水合（hydration / queue / digest）专用 provider key。空 → 自动选第一个 openai provider。
+   * 让「聊天切到 claude-code」时，后台水合仍走一个 API provider —— claude-code 不适合
+   * 批量 JSON 水合，也会很快耗尽订阅额度。
+   */
+  hydrationProvider: z.string().optional(),
   workspaceRoot: z.string().min(1),
   wikiRoot: z.string().min(1),
   readOnly: z.boolean(),
@@ -548,7 +585,11 @@ export function resolveProviderEntry(entry: ProviderConfig): {
   const apiKey = entry.apiKey && entry.apiKey.length > 0 ? entry.apiKey : fromEnv;
   // entry 未声明视为支持 —— 主流 chat endpoint 都支持，关掉是例外不是默认
   const supportsJsonMode = entry.supportsJsonMode ?? true;
-  return { apiKey, baseURL: entry.baseURL, model: entry.model, supportsJsonMode };
+  // claude-code 不走 HTTP，但顶层 baseURL 必须是合法 URL（createClient 会 new OpenAI，
+  // 即便该 client 从不被调用）——给官方占位地址兜底。
+  const baseURL =
+    entry.baseURL ?? (entry.kind === 'claude-code' ? 'https://api.anthropic.com' : '');
+  return { apiKey, baseURL, model: entry.model, supportsJsonMode };
 }
 
 /**
@@ -575,7 +616,25 @@ export function applyActiveProvider(parsed: Config): Config {
     baseURL: resolved.baseURL,
     model: resolved.model,
     supportsJsonMode: resolved.supportsJsonMode,
+    providerKind: entry.kind ?? 'openai',
   };
+}
+
+/**
+ * 选水合用的 provider entry：显式 `hydrationProvider` > 第一个 openai 类 provider。
+ * 都没有 → undefined（调用方回退到顶层 config，即 v0 单 provider 行为）。
+ * claude-code 类永不入选（它不能做批量 JSON 水合）。
+ */
+export function pickHydrationProvider(config: Config): ProviderConfig | undefined {
+  const isOpenai = (e: ProviderConfig) => (e.kind ?? 'openai') !== 'claude-code';
+  if (config.hydrationProvider) {
+    const e = config.providers[config.hydrationProvider];
+    if (e && isOpenai(e)) return e;
+  }
+  for (const e of Object.values(config.providers)) {
+    if (isOpenai(e)) return e;
+  }
+  return undefined;
 }
 
 export function ensureWikiRoot(config: Config): void {

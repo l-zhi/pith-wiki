@@ -113,6 +113,8 @@ export interface DashboardDTO {
 
 export interface ProviderDTO {
   name: string;
+  /** provider 类型：openai = OpenAI 兼容 HTTP；claude-code = 委托本机 claude CLI（无需 baseURL）。 */
+  kind: 'openai' | 'claude-code';
   baseURL: string;
   model: string;
   supportsJsonMode: boolean;
@@ -132,9 +134,22 @@ export interface WatchDirDTO {
   initialScan: boolean;
 }
 
+/** 本机检测到的可作为聊天后端的 CLI（如 claude-code）。「对话模型」区据此追加选项。 */
+export interface CliDTO {
+  /** provider kind id，如 'claude-code'；未配置时直接作为 activeProvider 取值。 */
+  id: 'claude-code';
+  label: string;
+  /** 本机是否找到该 CLI 的可执行文件。 */
+  present: boolean;
+}
+
 export interface SettingsDTO {
   activeProvider: string;
+  /** 水合专用 provider；空串 = 自动选第一个 openai。 */
+  hydrationProvider: string;
   providers: ProviderDTO[];
+  /** 本机检测到、可作为聊天后端的 CLI（「对话模型」选择器追加项）。 */
+  availableClis: CliDTO[];
   watchDirs: WatchDirDTO[];
   /** 只读展示：当前读白名单（watch 目录自动联动 + 用户手加的） */
   additionalReadPaths: string[];
@@ -145,11 +160,15 @@ export interface SettingsDTO {
 /** 保存载荷。providers 缺席 = 删除；newApiKey 仅在用户输入了新 key 时携带。 */
 export interface SettingsSaveDTO {
   activeProvider: string;
+  /** 水合专用 provider；空串 = 自动选第一个 openai。 */
+  hydrationProvider: string;
   providers: {
     name: string;
+    kind: 'openai' | 'claude-code';
     baseURL: string;
     model: string;
     supportsJsonMode: boolean;
+    /** 新输入的密钥：openai → apiKey；claude-code → oauthToken（claude setup-token 生成）。 */
     newApiKey?: string;
   }[];
   watchDirs: WatchDirDTO[];
@@ -280,6 +299,8 @@ export type EngineRequest =
   | { kind: 'dashboard.data' }
   | { kind: 'settings.get' }
   | { kind: 'settings.save'; payload: SettingsSaveDTO }
+  | { kind: 'settings.setActiveProvider'; name: string }
+  | { kind: 'settings.setHydrationProvider'; name: string }
   | { kind: 'skills.list' }
   | { kind: 'skills.install'; name: string }
   | { kind: 'skills.remove'; name: string }

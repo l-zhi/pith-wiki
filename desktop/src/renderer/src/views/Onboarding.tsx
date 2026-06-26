@@ -9,6 +9,8 @@ const PRESETS: Record<string, { baseURL: string; model: string }> = {
   deepseek: { baseURL: 'https://api.deepseek.com', model: 'deepseek-chat' },
   qwen: { baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
   openai: { baseURL: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+  // 任意 OpenAI 兼容端点（如火山引擎 Ark / 自建推理）——baseURL/model 留空给用户填。
+  other: { baseURL: '', model: '' },
 };
 
 /**
@@ -34,6 +36,10 @@ export function Onboarding() {
   const save = async () => {
     if (!apiKey.trim()) {
       setError(t('onboarding.apiKeyRequired'));
+      return;
+    }
+    if (!baseURL.trim()) {
+      setError(t('onboarding.baseURLRequired'));
       return;
     }
     setSaving(true);
@@ -87,6 +93,7 @@ export function Onboarding() {
               { value: 'deepseek', label: 'DeepSeek' },
               { value: 'qwen', label: 'Qwen' },
               { value: 'openai', label: 'OpenAI' },
+              { value: 'other', label: t('onboarding.other') },
             ]}
           />
           <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -104,11 +111,21 @@ export function Onboarding() {
           <div style={{ display: 'flex', gap: 12 }}>
             <label style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
               <span className="pith-eyebrow">{t('onboarding.model')}</span>
-              <Input value={model} onChange={(e) => setModel(e.target.value)} size="sm" />
+              <Input
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                size="sm"
+                placeholder="doubao-seed-2.0-pro"
+              />
             </label>
             <label style={{ flex: 1.4, display: 'flex', flexDirection: 'column', gap: 6 }}>
               <span className="pith-eyebrow">{t('onboarding.baseURL')}</span>
-              <Input value={baseURL} onChange={(e) => setBaseURL(e.target.value)} size="sm" />
+              <Input
+                value={baseURL}
+                onChange={(e) => setBaseURL(e.target.value)}
+                size="sm"
+                placeholder="https://ark.cn-beijing.volces.com/api/coding/v3"
+              />
             </label>
           </div>
           {error && <p style={{ margin: 0, fontSize: 'var(--text-subhead)', color: 'var(--status-dead)' }}>{error}</p>}
