@@ -107,7 +107,9 @@ export function buildSkillCommands(program: Command, args: BuildArgs): void {
             chalk.yellow(`\n🔑 Set ${result.missingEnv.join(', ')} before using this skill:`),
           );
           console.log(
-            chalk.dim(`  add it to ~/.pith-wiki/.env (e.g. ${result.missingEnv[0]}=your-key)`),
+            chalk.dim(
+              `  add it to config.json's "secrets" map (e.g. "secrets": { "${result.missingEnv[0]}": "your-key" })`,
+            ),
           );
           if (result.skill.name === 'weread') {
             console.log(

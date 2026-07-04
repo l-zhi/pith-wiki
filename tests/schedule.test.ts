@@ -107,6 +107,21 @@ describe('ScheduleService', () => {
     expect(svc.list()).toHaveLength(0);
   });
 
+  it('review 默认 false，可创建时开启、update 切换', () => {
+    const def = svc.create({ input: '默认任务', schedule: { kind: 'cron', expr: '0 9 * * *', tz: 'UTC' } });
+    expect(def.review).toBe(false);
+
+    const withReview = svc.create({
+      input: '日报',
+      schedule: { kind: 'cron', expr: '0 9 * * *', tz: 'UTC' },
+      review: true,
+    });
+    expect(withReview.review).toBe(true);
+
+    const toggled = svc.update(withReview.id, { review: false });
+    expect(toggled.review).toBe(false);
+  });
+
   it('uniquifies colliding ids', () => {
     const a = svc.create({
       input: 'task',

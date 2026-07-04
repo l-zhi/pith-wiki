@@ -2,27 +2,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
-import dotenv from 'dotenv';
 import { pithWikiHome } from './paths.js';
 
 /**
- * 懒加载 `.env`，仅 CLI 入口（`loadConfigFromEnv`）会调用。
+ * 把 config.json 的 `secrets` map 灌进 `process.env`。
  *
- * 加载顺序：项目根 `.env` → `~/.pith-wiki/.env`（override: true，权威源）。
- * 设计意图：避免每个项目根都需要复制一份 .env；让 DEEPSEEK_API_KEY 这类
- * 跨工作区不变的密钥只放一份在 ~/.pith-wiki/.env。
+ * 这是密钥的**唯一持久化源**（取代旧的 `.env` 文件）：DEEPSEEK_API_KEY 这类
+ * provider key（被 entry.apiKeyEnv 引用）和 skill 的 http_request auth_env，
+ * 运行时都从 process.env 读，这里在 load 时一次性填好。
  *
- * 幂等：第二次调用 no-op，避免覆盖测试或调用方在第一次 load 后手工改的 env。
+ * 无条件覆盖（config.json 即权威）；只 set 不 unset——删 key 由写入侧
+ * （setSkillEnv 空值分支）显式 delete，re-load 不负责清理残留。
  */
-let dotenvLoaded = false;
-function loadDotenvOnce(): void {
-  if (dotenvLoaded) return;
-  dotenvLoaded = true;
-  dotenv.config();
-  dotenv.config({
-    path: path.join(pithWikiHome(), '.env'),
-    override: true,
-  });
+function applySecretsToEnv(secrets: Record<string, string> | undefined): void {
+  for (const [k, v] of Object.entries(secrets ?? {})) {
+    if (typeof v === 'string') process.env[k] = v;
+  }
 }
 
 /**
@@ -114,6 +109,12 @@ const ConfigSchema = z.object({
   providerKind: z.enum(['openai', 'claude-code']).default('openai'),
   /** Multi-provider map（可选）。空 → 走顶层 apiKey/baseURL/model（v0 行为）。 */
   providers: z.record(z.string(), ProviderSchema).default({}),
+  /**
+   * 密钥 map（KEY → 明文值）：唯一持久化源，取代 `.env`。load 时灌进 process.env，
+   * 供 provider 的 apiKeyEnv / skill 的 http_request auth_env 在运行时读取。
+   * 桌面端 setSkillEnv 与 UI 写入都落到这里。
+   */
+  secrets: z.record(z.string(), z.string()).default({}),
   /** 当前激活的 provider key（必须出现在 providers 里）。空 → 不切换。聊天用。 */
   activeProvider: z.string().optional(),
   /**
@@ -122,6 +123,11 @@ const ConfigSchema = z.object({
    * 批量 JSON 水合，也会很快耗尽订阅额度。
    */
   hydrationProvider: z.string().optional(),
+  /**
+   * 审稿模式（ReviewingAgent）专用 reviewer provider key。空 → reviewer 与 writer 同 provider。
+   * 必须是 API（openai）provider——claude-code 不适合当逐轮评审。
+   */
+  reviewProvider: z.string().optional(),
   workspaceRoot: z.string().min(1),
   wikiRoot: z.string().min(1),
   readOnly: z.boolean(),
@@ -132,6 +138,16 @@ const ConfigSchema = z.object({
    * SDK 仍会按默认重试策略对超时/网络错误重试。
    */
   requestTimeoutMs: z.number().int().positive(),
+  /**
+   * agent tool-loop 的最大轮数，默认 25。聚合+写入这类 agentic 任务
+   * （如定时日报：查 pith + 飞书 + 微信读书后再 write_file 落盘）轮数消耗大，
+   * 太低会在轮到写文件前就触顶，导致模型只描述步骤却没真正写入。
+   * 触顶后 Agent 仍会强制收尾出一段文本答复，但副作用（写文件/入库）会丢失。
+   * 可在 config.json 或 PITH_WIKI_MAX_STEPS 调整。
+   */
+  maxSteps: z.number().int().positive(),
+  /** 审稿模式（ReviewingAgent，桌面端）最大打回轮次。默认 2；到顶返回最后一版。 */
+  reviewMaxRounds: z.number().int().min(1).max(5).default(2),
   /**
    * run_command 工具的默认超时（毫秒），默认 60_000。单次工具调用可用
    * timeout_ms 参数覆盖。超时先 SIGTERM、5s 后 SIGKILL。
@@ -260,6 +276,7 @@ export interface ConfigOverrides {
   wikiRoot?: string;
   readOnly?: boolean;
   requestTimeoutMs?: number;
+  maxSteps?: number;
   commandTimeoutMs?: number;
   httpTimeoutMs?: number;
   maxToolPayloadBytes?: number;
@@ -294,6 +311,8 @@ const DEFAULTS = {
   baseURL: 'https://api.deepseek.com',
   model: 'deepseek-chat',
   requestTimeoutMs: 120_000,
+  maxSteps: 25,
+  reviewMaxRounds: 2,
   commandTimeoutMs: 60_000,
   httpTimeoutMs: 30_000,
   maxToolPayloadBytes: 100_000,
@@ -405,12 +424,15 @@ export function parsePositiveIntEnv(raw: string | undefined): number | undefined
 }
 
 /**
- * CLI 入口的配置加载：读 `.env`、`~/.pith-wiki/config.json`（或 `PITH_WIKI_CONFIG_PATH` 指向的文件）、
- * env 变量，再叠加显式 overrides，zod 校验后返回。
+ * CLI 入口的配置加载：读 `~/.pith-wiki/config.json`（或 `PITH_WIKI_CONFIG_PATH` 指向的文件）、
+ * env 变量，再叠加显式 overrides，zod 校验后返回。config.json 的 `secrets` map
+ * 会先灌进 process.env（密钥唯一源，取代旧 `.env`）。
  */
 export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
-  loadDotenvOnce();
   const file = loadFileConfig();
+  // 密钥唯一源：把 config.json 的 secrets 灌进 process.env，必须在下面读
+  // process.env.DEEPSEEK_API_KEY / applyActiveProvider(→entry.apiKeyEnv) 之前。
+  applySecretsToEnv(file.secrets);
   const cwd = process.cwd();
   const workspaceRoot =
     overrides.workspaceRoot ?? process.env.PITH_WIKI_WORKSPACE ?? file.workspaceRoot ?? cwd;
@@ -497,6 +519,12 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
       parsePositiveIntEnv(process.env.PITH_WIKI_TIMEOUT_MS) ??
       file.requestTimeoutMs ??
       DEFAULTS.requestTimeoutMs,
+    maxSteps:
+      overrides.maxSteps ??
+      parsePositiveIntEnv(process.env.PITH_WIKI_MAX_STEPS) ??
+      file.maxSteps ??
+      DEFAULTS.maxSteps,
+    reviewMaxRounds: file.reviewMaxRounds ?? DEFAULTS.reviewMaxRounds,
     commandTimeoutMs:
       overrides.commandTimeoutMs ?? file.commandTimeoutMs ?? DEFAULTS.commandTimeoutMs,
     httpTimeoutMs: overrides.httpTimeoutMs ?? file.httpTimeoutMs ?? DEFAULTS.httpTimeoutMs,
@@ -551,6 +579,11 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     providers: overrides.providers ?? file.providers ?? {},
     activeProvider:
       overrides.activeProvider ?? process.env.PITH_WIKI_PROVIDER ?? file.activeProvider,
+    // hydrationProvider 之前漏进 merged，导致 config.hydrationProvider 恒为 undefined、
+    // pickHydrationProvider 永远回退到第一个 openai（水合选择器形同虚设）。一并补上。
+    hydrationProvider: file.hydrationProvider,
+    reviewProvider: file.reviewProvider,
+    secrets: file.secrets ?? {},
   };
 
   const parsed = ConfigSchema.parse(merged);
@@ -666,9 +699,29 @@ export function ensureSkillsDir(config: Config): void {
 }
 
 export function requireApiKey(config: Config): void {
-  if (!config.apiKey) {
+  // claude-code 是委托型 provider，只有桌面端 engine 实现了 spawn claude CLI 的路径；
+  // CLI（REPL / 子命令）的 createClient 只会 new OpenAI 连 anthropic 端点、必然失败。
+  // 与其放行后在第一条消息处报一个难懂的鉴权错，不如此处 fail-fast 给出切换指引。
+  // dev REPL 默认读 ~/.pith-wiki-dev/config.json——桌面 dev 把 activeProvider 设成
+  // claude-code 时，共用同一个 home 的 CLI 会继承到这个不支持的 provider。
+  if (config.providerKind === 'claude-code') {
+    const name = config.activeProvider ?? 'claude-code';
     throw new Error(
-      'DEEPSEEK_API_KEY is required for this command. Set it in .env or as an environment variable.',
+      `provider "${name}" (kind: claude-code) is desktop-only — the CLI cannot delegate to the claude binary. ` +
+        `Switch to an OpenAI-compatible provider for the CLI: pass --provider <name>, set PITH_WIKI_PROVIDER=<name>, ` +
+        `or change "activeProvider" in the config.json under your pith-wiki home.`,
     );
   }
+  if (config.apiKey) return;
+  // 报出"当前激活的 provider 真正需要哪个 env"，而不是永远硬编码 DEEPSEEK_API_KEY。
+  // 例如 activeProvider=doubao 时缺的是 DOUBAO_API_KEY——硬编码文案会把用户引向错的变量。
+  const name = config.activeProvider;
+  const entry = name ? config.providers?.[name] : undefined;
+  const envVar = entry?.apiKeyEnv ?? 'DEEPSEEK_API_KEY';
+  const who = name ? `provider "${name}"` : 'this command';
+  throw new Error(
+    `No API key for ${who}. Add a literal "apiKey" to its providers entry in config.json` +
+      (entry ? '' : ` (under your pith-wiki home)`) +
+      `, or put "${envVar}" in config.json's "secrets" map.`,
+  );
 }

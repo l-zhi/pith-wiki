@@ -25,6 +25,8 @@ export interface CreateTaskInput {
   enabled?: boolean;
   catchUp?: boolean;
   requireApproval?: boolean;
+  /** 输出前审稿（审稿模式跑该任务）。 */
+  review?: boolean;
   /** 显式指定 id（缺省由 title/input 派生）。 */
   id?: string;
 }
@@ -70,6 +72,7 @@ export class ScheduleService {
         enabled: input.enabled ?? true,
         catchUp: input.catchUp ?? true,
         requireApproval: input.requireApproval ?? false,
+        review: input.review ?? false,
         runs: [],
         createdAt: ts,
         updatedAt: ts,
@@ -86,7 +89,10 @@ export class ScheduleService {
   update(
     id: string,
     patch: Partial<
-      Pick<ScheduledTask, 'input' | 'title' | 'schedule' | 'enabled' | 'catchUp' | 'requireApproval'>
+      Pick<
+        ScheduledTask,
+        'input' | 'title' | 'schedule' | 'enabled' | 'catchUp' | 'requireApproval' | 'review'
+      >
     >,
     now = new Date(),
   ): ScheduledTask {
@@ -96,6 +102,7 @@ export class ScheduleService {
       if (patch.enabled !== undefined) task.enabled = patch.enabled;
       if (patch.catchUp !== undefined) task.catchUp = patch.catchUp;
       if (patch.requireApproval !== undefined) task.requireApproval = patch.requireApproval;
+      if (patch.review !== undefined) task.review = patch.review;
       if (patch.schedule !== undefined) {
         task.schedule = patch.schedule;
         task.lastFiredAt = undefined; // 调度变了，重新算触发

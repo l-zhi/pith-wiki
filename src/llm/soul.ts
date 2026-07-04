@@ -70,10 +70,21 @@ export function loadSoul(opts: SoulLookupOptions): LoadedSoul {
   const projectDefault = path.join(opts.workspaceRoot, 'SOUL.md');
   const sources: string[] = [];
   const parts: string[] = [];
+  const seen = new Set<string>();
   // user-global 在前：相当于"我的风格基线"
   // project-local 在后：当前项目可以追加或覆盖（LLM 会更重视后出现的内容）
+  // 去重：桌面端 workspaceRoot === pithWikiHome，两条路径会指向同一文件——
+  // 不 dedupe 就会把同一份 SOUL 拼两遍。按 realpath 判重。
   for (const p of [userDefaultPath(), projectDefault]) {
     if (!fs.existsSync(p)) continue;
+    let key = path.resolve(p);
+    try {
+      key = fs.realpathSync(key);
+    } catch {
+      /* 读不到 realpath 就用 resolve 后的路径判重 */
+    }
+    if (seen.has(key)) continue;
+    seen.add(key);
     const text = readSafe(p);
     if (text.trim()) {
       sources.push(p);

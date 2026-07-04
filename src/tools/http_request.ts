@@ -76,7 +76,7 @@ export const httpRequestTool: ToolDef<typeof params> = {
       if (!secret) {
         return {
           ok: false,
-          error: `${rule.auth_env} is not set. Set it (e.g. in .env) to authenticate with ${rule.host}.`,
+          error: `${rule.auth_env} is not set. Add it to config.json's "secrets" map to authenticate with ${rule.host}.`,
         };
       }
       headers[rule.auth_header] = rule.auth_scheme ? `${rule.auth_scheme} ${secret}` : secret;

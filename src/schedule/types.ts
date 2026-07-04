@@ -67,6 +67,11 @@ export const ScheduledTaskSchema = z.object({
    * failed —— 给做敏感操作、希望「跑前我确认一下」的任务用。`.default` 让旧状态文件兼容。
    */
   requireApproval: z.boolean().default(false),
+  /**
+   * 输出前审稿：为 true 时该任务的会话以审稿模式运行（writer→reviewer→修订 闭环）。
+   * 给日报等自动写作用，让输出先过审再定稿。`.default` 让旧状态文件兼容。
+   */
+  review: z.boolean().default(false),
   lastFiredAt: z.string().optional(),
   runs: z.array(RunRecordSchema),
   createdAt: z.string(),
