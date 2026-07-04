@@ -1,3 +1,4 @@
+import path from 'node:path';
 import type {
   DisplayItem,
   EngineEvent,
@@ -58,11 +59,12 @@ export type AgentFactory = (
   sessionId: string,
   approvals: ApprovalBridge,
   origin: RunOrigin,
+  reviewMode: boolean,
 ) => MadeAgent;
 
 interface Live {
   agent: AgentLike;
-  meta: { id: string; title: string; createdAt: string; model: string; provider?: string };
+  meta: { id: string; title: string; createdAt: string; model: string; provider?: string; reviewMode?: boolean };
   busy: boolean;
   abort: AbortController | null;
   pendingApproval: {
@@ -85,6 +87,8 @@ export class SessionManager {
     private readonly store: SessionStore,
     private readonly makeAgent: AgentFactory,
     private readonly emit: (evt: EngineEvent) => void,
+    /** agent 写文件的落点根目录（<wikiRoot>/output）——用于把 write_file 的相对路径还原成绝对路径。 */
+    private readonly outputDir: string = '',
   ) {}
 
   /* ───────────── 查询 ───────────── */
@@ -106,6 +110,7 @@ export class SessionManager {
         msgCount: s.msgCount,
         busy: l?.busy ?? false,
         pendingApprovalId: l?.pendingApproval?.id,
+        reviewMode: (l?.meta.reviewMode ?? s.reviewMode) === true,
       });
     }
     // 刚创建、还没有任何消息落盘的 live 会话也要出现在列表里
@@ -121,6 +126,7 @@ export class SessionManager {
         msgCount: 0,
         busy: l.busy,
         pendingApprovalId: l.pendingApproval?.id,
+        reviewMode: l.meta.reviewMode === true,
       });
     }
     return out;
@@ -130,14 +136,16 @@ export class SessionManager {
 
   create(
     provider?: string,
-    opts: { autoApprove?: boolean; origin?: RunOrigin } = {},
+    opts: { autoApprove?: boolean; origin?: RunOrigin; reviewMode?: boolean } = {},
   ): SessionMeta {
     const id = this.store.newId();
     const createdAt = new Date().toISOString();
+    const reviewMode = opts.reviewMode === true;
     const made = this.makeAgent(
       id,
       this.approvalBridge(id, opts.autoApprove),
       opts.origin ?? 'interactive',
+      reviewMode,
     );
     const meta = {
       id,
@@ -145,6 +153,7 @@ export class SessionManager {
       createdAt,
       model: made.model,
       provider: made.provider ?? provider,
+      ...(reviewMode ? { reviewMode: true } : {}),
     };
     this.store.create(meta);
     this.live.set(id, {
@@ -155,7 +164,7 @@ export class SessionManager {
       pendingApproval: null,
       persistedLen: made.agent.exportHistory().length,
     });
-    return { ...meta, updatedAt: createdAt, msgCount: 0, busy: false };
+    return { ...meta, updatedAt: createdAt, msgCount: 0, busy: false, reviewMode };
   }
 
   /** 恢复（或返回已 live 的）会话；返回 UI 回放序列。不存在时抛错。 */
@@ -166,7 +175,13 @@ export class SessionManager {
 
     if (!existing) {
       // 恢复历史会话 = 用户在 UI 打开继续 → interactive（即便原是定时任务跑出来的）
-      const made = this.makeAgent(sessionId, this.approvalBridge(sessionId), 'interactive');
+      const reviewMode = stored!.meta.reviewMode === true;
+      const made = this.makeAgent(
+        sessionId,
+        this.approvalBridge(sessionId),
+        'interactive',
+        reviewMode,
+      );
       made.agent.restoreHistory(stored!.messages);
       this.live.set(sessionId, {
         agent: made.agent,
@@ -186,6 +201,7 @@ export class SessionManager {
         msgCount: display.length,
         busy: l.busy,
         pendingApprovalId: l.pendingApproval?.id,
+        reviewMode: l.meta.reviewMode === true,
       },
       display,
     };
@@ -207,6 +223,45 @@ export class SessionManager {
       this.live.delete(sessionId);
     }
     return this.store.delete(sessionId);
+  }
+
+  /**
+   * 切换会话的审稿模式:重建该会话的 live agent(包/拆 ReviewingAgent),
+   * 用 export→restore 迁移当前对话历史,持久化到 meta。busy 时拒绝。
+   * 干净历史契约让两种 agent 互转不丢对话(见 ReviewingAgent)。
+   */
+  setReviewMode(sessionId: string, on: boolean): SessionMeta {
+    const l = this.live.get(sessionId) ?? this.resumeLive(sessionId);
+    if (l.busy) throw new Error('session is busy — wait for the current turn to finish');
+    if ((l.meta.reviewMode === true) === on) {
+      return this.metaOf(sessionId, l); // 无变化
+    }
+    const history = l.agent.exportHistory();
+    const made = this.makeAgent(sessionId, this.approvalBridge(sessionId), 'interactive', on);
+    made.agent.restoreHistory(history);
+    l.agent = made.agent;
+    l.meta.model = made.model;
+    if (made.provider) l.meta.provider = made.provider;
+    l.meta.reviewMode = on ? true : undefined;
+    l.persistedLen = made.agent.exportHistory().length;
+    this.store.updateMeta(sessionId, { reviewMode: on ? true : undefined });
+    return this.metaOf(sessionId, l);
+  }
+
+  private metaOf(sessionId: string, l: Live): SessionMeta {
+    const stored = this.store.list().find((s) => s.id === sessionId);
+    return {
+      id: sessionId,
+      title: l.meta.title,
+      createdAt: l.meta.createdAt,
+      updatedAt: stored?.updatedAt ?? l.meta.createdAt,
+      model: l.meta.model,
+      provider: l.meta.provider,
+      msgCount: stored?.msgCount ?? 0,
+      busy: l.busy,
+      pendingApprovalId: l.pendingApproval?.id,
+      reviewMode: l.meta.reviewMode === true,
+    };
   }
 
   /* ───────────── 执行 ───────────── */
@@ -234,6 +289,7 @@ export class SessionManager {
     l.abort = new AbortController();
     this.emit({ kind: 'session.busy', sessionId, busy: true });
     let turnError: string | undefined;
+    const seenArtifacts = new Set<string>(); // 本回合已上报的产物路径，去重（Write 后又 Edit 同一文件只发一张卡）
     try {
       await l.agent.send(text, {
         signal: l.abort.signal,
@@ -242,7 +298,7 @@ export class SessionManager {
           onThinking: ({ text }) => this.emit({ kind: 'session.thinking', sessionId, text }),
           onAssistantText: ({ text, final }) =>
             this.emit({ kind: 'session.assistantText', sessionId, text, final }),
-          onToolRound: ({ name, args, ok, preview }) =>
+          onToolRound: ({ name, args, ok, preview }) => {
             this.emit({
               kind: 'session.toolRound',
               sessionId,
@@ -250,7 +306,16 @@ export class SessionManager {
               argsPreview: previewJson(args),
               ok,
               preview,
-            }),
+            });
+            // agent 写出了文件 → 额外发一张可打开的文件卡片
+            if (ok) {
+              const abs = artifactPath(name, args, this.outputDir);
+              if (abs && !seenArtifacts.has(abs)) {
+                seenArtifacts.add(abs);
+                this.emit({ kind: 'session.artifact', sessionId, path: abs, name: path.basename(abs) });
+              }
+            }
+          },
           onUsage: (d) =>
             this.emit({
               kind: 'session.usage',
@@ -293,10 +358,15 @@ export class SessionManager {
   async runScheduled(
     input: string,
     title: string,
-    opts: { requireApproval?: boolean } = {},
+    opts: { requireApproval?: boolean; review?: boolean } = {},
   ): Promise<{ sessionId: string; status: 'ok' | 'failed'; preview?: string; error?: string }> {
     // 默认自动放行；requireApproval 的任务沿用交互式审批（有人批才过，否则整轮超时记 failed）
-    const meta = this.create(undefined, { autoApprove: !opts.requireApproval, origin: 'scheduled' });
+    // review=true → 会话以审稿模式跑（writer→reviewer→修订），日报等自动写作先过审再定稿。
+    const meta = this.create(undefined, {
+      autoApprove: !opts.requireApproval,
+      origin: 'scheduled',
+      reviewMode: opts.review,
+    });
     try {
       this.rename(meta.id, title);
     } catch {
@@ -430,6 +500,24 @@ function lastAssistantText(messages: unknown[]): string | undefined {
 function previewJson(v: unknown, max = 120): string {
   const json = JSON.stringify(v) ?? '';
   return json.length > max ? json.slice(0, max) + '…' : json;
+}
+
+/**
+ * 从一次写文件的工具调用里解析出产物的绝对路径，用于生成"文件卡片"。
+ * 支持两种 provider 的写工具：
+ *   - core `write_file`：入参 `path` 是相对 outputDir 的路径（也可能已是绝对路径）
+ *   - claude-code `Write` / `Edit`：入参 `file_path` 已是绝对路径
+ * 非写工具、拿不到路径、或相对路径但 outputDir 未知 → 返回 null（不发卡片）。
+ */
+export function artifactPath(name: string, args: unknown, outputDir: string): string | null {
+  const a = (args ?? {}) as Record<string, unknown>;
+  let raw: string | undefined;
+  if (name === 'write_file' && typeof a.path === 'string') raw = a.path;
+  else if ((name === 'Write' || name === 'Edit') && typeof a.file_path === 'string')
+    raw = a.file_path;
+  if (!raw || !raw.trim()) return null;
+  if (path.isAbsolute(raw)) return raw;
+  return outputDir ? path.join(outputDir, raw) : null;
 }
 
 /** 把持久化的 ChatMessage 序列派生成 UI 回放条目。system 消息不回放。 */

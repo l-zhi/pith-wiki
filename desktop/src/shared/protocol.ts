@@ -25,6 +25,8 @@ export interface SessionMeta {
   /** 有未处理审批时为该审批 id（会话列表角标用）。 */
   pendingApprovalId?: string;
   busy?: boolean;
+  /** 审稿模式:该会话输出走 writer→reviewer→修订 闭环。 */
+  reviewMode?: boolean;
 }
 
 /** 助手回答引用到的 wiki 条目（来自该回合 wiki 检索工具的返回）。 */
@@ -147,6 +149,8 @@ export interface SettingsDTO {
   activeProvider: string;
   /** 水合专用 provider；空串 = 自动选第一个 openai。 */
   hydrationProvider: string;
+  /** 审稿专用 provider；空串 = 与聊天模型相同。 */
+  reviewProvider: string;
   providers: ProviderDTO[];
   /** 本机检测到、可作为聊天后端的 CLI（「对话模型」选择器追加项）。 */
   availableClis: CliDTO[];
@@ -155,6 +159,12 @@ export interface SettingsDTO {
   additionalReadPaths: string[];
   readOnly: boolean;
   configPath: string;
+}
+
+/** markdown 文档（SOUL.md / REVIEW.md）读取视图：内容 + 落盘路径（供 UI 展示"写到哪"）。 */
+export interface SoulDTO {
+  content: string;
+  path: string;
 }
 
 /** 保存载荷。providers 缺席 = 删除；newApiKey 仅在用户输入了新 key 时携带。 */
@@ -244,6 +254,8 @@ export interface ScheduledTaskDTO {
   enabled: boolean;
   catchUp: boolean;
   requireApproval: boolean;
+  /** 输出前审稿：该任务会话以审稿模式跑。 */
+  review: boolean;
   /** 下一次触发（ISO），无则 null（一次性已过 / cron 不可能触发）。 */
   nextFire: string | null;
   /** 未来一段窗口内的触发点（ISO，日历铺点用；cron 枚举 90 天内、封顶若干条）。 */
@@ -260,6 +272,7 @@ export interface ScheduleSavePayload {
   enabled: boolean;
   catchUp: boolean;
   requireApproval: boolean;
+  review: boolean;
 }
 
 export interface BootstrapDTO {
@@ -278,7 +291,8 @@ export interface BootstrapDTO {
 export type EngineRequest =
   | { kind: 'app.bootstrap' }
   | { kind: 'app.saveOnboarding'; provider: string; baseURL: string; model: string; apiKey: string }
-  | { kind: 'session.create'; provider?: string }
+  | { kind: 'session.create'; provider?: string; reviewMode?: boolean }
+  | { kind: 'session.setReviewMode'; sessionId: string; reviewMode: boolean }
   | { kind: 'session.list' }
   | { kind: 'session.resume'; sessionId: string }
   | { kind: 'session.rename'; sessionId: string; title: string }
@@ -301,6 +315,11 @@ export type EngineRequest =
   | { kind: 'settings.save'; payload: SettingsSaveDTO }
   | { kind: 'settings.setActiveProvider'; name: string }
   | { kind: 'settings.setHydrationProvider'; name: string }
+  | { kind: 'settings.setReviewProvider'; name: string } // 空串 = 同 writer
+  | { kind: 'settings.getSoul' }
+  | { kind: 'settings.saveSoul'; content: string } // 空串 = 清空/删除 SOUL.md
+  | { kind: 'settings.getReview' }
+  | { kind: 'settings.saveReview'; content: string } // 空串 = 清空/删除 REVIEW.md（用默认 rubric）
   | { kind: 'skills.list' }
   | { kind: 'skills.install'; name: string }
   | { kind: 'skills.remove'; name: string }
@@ -323,6 +342,8 @@ export type EngineEvent =
       preview: string;
     }
   | { kind: 'session.usage'; sessionId: string; inputTokens: number; outputTokens: number }
+  /** 本回合 agent 写出的文件产物（write_file / claude-code Write）：绝对路径 + 文件名，UI 显示可打开的文件卡片。 */
+  | { kind: 'session.artifact'; sessionId: string; path: string; name: string }
   | { kind: 'session.busy'; sessionId: string; busy: boolean }
   /** 回合结束：该回合 wiki 检索引用到（refs）/ 仅浏览过（browsed）的条目（去重），挂到最后一条助手消息上 */
   | { kind: 'session.refs'; sessionId: string; refs: EntryRefDTO[]; browsed?: EntryRefDTO[] }

@@ -22,6 +22,8 @@ export interface StoredMeta {
   createdAt: string;
   model: string;
   provider?: string;
+  /** 审稿模式:该会话的输出走 writer→reviewer→修订 闭环。 */
+  reviewMode?: boolean;
 }
 
 export interface StoredSession {
@@ -119,6 +121,7 @@ export class SessionStore {
             createdAt: obj.createdAt,
             model: obj.model,
             provider: typeof obj.provider === 'string' ? obj.provider : undefined,
+            reviewMode: obj.reviewMode === true ? true : undefined,
           };
         } else if (i === 0) {
           // 首行不是合法 meta：整个文件不可信

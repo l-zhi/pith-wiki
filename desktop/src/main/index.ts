@@ -12,6 +12,15 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let win: BrowserWindow | null = null;
 let engine: UtilityProcess | null = null;
+/** 退出流程标记：置位后不再向 renderer 转发、不再自动重启 Engine（避免 kill 后的 exit 触发重启/向已销毁窗口 send）。 */
+let isQuitting = false;
+
+/** 安全地把 envelope 发给 renderer：窗口/webContents 已销毁时静默丢弃（退出竞态下 send 会抛 "Object has been destroyed"）。 */
+function sendToRenderer(msg: unknown): void {
+  if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+    win.webContents.send('bridge', msg);
+  }
+}
 
 /**
  * 品牌图标（脉络/橘络）。dev（未打包）下 dock 默认是 Electron 图标，必须运行时
@@ -52,11 +61,14 @@ function spawnEngine(): void {
     env,
   });
   engine.on('message', (msg: unknown) => {
-    win?.webContents.send('bridge', msg);
+    if (isQuitting) return;
+    sendToRenderer(msg);
   });
   engine.on('exit', (code) => {
+    // 退出流程里 Engine 被 kill 属正常收尾——别通知、更别重启（否则退出时又拉起一个 Engine）。
+    if (isQuitting) return;
     // Engine 崩溃 = 所有会话中断（恢复靠 JSONL）。通知 UI 并自动拉起一次。
-    win?.webContents.send('bridge', {
+    sendToRenderer({
       t: 'evt',
       evt: { kind: 'engine.notice', level: 'error', text: `engine exited (code=${code}), restarting…` },
     });
@@ -86,6 +98,10 @@ function createWindow(): void {
   win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url); // 外链交给系统浏览器
     return { action: 'deny' };
+  });
+
+  win.on('closed', () => {
+    win = null; // 释放引用，避免退出竞态下向已销毁窗口 send
   });
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -119,6 +135,12 @@ app.whenReady().then(() => {
     const err = await shell.openPath(target);
     return err ? { ok: false, error: err } : { ok: true };
   });
+  // 「在 Finder 显示」：把文件在系统文件管理器里定位高亮（区别于 openSource 的直接打开）。
+  ipcMain.handle('os.revealSource', (_event, target: unknown) => {
+    if (typeof target !== 'string' || !target.trim()) return { ok: false, error: 'empty target' };
+    shell.showItemInFolder(target);
+    return { ok: true };
+  });
   // 设置界面「添加 watch 目录」：系统文件夹选择器（dialog 是 main-only API）。
   ipcMain.handle('os.pickFolder', async () => {
     if (!win) return null;
@@ -135,8 +157,14 @@ app.whenReady().then(() => {
   });
 });
 
+// Cmd+Q / 菜单退出：先置位,让随后 Engine kill 的 exit 事件走"正常收尾"分支。
+app.on('before-quit', () => {
+  isQuitting = true;
+});
+
 app.on('window-all-closed', () => {
   // 单窗口应用：关窗即退（队列后台消化随 Engine 退出而停止，符合"应用运行期间"语义）
+  isQuitting = true;
   engine?.kill();
   app.quit();
 });

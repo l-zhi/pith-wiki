@@ -6,10 +6,13 @@ import {
   Check,
   ChevronRight,
   Copy,
+  ExternalLink,
   FileText,
+  FolderOpen,
   MessageCircle,
   Plus,
   Quote,
+  ShieldCheck,
   Sparkles,
   Square,
 } from 'lucide-react';
@@ -30,6 +33,10 @@ export function ChatPane() {
   const chat = useStore((s) => (activeSession ? s.chat[activeSession] : undefined));
   const newSession = useStore((s) => s.newSession);
   const boot = useStore((s) => s.boot);
+  const reviewOn = useStore(
+    (s) => s.sessions.find((x) => x.id === s.activeSession)?.reviewMode ?? false,
+  );
+  const setSessionReviewMode = useStore((s) => s.setSessionReviewMode);
 
   const { t } = useTranslation();
   const scrollRef = React.useRef<HTMLDivElement>(null);
@@ -70,6 +77,29 @@ export function ChatPane() {
         </span>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
           <TokenMeter inTokens={chat?.usage.inTok ?? 0} outTokens={chat?.usage.outTok ?? 0} />
+          <button
+            type="button"
+            title={reviewOn ? t('chat.reviewOn') : t('chat.reviewOff')}
+            disabled={!activeSession || chat?.busy}
+            onClick={() => activeSession && void setSessionReviewMode(activeSession, !reviewOn)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 5,
+              padding: '4px 9px',
+              borderRadius: 'var(--radius-pill)',
+              cursor: activeSession && !chat?.busy ? 'pointer' : 'default',
+              border: `0.5px solid ${reviewOn ? 'var(--accent)' : 'var(--separator)'}`,
+              background: reviewOn ? 'var(--accent-soft)' : 'transparent',
+              color: reviewOn ? 'var(--accent)' : 'var(--text-tertiary)',
+              fontSize: 'var(--text-caption)',
+              fontWeight: 'var(--weight-semibold)',
+              opacity: !activeSession || chat?.busy ? 0.5 : 1,
+            }}
+          >
+            <ShieldCheck size={14} />
+            {t('chat.review')}
+          </button>
           <IconButton title={t('chat.newChat')} onClick={() => void newSession()}>
             <Plus size={17} />
           </IconButton>
@@ -195,7 +225,12 @@ function Item({ item }: { item: ChatItem }) {
               </span>
             </div>
             <div className="pith-md">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{item.text}</ReactMarkdown>
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{ a: LocalLink, code: CodeOrPath }}
+              >
+                {linkifyLocalPaths(item.text)}
+              </ReactMarkdown>
             </div>
             <MessageActions text={item.text} />
             {item.refs && item.refs.length > 0 && <ReferencesBlock refs={item.refs} kind="cited" />}
@@ -242,7 +277,154 @@ function Item({ item }: { item: ChatItem }) {
           <span>{item.text}</span>
         </div>
       );
+
+    case 'artifact':
+      return <ArtifactCard path={item.path} name={item.name} />;
   }
+}
+
+/**
+ * 把普通文本里的 file:// URL 和绝对路径包成 markdown 链接，让它们可点击。
+ * 跳过代码块/行内代码（```…``` 与 `…`），避免破坏示例代码；用负向后瞻避免二次包裹已有链接。
+ */
+function linkifyLocalPaths(md: string): string {
+  const parts = md.split(/(```[\s\S]*?```|`[^`\n]*`)/g);
+  return parts
+    .map((seg, i) => {
+      if (i % 2 === 1) return seg; // 代码段原样保留
+      return seg.replace(
+        /(?<![[(<\w])(file:\/\/\/?[^\s)]+|\/[^\s)]*\.[A-Za-z0-9]{1,8})/g,
+        (m) => `[${m}](${m})`,
+      );
+    })
+    .join('');
+}
+
+/** 统一交给系统打开：http(s) → 浏览器，本地路径 / file:// → 默认应用。会把 file:// 转成文件系统路径并解码。 */
+function openTarget(raw: string) {
+  let target = raw.trim();
+  if (target.startsWith('file://')) target = target.replace(/^file:\/\//, '');
+  if (!/^https?:\/\//i.test(target)) {
+    try {
+      target = decodeURIComponent(target);
+    } catch {
+      /* 非法转义序列则用原值 */
+    }
+  }
+  void window.pith.openSource(target);
+}
+
+/** 单段文本是否"像"一个可打开的本地目标：file:// URL，或以扩展名结尾的绝对路径。 */
+function looksLikeLocalPath(s: string): boolean {
+  const t = s.trim();
+  if (t.includes('\n')) return false;
+  if (/^file:\/\//i.test(t)) return true;
+  return t.startsWith('/') && /\.[A-Za-z0-9]{1,8}$/.test(t);
+}
+
+/** 聊天正文里的链接统一交给系统打开，绝不让 webview 跳走。 */
+function LocalLink({ href, children }: { href?: string; children?: React.ReactNode }) {
+  return (
+    <a
+      href={href ?? '#'}
+      onClick={(e) => {
+        e.preventDefault();
+        if (href) openTarget(href);
+      }}
+      style={{ cursor: 'pointer' }}
+    >
+      {children}
+    </a>
+  );
+}
+
+/**
+ * 行内 code 渲染：内容若是一个本地文件路径 / file:// URL，就渲染成可点击（点开用系统应用打开）；
+ * 否则保持普通 code 样式。模型常把路径放在反引号里，linkifyLocalPaths 会跳过 code 段，故在这里补上。
+ */
+function CodeOrPath({
+  children,
+  node: _node,
+  ...rest
+}: React.HTMLAttributes<HTMLElement> & { node?: unknown }) {
+  const text =
+    typeof children === 'string'
+      ? children
+      : Array.isArray(children)
+        ? children.filter((c) => typeof c === 'string').join('')
+        : '';
+  if (text && looksLikeLocalPath(text)) {
+    return (
+      <code
+        onClick={() => openTarget(text)}
+        title={text}
+        style={{ cursor: 'pointer', color: 'var(--status-brand)', textDecoration: 'underline' }}
+      >
+        {children}
+      </code>
+    );
+  }
+  return <code {...rest}>{children}</code>;
+}
+
+/** 文件产物卡片：agent 写出的文件（HTML/报告等），一键用系统应用打开或在 Finder 定位。 */
+function ArtifactCard({ path, name }: { path: string; name: string }) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="pith-fade-up"
+      style={{
+        marginLeft: 40,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        padding: '10px 12px',
+        background: 'var(--surface-card)',
+        border: '0.5px solid var(--separator)',
+        borderRadius: 'var(--radius-md)',
+        boxShadow: 'var(--ring-card)',
+      }}
+    >
+      <FileText size={16} style={{ flex: 'none', color: 'var(--status-brand)' }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{
+            fontSize: 'var(--text-subhead)',
+            fontWeight: 600,
+            color: 'var(--text-primary)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {name}
+        </div>
+        <div
+          title={path}
+          style={{
+            fontSize: 'var(--text-caption)',
+            color: 'var(--text-quaternary)',
+            fontFamily: 'var(--font-mono)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {path}
+        </div>
+      </div>
+      <Button size="sm" variant="secondary" onClick={() => void window.pith.openSource(path)}>
+        <ExternalLink size={13} /> {t('chat.artifactOpen')}
+      </Button>
+      <IconButton
+        aria-label={t('chat.artifactReveal')}
+        title={t('chat.artifactReveal')}
+        onClick={() => void window.pith.revealSource(path)}
+      >
+        <FolderOpen size={15} />
+      </IconButton>
+    </div>
+  );
 }
 
 /** 把 LLM/网络层的技术报错粗分类，映射到一句人话提示；无法识别返回 null（显示原文）。 */

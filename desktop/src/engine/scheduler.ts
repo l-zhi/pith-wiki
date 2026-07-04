@@ -111,6 +111,7 @@ export class Scheduler {
         const title = resolveDatePlaceholders(rawTitle, baseDate);
         const result = await this.sessions.runScheduled(input, title, {
           requireApproval: task.requireApproval,
+          review: task.review,
         });
         const run: RunRecord = {
           runId: `run-${++runSeq}`,

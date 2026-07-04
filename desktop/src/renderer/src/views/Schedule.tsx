@@ -583,6 +583,7 @@ function TaskForm({
   const [tz] = React.useState(task?.schedule.kind === 'cron' ? task.schedule.tz : systemTz());
   const [catchUp, setCatchUp] = React.useState(task?.catchUp ?? true);
   const [requireApproval, setRequireApproval] = React.useState(task?.requireApproval ?? false);
+  const [review, setReview] = React.useState(task?.review ?? false);
   const [enabled, setEnabled] = React.useState(task?.enabled ?? true);
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
@@ -606,6 +607,7 @@ function TaskForm({
         enabled,
         catchUp,
         requireApproval,
+        review,
       });
     } catch (e) {
       setErr((e as Error).message);
@@ -755,6 +757,25 @@ function TaskForm({
               </span>
             </span>
             <Switch checked={requireApproval} onChange={setRequireApproval} />
+          </label>
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+            }}
+          >
+            <span style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontSize: 'var(--text-subhead)', color: 'var(--text-primary)' }}>
+                {t('schedule.review')}
+              </span>
+              <span style={{ fontSize: 'var(--text-caption)', color: 'var(--text-tertiary)' }}>
+                {t('schedule.reviewHint')}
+              </span>
+            </span>
+            <Switch checked={review} onChange={setReview} />
           </label>
 
           <label
@@ -1106,6 +1127,7 @@ function toPayload(
     enabled: task.enabled,
     catchUp: task.catchUp,
     requireApproval: task.requireApproval,
+    review: task.review,
     ...patch,
   };
 }

@@ -27,6 +27,11 @@ export interface ClaudeCodeAgentOptions {
   env: NodeJS.ProcessEnv;
   /** 允许的工具白名单，默认只放行 pith 的 MCP 工具。 */
   allowedTools?: string;
+  /**
+   * spawn 的工作目录。也是 acceptEdits 的写入沙箱边界（只能写该目录内）——
+   * 传 pith home，让模型写得了知识库、出不去。不传则继承父进程 cwd。
+   */
+  cwd?: string;
 }
 
 export type StreamEvents = {
@@ -43,6 +48,9 @@ export interface StreamResult {
   isError: boolean;
 }
 
+/** tool_result 块里的 content 可能是纯字符串，也可能是 content-block 数组。 */
+type ToolResultContent = string | Array<{ type?: string; text?: string }>;
+
 interface RawEvent {
   type?: string;
   subtype?: string;
@@ -56,6 +64,30 @@ interface RawEvent {
     delta?: { type?: string; text?: string; partial_json?: string };
     usage?: { input_tokens?: number; output_tokens?: number };
   };
+  /** 顶层 user 消息：工具结果作为 tool_result 块回来（非 stream_event）。 */
+  message?: {
+    content?: Array<{
+      type?: string;
+      tool_use_id?: string;
+      is_error?: boolean;
+      content?: ToolResultContent;
+    }>;
+  };
+}
+
+/** tool_result 的 content 归一成字符串。 */
+function toolResultText(content: ToolResultContent | undefined): string {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content))
+    return content
+      .map((b) => (b.type === 'text' ? (b.text ?? '') : ''))
+      .join('')
+      .trim();
+  return '';
+}
+
+function truncatePreview(s: string, max = 200): string {
+  return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 
 /**
@@ -64,11 +96,17 @@ interface RawEvent {
  *
  * 事件契约（见 docs / claude stream-json）：
  *  - system/init                         → 带 session_id
- *  - stream_event content_block_start    → tool_use（content_block.name = mcp__pith__…）
+ *  - stream_event content_block_start    → tool_use（content_block.name = mcp__pith__…、id）→ 记入 pending
  *  - stream_event content_block_delta    → input_json_delta（拼 partial_json）| text_delta（拼答案）
- *  - stream_event content_block_stop     → 工具入参收齐 → onToolRound
+ *  - stream_event content_block_stop     → 工具入参收齐 → 暂存到 pending（此刻结果还没回来）
+ *  - user 消息（顶层，非 stream_event）    → tool_result 块（tool_use_id 配对）→ onToolRound（带 preview）
  *  - stream_event message_delta          → usage（累积）
  *  - result                              → result（最终文本）、usage、session_id、is_error
+ *
+ * 注意：工具结果是作为独立的顶层 `type:"user"` 消息（tool_result 块）回来的，
+ * 不在 stream_event 里。所以 onToolRound 延后到结果到达时才发（配 preview），
+ * 而不是在 content_block_stop 就发空 preview——否则 UI 永远显示"（空结果）"。
+ * 流末仍有未配对的 tool_use 就兜底补发（preview 空），保证工具行不丢。
  */
 export async function parseClaudeStream(
   lines: AsyncIterable<string>,
@@ -80,7 +118,10 @@ export async function parseClaudeStream(
   let usage = { inputTokens: 0, outputTokens: 0 };
   let isError = false;
   let toolName = '';
+  let toolId = '';
   let toolJson = '';
+  // 已收齐入参、等待 tool_result 配对的工具调用：tool_use_id → {name, args}。
+  const pending = new Map<string, { name: string; args: unknown }>();
 
   for await (const line of lines) {
     const trimmed = line.trim();
@@ -106,10 +147,28 @@ export async function parseClaudeStream(
       break;
     }
 
+    // 顶层 user 消息携带 tool_result：配对 pending 里的 tool_use，发出带 preview 的事件。
+    if (evt.type === 'user' && Array.isArray(evt.message?.content)) {
+      for (const block of evt.message.content) {
+        if (block.type !== 'tool_result' || !block.tool_use_id) continue;
+        const call = pending.get(block.tool_use_id);
+        if (!call) continue;
+        pending.delete(block.tool_use_id);
+        events.onToolRound?.({
+          name: call.name,
+          args: call.args,
+          ok: block.is_error !== true,
+          preview: truncatePreview(toolResultText(block.content)),
+        });
+      }
+      continue;
+    }
+
     if (evt.type === 'stream_event' && evt.event) {
       const e = evt.event;
       if (e.type === 'content_block_start' && e.content_block?.type === 'tool_use') {
         toolName = e.content_block.name ?? '';
+        toolId = e.content_block.id ?? '';
         toolJson = '';
       } else if (e.type === 'content_block_delta' && e.delta?.type === 'input_json_delta') {
         toolJson += e.delta.partial_json ?? '';
@@ -120,13 +179,13 @@ export async function parseClaudeStream(
         } catch {
           /* 入参未拼成合法 JSON 时原样给出 */
         }
-        events.onToolRound?.({
-          name: toolName.replace(/^mcp__pith__/, ''),
-          args,
-          ok: true,
-          preview: '',
-        });
+        // 结果还没回来——暂存，等 tool_result 到达时再发（配 preview）。
+        // 无 id（异常流）则退化为立即发空 preview，至少不丢工具行。
+        const name = toolName.replace(/^mcp__pith__/, '');
+        if (toolId) pending.set(toolId, { name, args });
+        else events.onToolRound?.({ name, args, ok: true, preview: '' });
         toolName = '';
+        toolId = '';
         toolJson = '';
       } else if (e.type === 'content_block_delta' && e.delta?.type === 'text_delta') {
         streamedText += e.delta.text ?? '';
@@ -138,6 +197,11 @@ export async function parseClaudeStream(
         };
       }
     }
+  }
+
+  // 流结束仍有未配对 tool_result 的调用（异常收尾 / 结果未回）：兜底补发，工具行不丢。
+  for (const { name, args } of pending.values()) {
+    events.onToolRound?.({ name, args, ok: true, preview: '' });
   }
 
   return { finalText, sessionId, usage, isError };
@@ -172,6 +236,12 @@ export class ClaudeCodeAgent implements AgentLike {
       this.opts.mcpConfigPath,
       '--allowedTools',
       this.opts.allowedTools ?? 'mcp__pith__*',
+      // 默认放行写文件，免去每次写 wiki output 都要授权。acceptEdits 只自动
+      // 批准 Edit/Write，且实测把写入沙箱限定在进程 cwd（= pith home）内——
+      // 写得了知识库目录，写不出 pith home（实测 Desktop 等外部路径仍被拒）。
+      // scoped 的 Write(路径) allow 规则在 headless 下不生效，acceptEdits 才可靠。
+      '--permission-mode',
+      'acceptEdits',
       '--append-system-prompt',
       this.opts.systemPrompt,
     ];
@@ -188,6 +258,7 @@ export class ClaudeCodeAgent implements AgentLike {
     const child = spawn(this.opts.binary, args, {
       env: this.opts.env,
       stdio: ['ignore', 'pipe', 'pipe'],
+      ...(this.opts.cwd ? { cwd: this.opts.cwd } : {}),
     });
 
     const onAbort = () => child.kill('SIGTERM');

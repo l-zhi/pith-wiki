@@ -8,7 +8,7 @@ import type { SkillCardDTO, SkillEnvDTO, SkillReqDTO } from '../../../shared/pro
 /**
  * 技能管理页（PRD-desktop-skill-manager）：策展的 bundled 建议清单 + 安装状态。
  * 点安装 = 复制 bundled → skillDirs[0] 并全量重建（重置当前会话）；已装且声明
- * auth_env 的 skill 在卡片内联配置 appkey（写 .env + process.env，即时生效，不重建）。
+ * auth_env 的 skill 在卡片内联配置 appkey（写 config.json secrets + process.env，即时生效，不重建）。
  */
 export function Skills() {
   const { t } = useTranslation();

@@ -1,6 +1,6 @@
 {
   "name": "@pith/desktop",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "pith — local-first LLM second brain, desktop app (Electron shell over the pith-wiki core)",
   "private": true,
   "type": "module",
@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "chokidar": "^5.0.0",
-    "dotenv": "^16.4.5",
     "fast-glob": "^3.3.3",
     "graphology": "^0.26.0",
     "graphology-layout": "^0.6.1",
