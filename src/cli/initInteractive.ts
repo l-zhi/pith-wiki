@@ -110,9 +110,9 @@ async function askApiKey(
 ): Promise<string | undefined> {
   console.log('\n' + chalk.bold(`Enter your ${provider.label} API key:`));
   console.log(
-    chalk.dim('  Will be written to .env as ') +
-      chalk.cyan(`${provider.apiKeyEnv}=<key>`) +
-      chalk.dim('. Press Enter to skip and edit later.'),
+    chalk.dim('  Will be written to config.json as the ') +
+      chalk.cyan(`"${provider.id}"`) +
+      chalk.dim(' provider\'s "apiKey". Press Enter to skip and edit later.'),
   );
   const ans = (await rl.question('  API key: ')).trim();
   return ans || undefined;

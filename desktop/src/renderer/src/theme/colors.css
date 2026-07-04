@@ -67,6 +67,10 @@
   --accent-active: #b3101c;
   --accent-soft: rgba(225, 29, 42, 0.12);
   --accent-ring: rgba(225, 29, 42, 0.35);
+  /* Text selection — a soft brand tint so selecting-to-copy feels gentle,
+     not alarming. Kept above accent-soft (0.12, too faint to tell what's
+     selected) but well below the old 0.28, which read as a hard highlight. */
+  --selection: rgba(225, 29, 42, 0.16);
 
   /* ---- Status (domain semantics carried over from the TUI) ---- */
   --status-ready: var(--apple-amber);
@@ -145,6 +149,7 @@
   --accent-active: #e11d2a;
   --accent-soft: rgba(255, 82, 71, 0.22);
   --accent-ring: rgba(255, 82, 71, 0.45);
+  --selection: rgba(255, 82, 71, 0.24);
 
   --status-done-soft: rgba(234, 176, 74, 0.20);
   --status-watch-soft: rgba(215, 139, 190, 0.20);

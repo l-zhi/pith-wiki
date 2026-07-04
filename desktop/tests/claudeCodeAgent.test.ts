@@ -27,6 +27,21 @@ const TRANSCRIPT = [
     event: { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '七诀"}' } },
   }),
   JSON.stringify({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } }),
+  // 工具结果作为独立的顶层 user 消息（tool_result 块）回来，按 tool_use_id 配对。
+  JSON.stringify({
+    type: 'user',
+    session_id: 'sess-123',
+    message: {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'call_1',
+          content: '{"ok":true,"results":[{"id":"忘川七诀","title":"忘川七诀"}]}',
+        },
+      ],
+    },
+  }),
   JSON.stringify({
     type: 'stream_event',
     event: { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: '你的库里' } },
@@ -50,12 +65,13 @@ const TRANSCRIPT = [
 
 describe('parseClaudeStream', () => {
   it('extracts final text, session id, usage and tool call', async () => {
-    const toolRounds: Array<{ name: string; args: unknown }> = [];
+    const toolRounds: Array<{ name: string; args: unknown; ok: boolean; preview: string }> = [];
     let lastStreamed = '';
     let finalEmitted: string | null = null;
     const usages: Array<{ inputTokens: number; outputTokens: number }> = [];
     const events: StreamEvents = {
-      onToolRound: (e) => toolRounds.push({ name: e.name, args: e.args }),
+      onToolRound: (e) =>
+        toolRounds.push({ name: e.name, args: e.args, ok: e.ok, preview: e.preview }),
       onAssistantText: (e) => {
         if (e.final) finalEmitted = e.text;
         else lastStreamed = e.text;
@@ -74,11 +90,75 @@ describe('parseClaudeStream', () => {
     expect(toolRounds).toHaveLength(1);
     expect(toolRounds[0].name).toBe('wiki_query');
     expect(toolRounds[0].args).toEqual({ query: '忘川七诀' });
+    // 关键回归：tool_result 配对后 preview 带上真实结果、ok=true（此前恒为空串）
+    expect(toolRounds[0].ok).toBe(true);
+    expect(toolRounds[0].preview).toContain('忘川七诀');
 
     // 流式文本逐步累积（parseClaudeStream 不发 final，final 由 send() 收尾时发）
     expect(lastStreamed).toBe('你的库里有《忘川七诀》。');
     expect(finalEmitted).toBeNull();
     expect(usages.at(-1)).toEqual({ inputTokens: 500, outputTokens: 30 });
+  });
+
+  it('marks tool round failed and carries preview when tool_result is_error', async () => {
+    const rounds: Array<{ ok: boolean; preview: string }> = [];
+    await parseClaudeStream(
+      lines([
+        JSON.stringify({
+          type: 'stream_event',
+          event: {
+            type: 'content_block_start',
+            index: 0,
+            content_block: { type: 'tool_use', id: 'call_x', name: 'mcp__pith__wiki_get' },
+          },
+        }),
+        JSON.stringify({
+          type: 'stream_event',
+          event: { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"id":"nope"}' } },
+        }),
+        JSON.stringify({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } }),
+        JSON.stringify({
+          type: 'user',
+          message: {
+            content: [
+              { type: 'tool_result', tool_use_id: 'call_x', is_error: true, content: [{ type: 'text', text: 'not found' }] },
+            ],
+          },
+        }),
+        JSON.stringify({ type: 'result', result: '没找到', session_id: 's' }),
+      ]),
+      { onToolRound: (e) => rounds.push({ ok: e.ok, preview: e.preview }) },
+    );
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0].ok).toBe(false);
+    expect(rounds[0].preview).toBe('not found');
+  });
+
+  it('flushes unpaired tool calls at stream end with empty preview', async () => {
+    const rounds: Array<{ name: string; preview: string }> = [];
+    await parseClaudeStream(
+      lines([
+        JSON.stringify({
+          type: 'stream_event',
+          event: {
+            type: 'content_block_start',
+            index: 0,
+            content_block: { type: 'tool_use', id: 'call_y', name: 'mcp__pith__wiki_grep' },
+          },
+        }),
+        JSON.stringify({
+          type: 'stream_event',
+          event: { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"patterns":["x"]}' } },
+        }),
+        JSON.stringify({ type: 'stream_event', event: { type: 'content_block_stop', index: 0 } }),
+        // 没有 tool_result 就直接 result 收尾 → 兜底补发
+        JSON.stringify({ type: 'result', result: 'done', session_id: 's' }),
+      ]),
+      { onToolRound: (e) => rounds.push({ name: e.name, preview: e.preview }) },
+    );
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0].name).toBe('wiki_grep');
+    expect(rounds[0].preview).toBe('');
   });
 
   it('flags is_error from the result event', async () => {

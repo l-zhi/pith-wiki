@@ -1,6 +1,6 @@
 {
   "name": "pith-wiki",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Karpathy-style LLM knowledge base CLI: hydrate raw docs into dense Markdown entries; retrieve by keyword + link traversal. No embeddings, no vector DB, files all the way down.",
   "type": "module",
   "license": "Apache-2.0",
@@ -58,7 +58,6 @@
     "chalk": "^5.3.0",
     "chokidar": "^5.0.0",
     "commander": "^12.1.0",
-    "dotenv": "^16.4.5",
     "fast-glob": "^3.3.3",
     "gray-matter": "^4.0.3",
     "ink": "^5.0.1",

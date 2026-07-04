@@ -27,7 +27,8 @@ import { pithWikiHome } from '@core/paths.js';
 import { createClient } from '@core/llm/client.js';
 import { Agent, defaultSystemPrompt } from '@core/llm/agent.js';
 import { ClaudeCodeAgent } from './claudeCodeAgent.js';
-import { composeSystemPrompt, loadSoul, type LoadedSoul } from '@core/llm/soul.js';
+import { ReviewingAgent, type ReviewTrace } from './reviewingAgent.js';
+import { composeSystemPrompt, loadSoul, SOUL_PROMPT_HEADER, type LoadedSoul } from '@core/llm/soul.js';
 import { buildContext } from '@core/tools/index.js';
 import { makeSkillTool } from '@core/tools/skill.js';
 import { runCommandTool } from '@core/tools/run_command.js';
@@ -67,6 +68,7 @@ import {
   type ScheduleSpecDTO,
   type SettingsDTO,
   type SettingsSaveDTO,
+  type SoulDTO,
   type SkillCardDTO,
   type SkillEnvDTO,
   type SkillReqDTO,
@@ -74,7 +76,7 @@ import {
   type Transport,
 } from '../shared/protocol.js';
 import { SessionStore } from './sessionStore.js';
-import { SessionManager, type AgentFactory } from './sessionManager.js';
+import { SessionManager, type AgentFactory, type AgentLike } from './sessionManager.js';
 import { Scheduler } from './scheduler.js';
 
 const APP_VERSION = '0.1.0';
@@ -175,6 +177,30 @@ async function initServices(): Promise<Services> {
   console.log(
     `[pith/route] hydration → model=${hydrationModel} baseURL=${hydrationClient.baseURL} json=${hydrationSupportsJson}`,
   );
+  // 审稿专用 client（P2b）：配了 reviewProvider（须为 API provider）→ reviewer 走它；
+  // 否则 null → reviewer 与 writer 同 provider（见 agentFactory）。
+  let reviewClient: ReturnType<typeof createClient> | null = null;
+  let reviewModel = '';
+  if (config.reviewProvider) {
+    const re = config.providers[config.reviewProvider];
+    if (re && re.kind !== 'claude-code') {
+      const r = resolveProviderEntry(re);
+      reviewClient = createClient(
+        { ...config, ...r },
+        {
+          onSecurityNotice: (msg, kind) =>
+            emitNotice(kind === 'warning' ? 'warning' : 'info', `🔒 ${msg}`),
+        },
+      );
+      reviewModel = r.model;
+      console.log(`[pith/route] reviewer → model=${reviewModel} baseURL=${reviewClient.baseURL}`);
+    } else {
+      emitNotice(
+        'warning',
+        `审稿 provider "${config.reviewProvider}" 不可用（须为 API provider，非 claude-code）—— 审稿将回退为与聊天同模型。`,
+      );
+    }
+  }
   const library = new LibraryService(config.wikiRoot, { ignoredDirs: [config.outputDir] });
   const converters = buildConverterPipeline({
     wikiRoot: config.wikiRoot,
@@ -251,61 +277,129 @@ async function initServices(): Promise<Services> {
 
   /* —— SessionManager —— */
   const sessionStore = new SessionStore(path.join(home, 'sessions'));
-  const agentFactory: AgentFactory = (_sessionId, approvals, origin) => {
-    // claude-code provider：该会话委托本机 claude CLI（headless + pith-mcp），复用订阅额度。
-    // 不走 pith 的 chat.completions agent loop；hydration/queue 仍用现有 openai 路径。
+  const agentFactory: AgentFactory = (sessionId, approvals, origin, reviewMode) => {
+    // 写文件落点：知识库 output collection 的绝对路径（claude-code 会漏掉 wiki-data 这层）。
+    const outputDir = path.join(config.wikiRoot, config.digestCollection);
+
+    // 每个分支产出 writer + 一个"按人设造同类 agent"的 makeReviewer；
+    // reviewMode 时把 writer/reviewer 包成 ReviewingAgent（对 SessionManager 透明）。
+    let writer: AgentLike;
+    let makeReviewer: () => AgentLike;
+    let model: string;
+    let provider: string | undefined;
+
     if (config.providerKind === 'claude-code') {
+      // claude-code：委托本机 claude CLI（headless + pith-mcp），复用订阅额度。
       const entry = config.activeProvider ? config.providers[config.activeProvider] : undefined;
       const token =
         entry?.oauthToken ?? (entry?.oauthTokenEnv ? process.env[entry.oauthTokenEnv] : undefined);
       const env: NodeJS.ProcessEnv = { ...process.env };
-      // 确保走订阅而非 API 计费：剔除可能覆盖订阅的凭证，注入 OAuth token。
       delete env.ANTHROPIC_API_KEY;
       delete env.ANTHROPIC_AUTH_TOKEN;
       if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
       const mcpConfigPath = entry?.mcpConfigPath ?? path.join(home, 'pith-mcp.json');
       console.log(
         `[pith/route] chat → claude-code CLI | provider=${config.activeProvider} model=${config.model} ` +
-          `binary=${entry?.binary ?? 'claude'} mcp=${mcpConfigPath} auth=${token ? 'subscription(token)' : 'env/keychain'}`,
+          `binary=${entry?.binary ?? 'claude'} mcp=${mcpConfigPath} review=${reviewMode}`,
       );
-      const agent = new ClaudeCodeAgent({
-        binary: entry?.binary ?? 'claude',
-        model: config.model,
-        systemPrompt: CLAUDE_CODE_SYSTEM_PROMPT,
-        mcpConfigPath,
-        env,
-      });
-      return { agent, model: config.model, provider: config.activeProvider || 'claude-code' };
+      const soulSuffix = soul.content.trim()
+        ? `\n\n${SOUL_PROMPT_HEADER}\n\n${soul.content.trim()}`
+        : '';
+      const writerPrompt =
+        `${CLAUDE_CODE_SYSTEM_PROMPT}\n\n` +
+        `如需把结果写成文件（日报/报告等），文件路径必须是绝对路径且写入这个确切目录：` +
+        `${outputDir}/（pith 知识库的 output collection），文件名用「主题或日期.md」。` +
+        `这是唯一的输出落点，不要自己拼路径或省略其中任何一层目录。` +
+        soulSuffix;
+      const mkCC = (systemPrompt: string): AgentLike =>
+        new ClaudeCodeAgent({
+          binary: entry?.binary ?? 'claude',
+          model: config.model,
+          systemPrompt,
+          mcpConfigPath,
+          env,
+          cwd: home,
+        });
+      writer = mkCC(writerPrompt);
+      makeReviewer = () => mkCC(REVIEWER_SYSTEM_PROMPT);
+      model = config.model;
+      provider = config.activeProvider || 'claude-code';
+    } else {
+      const ctx = buildContext(
+        config,
+        client,
+        (p, preview) => approvals.request('write', p, preview),
+        library,
+        {
+          converterRegistry: converters.registry,
+          converterCache: converters.cache,
+          skillRegistry,
+          scheduleService,
+          requestCommandApproval: (cmd, argv) => approvals.request('exec', cmd, argv),
+          origin,
+        },
+      );
+      const extraTools = skillRegistry.list().length > 0 ? [makeSkillTool(skillRegistry)] : [];
+      if (skillRegistry.allowedCommands().size > 0) extraTools.push(runCommandTool);
+      if (skillRegistry.allowedHosts().size > 0) extraTools.push(httpRequestTool);
+      extraTools.push(...scheduleTools);
+      console.log(
+        `[pith/route] chat → openai | provider=${config.activeProvider || '(top-level)'} ` +
+          `model=${config.model} baseURL=${config.baseURL} review=${reviewMode}`,
+      );
+      const mkPith = (systemPrompt: string): AgentLike =>
+        new Agent(client, config.model, ctx, { systemPrompt, extraTools, maxSteps: config.maxSteps });
+      writer = mkPith(composeSystemPrompt(defaultSystemPrompt, soul));
+      makeReviewer = () => mkPith(REVIEWER_SYSTEM_PROMPT);
+      model = config.model;
+      provider = config.activeProvider || undefined;
     }
-    const ctx = buildContext(
-      config,
-      client,
-      (p, preview) => approvals.request('write', p, preview),
-      library,
-      {
-        converterRegistry: converters.registry,
-        converterCache: converters.cache,
-        skillRegistry,
-        scheduleService,
-        requestCommandApproval: (cmd, argv) => approvals.request('exec', cmd, argv),
-        origin,
-      },
-    );
-    const extraTools = skillRegistry.list().length > 0 ? [makeSkillTool(skillRegistry)] : [];
-    if (skillRegistry.allowedCommands().size > 0) extraTools.push(runCommandTool);
-    if (skillRegistry.allowedHosts().size > 0) extraTools.push(httpRequestTool);
-    extraTools.push(...scheduleTools);
-    console.log(
-      `[pith/route] chat → openai | provider=${config.activeProvider || '(top-level)'} ` +
-        `model=${config.model} baseURL=${config.baseURL}`,
-    );
-    const agent = new Agent(client, config.model, ctx, {
-      systemPrompt: composeSystemPrompt(defaultSystemPrompt, soul),
-      extraTools,
+
+    if (!reviewMode) return { agent: writer, model, provider };
+
+    // reviewer：配了 reviewProvider → 用独立 client 造一个只读 pith Agent（不给写/执行/skill 工具）；
+    // 否则与 writer 同 provider（makeReviewer）。
+    let reviewer: AgentLike;
+    if (reviewClient) {
+      const rctx = buildContext(
+        config,
+        reviewClient,
+        () => Promise.resolve('no' as const), // reviewer 不写文件
+        library,
+        {
+          converterRegistry: converters.registry,
+          converterCache: converters.cache,
+          skillRegistry,
+          scheduleService,
+          requestCommandApproval: () => Promise.resolve('no' as const), // reviewer 不执行命令
+          origin,
+        },
+      );
+      reviewer = new Agent(reviewClient, reviewModel, rctx, {
+        systemPrompt: REVIEWER_SYSTEM_PROMPT,
+        extraTools: [],
+        maxSteps: config.maxSteps,
+      });
+    } else {
+      reviewer = makeReviewer();
+    }
+
+    // 审稿模式：writer→reviewer→修订 闭环。
+    const agent = new ReviewingAgent({
+      writer,
+      reviewer,
+      maxRounds: config.reviewMaxRounds,
+      rubric: getReviewRubric(),
+      traceSink: (trace) => writeReviewTrace(config.outputDir, sessionId, trace),
     });
-    return { agent, model: config.model, provider: config.activeProvider || undefined };
+    return { agent, model, provider };
   };
-  const sessions = new SessionManager(sessionStore, agentFactory, (evt) => bridge.emit(evt));
+  const sessions = new SessionManager(
+    sessionStore,
+    agentFactory,
+    (evt) => bridge.emit(evt),
+    path.join(config.wikiRoot, 'output'), // write_file 落点根：把相对路径还原成绝对路径
+  );
 
   const scheduler = new Scheduler(
     scheduleService,
@@ -451,6 +545,7 @@ function scheduleTaskToDTO(
     enabled: task.enabled,
     catchUp: task.catchUp,
     requireApproval: task.requireApproval,
+    review: task.review,
     nextFire: next ? next.toISOString() : null,
     upcomingFires: upcoming,
     runCount: task.runs.length,
@@ -514,7 +609,9 @@ async function handle(req: EngineRequest): Promise<unknown> {
       return { ok: true };
     }
     case 'session.create':
-      return requireSvc().sessions.create(req.provider);
+      return requireSvc().sessions.create(req.provider, { reviewMode: req.reviewMode });
+    case 'session.setReviewMode':
+      return requireSvc().sessions.setReviewMode(req.sessionId, req.reviewMode);
     case 'session.list':
       return requireSvc().sessions.list();
     case 'session.resume':
@@ -654,6 +751,14 @@ async function handle(req: EngineRequest): Promise<unknown> {
       return settingsGet();
     case 'settings.save':
       return saveSettings(req.payload);
+    case 'settings.getSoul':
+      return getSoul();
+    case 'settings.saveSoul':
+      return saveSoul(req.content);
+    case 'settings.getReview':
+      return getReview();
+    case 'settings.saveReview':
+      return saveReview(req.content);
     case 'settings.setActiveProvider': {
       // 即时切换聊天 provider（聊天框下拉 + 设置「对话模型」选择器）：改 activeProvider + 全量重建。
       const file = readConfigFile();
@@ -697,6 +802,23 @@ async function handle(req: EngineRequest): Promise<unknown> {
       await rebuildServices();
       return { ok: true };
     }
+    case 'settings.setReviewProvider': {
+      // 即时切换审稿 provider（设置「审稿模型」选择器）：空串=同 writer；非空必须是已存在的 API provider。
+      const file = readConfigFile();
+      const providers = (file.providers as Record<string, Record<string, unknown>> | undefined) ?? {};
+      if (req.name) {
+        const p = providers[req.name];
+        if (!p) throw new Error(`provider not found: ${req.name}`);
+        if (p.kind === 'claude-code') throw new Error('审稿 provider 必须是 API provider，claude-code 不适合逐轮评审');
+      }
+      fs.writeFileSync(
+        configFilePath(),
+        JSON.stringify({ ...file, reviewProvider: req.name }, null, 2) + '\n',
+        'utf8',
+      );
+      await rebuildServices();
+      return { ok: true };
+    }
     case 'skills.list':
       return skillsList();
     case 'skills.install': {
@@ -725,6 +847,7 @@ async function handle(req: EngineRequest): Promise<unknown> {
         enabled: p.enabled,
         catchUp: p.catchUp,
         requireApproval: p.requireApproval,
+        review: p.review,
       });
       bridge.emit({ kind: 'schedule.update' });
       return scheduleTaskToDTO(s.scheduleService, task);
@@ -739,6 +862,7 @@ async function handle(req: EngineRequest): Promise<unknown> {
         enabled: p.enabled,
         catchUp: p.catchUp,
         requireApproval: p.requireApproval,
+        review: p.review,
       });
       bridge.emit({ kind: 'schedule.update' });
       return scheduleTaskToDTO(s.scheduleService, task);
@@ -780,6 +904,108 @@ async function handle(req: EngineRequest): Promise<unknown> {
 
 function configFilePath(): string {
   return path.join(pithWikiHome(), 'config.json');
+}
+
+/** SOUL.md 的规范落点：pith home 下的单份文件（桌面端全局单工作区）。 */
+function soulFilePath(): string {
+  return path.join(pithWikiHome(), 'SOUL.md');
+}
+
+/** 读 SOUL.md 内容供设置页编辑（不存在 → 空串）。 */
+function getSoul(): SoulDTO {
+  const p = soulFilePath();
+  let content = '';
+  try {
+    content = fs.readFileSync(p, 'utf8');
+  } catch {
+    content = '';
+  }
+  return { content, path: p };
+}
+
+/**
+ * 写 SOUL.md 并全量重建 Engine（soul 在 Agent 构造时烘焙进 system prompt，改后需重建）。
+ * 空内容 = 删除 SOUL.md（loadSoul 视作"无 soul"，不再往 prompt 追加 Voice 段）。
+ */
+async function saveSoul(content: string): Promise<{ ok: true }> {
+  const p = soulFilePath();
+  const trimmed = content.trim();
+  if (trimmed) {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, trimmed + '\n', 'utf8');
+  } else {
+    try {
+      fs.rmSync(p);
+    } catch {
+      /* 本就不存在，无需处理 */
+    }
+  }
+  await rebuildServices();
+  return { ok: true };
+}
+
+/* ───────────────────────── 审稿模式（ReviewingAgent） ───────────────────────── */
+
+/** reviewer agent 的系统人设——真正的评审指令每轮由 buildReviewPrompt 作为用户消息给出。 */
+const REVIEWER_SYSTEM_PROMPT =
+  '你是 pith 的审稿人。严格按用户消息中的格式与标准输出裁决,首行必须是 `VERDICT: PASS` 或 `VERDICT: REVISE`。' +
+  '只做评审:不要创建或修改任何文件,不要调用写入 / 入库 / 排程类工具。';
+
+/** 审核标准落点:`<pithHome>/REVIEW.md`。 */
+function reviewFilePath(): string {
+  return path.join(pithWikiHome(), 'REVIEW.md');
+}
+
+/** 审核标准来源:REVIEW.md;不存在 → 空串 → ReviewingAgent 用内置默认 rubric。 */
+function getReviewRubric(): string {
+  try {
+    return fs.readFileSync(reviewFilePath(), 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+/** 读 REVIEW.md 供设置页编辑(与 getSoul 对称)。 */
+function getReview(): SoulDTO {
+  return { content: getReviewRubric(), path: reviewFilePath() };
+}
+
+/** 写 REVIEW.md 并全量重建(rubric 在 Agent 构造时读入);空内容 = 删除(回落默认 rubric)。 */
+async function saveReview(content: string): Promise<{ ok: true }> {
+  const p = reviewFilePath();
+  const trimmed = content.trim();
+  if (trimmed) {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, trimmed + '\n', 'utf8');
+  } else {
+    try {
+      fs.rmSync(p);
+    } catch {
+      /* 本就不存在 */
+    }
+  }
+  await rebuildServices();
+  return { ok: true };
+}
+
+/** 留痕(做法 B):把审稿轨迹追加到 transcript 目录,不进会话历史。 */
+function writeReviewTrace(transcriptsDir: string, sessionId: string, trace: ReviewTrace): void {
+  try {
+    fs.mkdirSync(transcriptsDir, { recursive: true });
+    const stamp = new Date().toISOString();
+    const passed = trace.rounds.at(-1)?.verdict === 'PASS';
+    const head = `## ${stamp} · ${passed ? `PASS(${trace.rounds.length}轮)` : `EXHAUSTED(${trace.rounds.length}轮未过)`}`;
+    const body = trace.rounds
+      .map((r) => {
+        const issues = r.verdict === 'REVISE' ? `\n${r.issues}\n` : '';
+        return `### 第${r.round}轮 — ${r.verdict}${issues}\n<details><summary>本轮草稿</summary>\n\n${r.draft}\n\n</details>`;
+      })
+      .join('\n\n');
+    const md = `${head}\n\n**任务**: ${trace.task}\n\n${body}\n\n---\n\n`;
+    fs.appendFileSync(path.join(transcriptsDir, `review-${sessionId}.md`), md, 'utf8');
+  } catch {
+    /* 留痕失败不应影响对话主流程 */
+  }
 }
 
 function readConfigFile(): Record<string, unknown> {
@@ -857,6 +1083,7 @@ function settingsGet(): SettingsDTO {
   return {
     activeProvider: String(file.activeProvider ?? ''),
     hydrationProvider: String(file.hydrationProvider ?? ''),
+    reviewProvider: String(file.reviewProvider ?? ''),
     providers,
     availableClis: detectClis(providersRaw),
     watchDirs,
@@ -1043,32 +1270,22 @@ function skillsList(): SkillsDTO {
 
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-function envFilePath(): string {
-  return path.join(pithWikiHome(), '.env');
-}
-
 /**
- * 配置 skill 的 appkey：upsert 写 ~/.pith-wiki/.env（持久化）+ 直接写引擎进程
- * process.env（即时生效——http_request 调用时才读 process.env，无需重建/重启）。
- * value 为空 = 清除该 key。.env 进程内只加载一次，故必须同时直接设 process.env。
+ * 配置 skill 的 appkey：upsert 写 config.json 的 `secrets` map（持久化，密钥唯一源）+
+ * 直接写引擎进程 process.env（即时生效——http_request 调用时才读 process.env，无需重建/重启）。
+ * value 为空 = 清除该 key（同时从 secrets 删 + 从 process.env delete）。
+ * secrets 在引擎启动时由 loadConfigFromEnv 灌进 process.env，运行期改动靠这里直接设。
  */
 function setSkillEnv(key: string, value: string): void {
   if (!ENV_NAME_RE.test(key)) throw new Error(`invalid env var name: ${key}`);
   const clean = value.replace(/[\r\n]/g, '').trim();
-  const file = envFilePath();
-  let raw = '';
-  try {
-    raw = fs.readFileSync(file, 'utf8');
-  } catch {
-    raw = '';
-  }
-  const re = new RegExp(`^\\s*${key}\\s*=`);
-  const lines = (raw ? raw.split('\n') : []).filter((l) => !re.test(l));
-  if (clean) lines.push(`${key}=${clean}`);
-  while (lines.length && lines[lines.length - 1].trim() === '') lines.pop();
-  const out = lines.length ? lines.join('\n') + '\n' : '';
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, out, 'utf8');
+  const file = readConfigFile();
+  const secrets = { ...((file.secrets as Record<string, string> | undefined) ?? {}) };
+  if (clean) secrets[key] = clean;
+  else delete secrets[key];
+  const next = { ...file, secrets };
+  fs.mkdirSync(path.dirname(configFilePath()), { recursive: true });
+  fs.writeFileSync(configFilePath(), JSON.stringify(next, null, 2) + '\n', 'utf8');
   if (clean) process.env[key] = clean;
   else delete process.env[key];
 }

@@ -28,7 +28,12 @@ body {
 }
 
 ::selection {
-  background: var(--accent-soft);
+  background: var(--selection);
+  color: var(--text-primary);
+}
+::-moz-selection {
+  background: var(--selection);
+  color: var(--text-primary);
 }
 
 :where(button, input, textarea, select) {

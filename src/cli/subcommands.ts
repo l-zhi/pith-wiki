@@ -35,16 +35,16 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
   program
     .command('init')
     .description(
-      'Initialize ~/.pith-wiki/: prompt for provider + API key + optional watch dir, write a minimal .env (+ config.json if needed), chmod 600. Run once after install.',
+      'Initialize ~/.pith-wiki/: prompt for provider + API key + optional watch dir, write config.json (key included), chmod 600. Run once after install.',
     )
-    .option('--force', 'Overwrite existing .env / config.json (each gets a .pre-init.bak backup).')
+    .option('--force', 'Overwrite existing config.json (gets a .pre-init.bak backup).')
     .option(
       '--provider <id>',
       `Provider id (skips the interactive picker). One of: ${PROVIDER_CATALOG.map((p) => p.id).join(', ')}.`,
     )
     .option(
       '--api-key <key>',
-      "Inline API key for the chosen provider's env var (skips the prompt; useful for CI).",
+      "Inline API key written to the chosen provider's config.json entry (skips the prompt; useful for CI).",
     )
     .option(
       '--watch-dir <path>',
@@ -80,8 +80,8 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
       const final = opts.prompt === false ? base : await promptInitOptions(base);
       const result = runInit(final);
       console.log(formatInitResult(result, final));
-      // exit code 非 0 只在 .env 真的没写 *且* config.json 也没写时——避免脚本误判
-      if (!result.wrote && !result.wroteConfig) process.exitCode = 1;
+      // exit code 非 0 只在 config.json 真没写时（已存在 + 没 --force）——避免脚本误判
+      if (!result.wrote) process.exitCode = 1;
     });
 
   program

@@ -6,6 +6,7 @@ import type { EngineEvent } from '../src/shared/protocol.js';
 import { SessionStore } from '../src/engine/sessionStore.js';
 import {
   SessionManager,
+  artifactPath,
   deriveDisplay,
   extractWikiRefs,
   type AgentFactory,
@@ -289,5 +290,41 @@ describe('SessionManager', () => {
     expect(browsed.every((b) => b.id.startsWith('listed-') || b.id.startsWith('grepped-'))).toBe(
       true,
     );
+  });
+});
+
+describe('artifactPath', () => {
+  const OUT = '/wiki/output';
+
+  it('resolves core write_file relative path against outputDir', () => {
+    expect(artifactPath('write_file', { path: 'report.html', content: '…' }, OUT)).toBe(
+      '/wiki/output/report.html',
+    );
+    expect(artifactPath('write_file', { path: 'books/三体.md' }, OUT)).toBe(
+      '/wiki/output/books/三体.md',
+    );
+  });
+
+  it('passes through claude-code Write/Edit absolute file_path', () => {
+    expect(artifactPath('Write', { file_path: '/wiki/output/x.html' }, OUT)).toBe(
+      '/wiki/output/x.html',
+    );
+    expect(artifactPath('Edit', { file_path: '/wiki/output/x.html' }, OUT)).toBe(
+      '/wiki/output/x.html',
+    );
+  });
+
+  it('honours an absolute write_file path as-is', () => {
+    expect(artifactPath('write_file', { path: '/abs/y.md' }, OUT)).toBe('/abs/y.md');
+  });
+
+  it('returns null for non-write tools and missing/empty paths', () => {
+    expect(artifactPath('wiki_query', { query: 'x' }, OUT)).toBeNull();
+    expect(artifactPath('write_file', {}, OUT)).toBeNull();
+    expect(artifactPath('Write', { file_path: '  ' }, OUT)).toBeNull();
+  });
+
+  it('returns null for a relative path when outputDir is unknown', () => {
+    expect(artifactPath('write_file', { path: 'report.html' }, '')).toBeNull();
   });
 });

@@ -10,6 +10,12 @@ import { SecurityBlockError } from '../security/index.js';
 import type { QueryScope } from '../wiki/assembler.js';
 
 /**
+ * tool loop 触顶前预留的"收尾轮数"。剩余轮数 ≤ 此值时注入一次预算告警，
+ * 促使模型趁 tools 还在时完成关键写入，而不是被 maxSteps 硬截断后只能描述步骤。
+ */
+const LOW_BUDGET_RESERVE = 3;
+
+/**
  * 中性默认 system prompt——同时适用于 CLI 和嵌入用例。
  *
  * CLI 在 App.tsx 里追加一段 "你正运行在终端里" 的小后缀；嵌入应用按需
@@ -269,8 +275,25 @@ export class Agent {
     try {
     let finalText = '';
     let answered = false;
+    let warnedLowBudget = false;
     let safety = 0;
     while (safety++ < this.maxSteps) {
+      // 预算告警：在触顶前若干轮注入一次提醒，让模型趁 tools 还在时优先完成关键的
+      // 副作用操作（write_file / wiki_ingest），而不是把它留到最后被截断。否则跑满
+      // maxSteps 后 forceFinalAnswer 会摘掉 tools，模型只能"描述如何写"却写不进去——
+      // 定时日报"生成了却没落盘"正是这个失败模式。reserve=3 是经验值。
+      const remaining = this.maxSteps - safety;
+      if (!warnedLowBudget && remaining <= LOW_BUDGET_RESERVE && remaining > 0) {
+        warnedLowBudget = true;
+        this.messages.push({
+          role: 'user',
+          content:
+            `[工具调用即将达到上限（还剩约 ${remaining} 轮）。如果你还有未完成的关键操作——` +
+            `尤其是把结果写入文件（write_file）或入库（wiki_ingest）——请立即在接下来 1-2 轮内` +
+            `真正执行完成，不要只描述步骤或给出手动命令。完成后再给出最终答复。]`,
+        });
+      }
+
       let completion: ChatCompletion;
       try {
         completion = await this.client.chat.completions.create(

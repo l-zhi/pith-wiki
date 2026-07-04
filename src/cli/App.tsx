@@ -407,7 +407,7 @@ export function App({ config: initialConfig }: Props) {
     // run_command / http_request 仅当有 skill 声明过对应能力时才挂（否则是永远失败的死工具）。
     if (skillRegistry.allowedCommands().size > 0) extraTools.push(runCommandTool);
     if (skillRegistry.allowedHosts().size > 0) extraTools.push(httpRequestTool);
-    return new Agent(client, config.model, ctx, { systemPrompt, extraTools });
+    return new Agent(client, config.model, ctx, { systemPrompt, extraTools, maxSteps: config.maxSteps });
   }, [config, client, requestApproval, requestCommandApproval, library, converters, soul, skillRegistry]);
 
   // 统一盖时间戳（HH:MM，design 稿消息头的 time）；显式传了 ts 的不覆盖。
@@ -798,7 +798,8 @@ export function App({ config: initialConfig }: Props) {
       if (result.missingEnv.length > 0) {
         parts.push(
           `🔑 还需设置 ${result.missingEnv.join('、')} 才能使用：在 ` +
-            `${shortenHome(pithWikiHome())}/.env 写入（如 ${result.missingEnv[0]}=你的key），重启 REPL 生效。` +
+            `${shortenHome(pithWikiHome())}/config.json 的 "secrets" 里写入` +
+            `（如 "secrets": { "${result.missingEnv[0]}": "你的key" }），重启 REPL 生效。` +
             (result.skill.name === 'weread'
               ? '\n   微信读书的 key 到 https://weread.qq.com/r/weread-skills 登录获取。'
               : ''),

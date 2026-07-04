@@ -98,6 +98,16 @@ describe('loadSoul', () => {
     ]);
   });
 
+  it('workspaceRoot === pithWikiHome（桌面端全局单工作区）→ 同一 SOUL.md 只拼一次，不重复', () => {
+    // 桌面端 chdir 到 pith home，workspaceRoot 与 userDefault 路径重合。
+    // 不去重的话同一份内容会被拼两遍。
+    const home = path.join(fakeHome, '.pith-wiki');
+    fs.writeFileSync(path.join(home, 'SOUL.md'), 'single-soul', 'utf8');
+    const r = loadSoul({ workspaceRoot: home });
+    expect(r.content).toBe('single-soul');
+    expect(r.sources).toEqual([path.join(home, 'SOUL.md')]);
+  });
+
   it('默认双层：只有 user 存在 → 用 user', () => {
     fs.writeFileSync(path.join(fakeHome, '.pith-wiki', 'SOUL.md'), 'only me', 'utf8');
     const r = loadSoul({ workspaceRoot });

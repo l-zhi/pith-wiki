@@ -66,6 +66,7 @@ function taskView(ctx: ToolContext, task: ScheduledTask) {
     enabled: task.enabled,
     catchUp: task.catchUp,
     requireApproval: task.requireApproval,
+    review: task.review,
     nextFire: next ? next.toISOString() : null,
     lastRun: last ? { firedAt: last.firedAt, status: last.status, error: last.error } : null,
     runCount: task.runs.length,
@@ -115,6 +116,12 @@ const addParams = z.object({
     .describe(
       'false (default) = auto-approve tool calls (writes/commands) so the task runs unattended. true = require human approval at fire time (only completes if someone approves, else times out).',
     ),
+  review: z
+    .boolean()
+    .default(false)
+    .describe(
+      'false (default) = normal single-pass output. true = run in review mode: the output is checked by a reviewer and bounced back for a rewrite if it falls short (slower, more tokens). Good for writing tasks like daily reports.',
+    ),
 });
 
 const scheduleAddTool: ToolDef<typeof addParams> = {
@@ -135,6 +142,7 @@ const scheduleAddTool: ToolDef<typeof addParams> = {
       enabled: a.enabled,
       catchUp: a.catch_up,
       requireApproval: a.require_approval,
+      review: a.review,
     });
     return { ok: true, task: taskView(ctx, task) };
   },
@@ -174,6 +182,10 @@ const updateParams = z.object({
     .boolean()
     .optional()
     .describe('Change whether tool calls need human approval at fire time.'),
+  review: z
+    .boolean()
+    .optional()
+    .describe('Change whether the task runs in review mode (output reviewed + revised before finalizing).'),
 });
 
 const scheduleUpdateTool: ToolDef<typeof updateParams> = {
@@ -192,6 +204,7 @@ const scheduleUpdateTool: ToolDef<typeof updateParams> = {
     if (a.enabled !== undefined) patch.enabled = a.enabled;
     if (a.catch_up !== undefined) patch.catchUp = a.catch_up;
     if (a.require_approval !== undefined) patch.requireApproval = a.require_approval;
+    if (a.review !== undefined) patch.review = a.review;
     if (a.kind !== undefined) {
       const built = buildSpec(a.kind, a.at, a.cron, a.tz);
       if ('error' in built) return { ok: false, error: built.error };

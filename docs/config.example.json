@@ -1,9 +1,11 @@
 {
+  "_comment": "API keys live in config.json (no .env). Two ways: a provider's literal \"apiKey\", or the \"secrets\" map below keyed by the provider's \"apiKeyEnv\" / a skill's auth_env. secrets is loaded into process.env at startup. chmod 600 this file — it holds plaintext keys.",
+
   "providers": {
     "deepseek": {
       "baseURL": "https://api.deepseek.com",
       "model": "deepseek-chat",
-      "apiKeyEnv": "DEEPSEEK_API_KEY"
+      "apiKey": "sk-your-deepseek-key"
     },
     "qwen": {
       "baseURL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -20,6 +22,12 @@
       "model": "qwen2.5:14b",
       "apiKey": "ollama-no-key-needed"
     }
+  },
+
+  "secrets": {
+    "DASHSCOPE_API_KEY": "sk-your-qwen-key",
+    "OPENAI_API_KEY": "sk-your-openai-key",
+    "WEREAD_API_KEY": "wrk-your-weread-skill-key"
   },
 
   "activeProvider": "deepseek",

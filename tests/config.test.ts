@@ -471,6 +471,36 @@ describe('PITH_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
     expect(cfg.model).toBe('custom-model');
   });
 
+  it('config 文件的 hydrationProvider / reviewProvider 会被带进 config（回归：曾漏进 merged）', () => {
+    const cfgFile = path.join(tmpDir, 'config.json');
+    fs.writeFileSync(
+      cfgFile,
+      JSON.stringify({
+        providers: {
+          a: { baseURL: 'https://a.example.com/v1', model: 'ma' },
+          b: { baseURL: 'https://b.example.com/v1', model: 'mb' },
+        },
+        activeProvider: 'a',
+        hydrationProvider: 'b',
+        reviewProvider: 'b',
+        reviewMaxRounds: 3,
+      }),
+    );
+    process.env.PITH_WIKI_CONFIG_PATH = cfgFile;
+
+    const cfg = loadConfig({});
+    expect(cfg.hydrationProvider).toBe('b');
+    expect(cfg.reviewProvider).toBe('b');
+    expect(cfg.reviewMaxRounds).toBe(3);
+  });
+
+  it('reviewMaxRounds 缺省为 2', () => {
+    const cfgFile = path.join(tmpDir, 'config.json');
+    fs.writeFileSync(cfgFile, JSON.stringify({ providers: {}, activeProvider: undefined }));
+    process.env.PITH_WIKI_CONFIG_PATH = cfgFile;
+    expect(loadConfig({}).reviewMaxRounds).toBe(2);
+  });
+
   it('指向不存在的文件 → 等价于"没有 config"（silent fallback 到默认 + overrides）', () => {
     process.env.PITH_WIKI_CONFIG_PATH = path.join(tmpDir, 'does-not-exist.json');
 

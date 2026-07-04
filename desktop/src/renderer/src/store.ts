@@ -16,6 +16,7 @@ import type {
   SessionMeta,
   SettingsDTO,
   SettingsSaveDTO,
+  SoulDTO,
   SkillCardDTO,
   SkillsDTO,
 } from '../../shared/protocol';
@@ -45,7 +46,8 @@ export type ChatItem =
       decided: 'yes' | 'no' | 'always' | null;
     }
   | { id: string; kind: 'error'; text: string }
-  | { id: string; kind: 'note'; text: string };
+  | { id: string; kind: 'note'; text: string }
+  | { id: string; kind: 'artifact'; path: string; name: string };
 
 export interface SessionChat {
   items: ChatItem[];
@@ -121,6 +123,7 @@ interface PithStore {
   selectSession(id: string): Promise<void>;
   renameSession(id: string, title: string): Promise<void>;
   deleteSession(id: string): Promise<void>;
+  setSessionReviewMode(id: string, on: boolean): Promise<void>;
   send(text: string, scope?: ScopeDTO): Promise<void>;
   abort(): void;
   answerApproval(approvalId: string, answer: 'yes' | 'no' | 'always'): void;
@@ -133,8 +136,13 @@ interface PithStore {
   loadSettings(): Promise<void>;
   loadGraph(force?: boolean): Promise<void>;
   saveSettings(payload: SettingsSaveDTO): Promise<void>;
+  getSoul(): Promise<SoulDTO>;
+  saveSoul(content: string): Promise<void>;
+  getReview(): Promise<SoulDTO>;
+  saveReview(content: string): Promise<void>;
   switchProvider(name: string): Promise<void>;
   setHydrationProvider(name: string): Promise<void>;
+  setReviewProvider(name: string): Promise<void>;
   loadSkills(): Promise<void>;
   installSkill(name: string): Promise<void>;
   removeSkill(name: string): Promise<void>;
@@ -321,6 +329,34 @@ export const useStore = create<PithStore>((set, get) => {
       }));
     },
 
+    async setSessionReviewMode(id, on) {
+      // 切换审稿模式：engine 重建该会话 agent（保留对话历史），回写 meta。
+      // 失败要显式冒泡成通知——否则请求 reject 后开关静默不动，看起来"点不动"。
+      try {
+        const meta = await bridge.request<SessionMeta>({
+          kind: 'session.setReviewMode',
+          sessionId: id,
+          reviewMode: on,
+        });
+        set((s) => ({
+          sessions: s.sessions.map((x) =>
+            x.id === id ? { ...x, reviewMode: meta.reviewMode } : x,
+          ),
+        }));
+      } catch (err) {
+        set((s) => ({
+          notices: [
+            ...s.notices,
+            {
+              id: nid(),
+              level: 'error',
+              text: i18n.t('chat.reviewToggleFailed', { error: (err as Error).message }),
+            },
+          ],
+        }));
+      }
+    },
+
     async deleteSession(id) {
       await bridge.request({ kind: 'session.delete', sessionId: id });
       set((s) => {
@@ -475,6 +511,24 @@ export const useStore = create<PithStore>((set, get) => {
       await get().loadSettings();
     },
 
+    async getSoul() {
+      return bridge.request<SoulDTO>({ kind: 'settings.getSoul' });
+    },
+
+    async saveSoul(content) {
+      // 保存 SOUL = Engine 全量重建（soul 烘焙在 system prompt 里）：同 saveSettings 语义
+      await bridge.request({ kind: 'settings.saveSoul', content });
+    },
+
+    async getReview() {
+      return bridge.request<SoulDTO>({ kind: 'settings.getReview' });
+    },
+
+    async saveReview(content) {
+      // 保存 REVIEW = Engine 全量重建（rubric 在 Agent 构造时读入）
+      await bridge.request({ kind: 'settings.saveReview', content });
+    },
+
     async switchProvider(name) {
       // 即时切聊天 provider：改 activeProvider + Engine 全量重建（engine.ready 后刷新 boot）。
       // 失败要显式冒泡成通知——否则请求 reject 后 select 会静默弹回原值，看起来"切不动"。
@@ -496,6 +550,19 @@ export const useStore = create<PithStore>((set, get) => {
       } catch (err) {
         set((s) => ({
           notices: [...s.notices, { id: nid(), level: 'error', text: `切换水合 provider 失败：${(err as Error).message}` }],
+        }));
+      } finally {
+        await get().loadSettings();
+      }
+    },
+
+    async setReviewProvider(name) {
+      // 即时切审稿 provider（设置「审稿模型」选择器）：写 reviewProvider + Engine 全量重建。
+      try {
+        await bridge.request({ kind: 'settings.setReviewProvider', name });
+      } catch (err) {
+        set((s) => ({
+          notices: [...s.notices, { id: nid(), level: 'error', text: `切换审稿 provider 失败：${(err as Error).message}` }],
         }));
       } finally {
         await get().loadSettings();
@@ -538,7 +605,7 @@ export const useStore = create<PithStore>((set, get) => {
     },
 
     async setSkillEnv(key, value) {
-      // 配置 appkey：写 .env + process.env，立即生效，无需重建
+      // 配置 appkey：写 config.json secrets + process.env，立即生效，无需重建
       await bridge.request({ kind: 'skills.setEnv', key, value });
       await get().loadSkills();
     },
@@ -616,6 +683,20 @@ export const useStore = create<PithStore>((set, get) => {
             ...c,
             activity: `${evt.name} ${evt.ok ? '✓' : '✗'}`,
           }));
+          return;
+        case 'session.artifact':
+          // 去重：同一路径的产物卡片在一个会话里只保留一张（Write 后 Edit 会重复上报）
+          patchChat(evt.sessionId, (c) =>
+            c.items.some((it) => it.kind === 'artifact' && it.path === evt.path)
+              ? c
+              : {
+                  ...c,
+                  items: [
+                    ...c.items,
+                    { id: nid(), kind: 'artifact', path: evt.path, name: evt.name },
+                  ],
+                },
+          );
           return;
         case 'session.refs':
           // 把本回合引用到的条目挂到最后一条助手消息上

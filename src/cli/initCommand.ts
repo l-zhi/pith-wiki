@@ -1,22 +1,21 @@
 /**
  * `pith-wiki init` —— 一次性初始化 `~/.pith-wiki/`。
  *
- * 把"mkdir + 写最小化 .env + 可选 config.json + chmod 600"几步压成单一命令。
+ * 把"mkdir + 写 config.json + chmod 600"几步压成单一命令。
  *
  * 设计原则：
- *   - **最小输出**：默认只写 `.env` 里**一行** `<PROVIDER>_API_KEY=...`。其余字段
- *     （baseURL/model/watchDirs/...）走 zod 默认或写入 `config.json`，新用户的
- *     `.env` 不再是一坨注释墙。
- *   - **按需写 config.json**：deepseek（默认 provider）+ 无 watch 目录 → 不写
- *     config.json，全靠代码里的 DEFAULTS。选了其它 provider 或加了 watch 目录
- *     才落 config.json，让"零配置"路径真的零配置。
- *   - **幂等**：默认不覆盖已存在的 `.env` / `config.json`。`--force` 才会盖
- *     （带 `.pre-init.bak` 备份）。
+ *   - **单一配置源**：所有东西（provider、baseURL、model、**API key 字面值**、
+ *     watchDirs）都落 `config.json`。没有 `.env`——API key 直接写成 provider
+ *     entry 的 `apiKey` 字段（与桌面端 Settings UI 的写法一致）。
+ *   - **总是写 config.json**：key 需要一个落点，所以 init 一定写 config.json
+ *     （不再有"默认 deepseek 零配置走 .env"那条路）。
+ *   - **幂等**：默认不覆盖已存在的 `config.json`。`--force` 才会盖（带
+ *     `.pre-init.bak` 备份）。
  *   - **可脚本化**：所有交互问题都有等价 flag（`--provider` / `--api-key` /
  *     `--watch-dir`），CI 一行 setup 完成。交互层在另一个文件里
  *     （[./initInteractive.ts](./initInteractive.ts)），保证此处纯逻辑、可单测。
- *   - **chmod 600**：模板里有占位符，但用户填完真 key 后这个权限位很重要——
- *     主动设上去而不是依赖 umask。
+ *   - **chmod 600**：config.json 现在持有明文 key，主动把权限位设成 owner-only，
+ *     不依赖 umask。
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -53,7 +52,8 @@ const WATCH_PREVIEW_FILE_CAP = 10_000;
  *   - label:     交互菜单里的人类可读标签
  *   - baseURL:   OpenAI-compatible endpoint
  *   - model:     默认 chat 模型——hydrate 的 JSON mode 用的也是它
- *   - apiKeyEnv: `.env` 里那一行的变量名
+ *   - apiKeyEnv: 该 provider 习惯用的环境变量名。init 不再写 .env，但保留此字段
+ *               作为提示文案（"对应 DEEPSEEK_API_KEY"）和 requireApiKey 的兜底。
  *
  * 添加新 provider 时务必同步 [docs/config.example.json]，那是用户参考的源头。
  */
@@ -117,11 +117,11 @@ export function lookupProvider(id: string): ProviderTemplate {
 }
 
 export interface InitOptions {
-  /** 覆盖已存在的 `.env` / `config.json`；默认 false。 */
+  /** 覆盖已存在的 `config.json`；默认 false。 */
   force?: boolean;
   /** Provider id（PROVIDER_CATALOG 里的某项）。缺省 deepseek。 */
   provider?: string;
-  /** API key 字面值——填入 `.env` 里 `<envName>=<key>` 那一行。不传则保留占位符。 */
+  /** API key 字面值——写成 config.json 里该 provider entry 的 `apiKey`。不传则留空待用户补。 */
   apiKey?: string;
   /**
    * watch 目录绝对路径或 `~/foo`。给了就在 config.json 里写一条
@@ -142,18 +142,14 @@ export interface InitOptions {
 }
 
 export interface InitResult {
-  /** `.env` 写入或拒写的路径。 */
-  envFile: string;
-  /** `config.json` 写入的路径，只有真写了才有。 */
-  configFile?: string;
-  /** `.env` 这次真写了吗？（false = 已存在 + 没 force） */
+  /** `config.json` 写入或拒写的路径。 */
+  configFile: string;
+  /** `config.json` 这次真写了吗？（false = 已存在 + 没 force） */
   wrote: boolean;
-  /** `config.json` 这次真写了吗？（没要求写 / 已存在 + 没 force 都是 false） */
-  wroteConfig: boolean;
-  /** `.env` 旧版本的备份（仅 force 覆盖时）。 */
-  backupFile?: string;
+  /** 这次是否把字面 API key 写进了 config.json（false = 用户没给 key，留空待补）。 */
+  apiKeyFilled: boolean;
   /** `config.json` 旧版本的备份（仅 force 覆盖时）。 */
-  configBackupFile?: string;
+  backupFile?: string;
   /** 选中的 provider（即使没传也会 echo 默认值，方便 formatInitResult 拼提示）。 */
   provider: ProviderTemplate;
   /**
@@ -218,39 +214,31 @@ export function previewWatchDir(watchDir: string): InitResult['watchDirPreview']
   }
 }
 
-/** 渲染 `.env` 文件内容——最小化，只放被选 provider 的那一行。 */
-export function renderEnv(provider: ProviderTemplate, apiKey: string | undefined): string {
-  const key = apiKey ?? 'sk-xxxxxxxxxxxxxxxx';
-  // 一行注释 + 一行 KV——故意不写第二个 provider 的 commented-out 模板：
-  // 用户想加别的 key 自己 append 即可，模板里挂太多注释反而是噪音。
-  return `# pith-wiki API keys. chmod 600. Edit values, don't commit this file.
-${provider.apiKeyEnv}=${key}
-`;
-}
-
 /**
- * 渲染 `config.json`。只在"非默认 provider 或有 watch 目录"时才被调用。
+ * 渲染 `config.json`。init 现在总是写它（API key 也落在这里）。
  *
  * 写最小 schema：providers map 里只放被选 provider 这一条 + activeProvider + 可选
- * watchDirs。其它字段（queue / outputDir / transcriptEnabled / ...）走代码默认，
- * 用户进阶时手动加，参见 [docs/config.example.json]。
+ * watchDirs。API key 给了就作为该 entry 的字面 `apiKey`（与桌面端 Settings UI 一致）；
+ * 没给则省略，留用户后续在 config.json 里补 `"apiKey": "..."`。其它字段（queue /
+ * outputDir / transcriptEnabled / ...）走代码默认，用户进阶时手动加，参见
+ * [docs/config.example.json]。
  *
  * 不引入既有 config.json 合并逻辑：如果用户已有 config.json，由调用方走 force/
  * backup 流程决定是否覆盖——避免在这里做"猜用户想保留什么"的隐式行为。
  */
 export function renderConfigJson(
   provider: ProviderTemplate,
+  apiKey: string | undefined,
   watchDir: string | undefined,
   initialScan = true,
 ): string {
+  const entry: Record<string, unknown> = {
+    baseURL: provider.baseURL,
+    model: provider.model,
+  };
+  if (apiKey) entry.apiKey = apiKey;
   const config: Record<string, unknown> = {
-    providers: {
-      [provider.id]: {
-        baseURL: provider.baseURL,
-        model: provider.model,
-        apiKeyEnv: provider.apiKeyEnv,
-      },
-    },
+    providers: { [provider.id]: entry },
     activeProvider: provider.id,
   };
   if (watchDir) {
@@ -282,59 +270,36 @@ export function renderConfigJson(
  * 流程：
  *   1. 解析 provider（默认 deepseek）。
  *   2. mkdir -p homeDir。
- *   3. `.env`：存在 + 无 force → 不写；存在 + force → 备份；不存在 → 直接写。
- *   4. `config.json`：仅当 provider != 默认 或 watchDir 被传，且按同样 force/backup 逻辑。
- *   5. chmod 600 .env（owner-only）。config.json 是普通可读文件，不限。
+ *   3. `config.json`：存在 + 无 force → 不写；存在 + force → 备份后重写；不存在 → 直接写。
+ *   4. chmod 600 config.json（owner-only）——它现在持有明文 API key。
  */
 export function runInit(opts: InitOptions = {}): InitResult {
   const provider = lookupProvider(opts.provider ?? DEFAULT_PROVIDER_ID);
   const homeDir = opts.homeDirOverride ?? pithWikiHome();
-  const envFile = path.join(homeDir, '.env');
   const configFile = path.join(homeDir, 'config.json');
 
   fs.mkdirSync(homeDir, { recursive: true });
 
-  // --- .env ---
+  // --- config.json（API key 也落这里） ---
   let backupFile: string | undefined;
   let wrote = false;
-  if (fs.existsSync(envFile)) {
-    if (opts.force) {
-      backupFile = `${envFile}.pre-init.bak`;
-      fs.copyFileSync(envFile, backupFile);
-      fs.writeFileSync(envFile, renderEnv(provider, opts.apiKey), { encoding: 'utf8', mode: 0o600 });
-      fs.chmodSync(envFile, 0o600);
-      wrote = true;
+  const exists = fs.existsSync(configFile);
+  if (!exists || opts.force) {
+    if (exists) {
+      backupFile = `${configFile}.pre-init.bak`;
+      fs.copyFileSync(configFile, backupFile);
     }
-    // 否则 wrote=false，沿用旧 .env 不动
-  } else {
-    fs.writeFileSync(envFile, renderEnv(provider, opts.apiKey), { encoding: 'utf8', mode: 0o600 });
-    fs.chmodSync(envFile, 0o600);
+    // initialScan 默认 true（仅当 watchDir 设了才有意义；renderConfigJson 内部
+    // 也只有有 watchDir 时才会用到这个值）。
+    fs.writeFileSync(
+      configFile,
+      renderConfigJson(provider, opts.apiKey, opts.watchDir, opts.initialScan ?? true),
+      { encoding: 'utf8', mode: 0o600 },
+    );
+    fs.chmodSync(configFile, 0o600);
     wrote = true;
   }
-
-  // --- config.json（按需）---
-  const needsConfig = provider.id !== DEFAULT_PROVIDER_ID || !!opts.watchDir;
-  let configBackupFile: string | undefined;
-  let wroteConfig = false;
-  let configFileOut: string | undefined;
-  if (needsConfig) {
-    configFileOut = configFile;
-    const exists = fs.existsSync(configFile);
-    if (!exists || opts.force) {
-      if (exists) {
-        configBackupFile = `${configFile}.pre-init.bak`;
-        fs.copyFileSync(configFile, configBackupFile);
-      }
-      // initialScan 默认 true（仅当 watchDir 设了才有意义；renderConfigJson 内部
-      // 也只有有 watchDir 时才会用到这个值）。
-      fs.writeFileSync(
-        configFile,
-        renderConfigJson(provider, opts.watchDir, opts.initialScan ?? true),
-        'utf8',
-      );
-      wroteConfig = true;
-    }
-  }
+  // 否则 wrote=false，沿用旧 config.json 不动
 
   // watch 目录的预览扫描：只在"用户真的设了 watchDir 且 initialScan 没被显式关掉"
   // 时做。这样 formatInitResult 可以告诉用户"REPL 启动后会入队 N 个文件"，
@@ -343,12 +308,10 @@ export function runInit(opts: InitOptions = {}): InitResult {
   const watchDirPreview = willScan ? previewWatchDir(opts.watchDir!) : undefined;
 
   return {
-    envFile,
-    configFile: configFileOut,
+    configFile,
     wrote,
-    wroteConfig,
+    apiKeyFilled: wrote && !!opts.apiKey,
     backupFile,
-    configBackupFile,
     provider,
     watchDirPreview,
   };
@@ -363,35 +326,25 @@ export function runInit(opts: InitOptions = {}): InitResult {
 export function formatInitResult(result: InitResult, opts: InitOptions = {}): string {
   const lines: string[] = [];
 
-  if (!result.wrote && !result.wroteConfig) {
-    lines.push(chalk.yellow(`✗ nothing written: ${result.envFile} already exists`));
+  if (!result.wrote) {
+    lines.push(chalk.yellow(`✗ nothing written: ${result.configFile} already exists`));
     lines.push(
-      chalk.dim(`  pass --force to back it up (to .env.pre-init.bak) and rewrite from template`),
+      chalk.dim(`  pass --force to back it up (to config.json.pre-init.bak) and rewrite`),
     );
     return lines.join('\n');
   }
 
-  if (result.wrote) {
-    lines.push(chalk.green(`✓ ${result.envFile}`));
-    if (result.backupFile) lines.push(chalk.dim(`  backup: ${result.backupFile}`));
-  } else if (result.wroteConfig) {
-    // .env 已存在没动，但 config.json 写了——单独提示，避免用户以为 .env 也被改了
-    lines.push(chalk.yellow(`• .env unchanged (already exists; --force to rewrite)`));
-  }
-
-  if (result.wroteConfig && result.configFile) {
-    lines.push(chalk.green(`✓ ${result.configFile}`));
-    if (result.configBackupFile) lines.push(chalk.dim(`  backup: ${result.configBackupFile}`));
-  }
+  lines.push(chalk.green(`✓ ${result.configFile}`));
+  if (result.backupFile) lines.push(chalk.dim(`  backup: ${result.backupFile}`));
 
   // next-step 提示
   lines.push('');
-  if (opts.apiKey) {
-    lines.push(chalk.dim(`  ${result.provider.apiKeyEnv} filled inline. You're good to go:`));
+  if (result.apiKeyFilled) {
+    lines.push(chalk.dim(`  ${result.provider.label} API key written to config.json. You're good to go:`));
   } else {
     lines.push(
       chalk.dim(
-        `  next: edit ${result.envFile} and fill ${result.provider.apiKeyEnv}=<your-key>`,
+        `  next: edit ${result.configFile} and set "apiKey" on the "${result.provider.id}" provider`,
       ),
     );
   }

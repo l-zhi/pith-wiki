@@ -84,6 +84,40 @@ describe('Agent — tool loop 触顶兜底', () => {
     );
   });
 
+  it('接近上限时注入一次"预算告警"，促使模型趁 tools 还在时完成写入', async () => {
+    // maxSteps=5：reserve=3 → 剩余轮数 ≤3 时（safety=2，remaining=3）注入一次告警，
+    // 模型据此在还带 tools 的那一轮把结果写入，随后收口。
+    let i = 0;
+    const responses = [
+      toolCallResp('wiki_list', {}), // safety=1, remaining=4
+      toolCallResp('write_file', { path: 'out.md', content: 'x' }), // safety=2, remaining=3 → 告警已注入
+      finalResp('已写入并作答'),
+    ];
+    const calls: Array<Record<string, unknown>> = [];
+    const client = {
+      chat: {
+        completions: {
+          create: async (body: Record<string, unknown>) => {
+            calls.push(body);
+            return responses[i++];
+          },
+        },
+      },
+    };
+    const agent = new Agent(client as never, 'm', buildCtx() as never, { maxSteps: 5 });
+    const out = await agent.send('问题', {});
+
+    expect(out).toBe('已写入并作答');
+    // 第二次请求（remaining=3）的 messages 里应已含一条预算告警 user 提示，且只注入一次
+    const secondMsgs = calls[1].messages as Array<{ role: string; content: string }>;
+    const warnings = secondMsgs.filter(
+      (m) => m.role === 'user' && m.content.includes('工具调用即将达到上限'),
+    );
+    expect(warnings).toHaveLength(1);
+    // 告警轮仍带 tools（模型还能真正写入，而非被摘掉 tools 只能描述）
+    expect(calls[1].tools).toBeDefined();
+  });
+
   it('强制收尾仍返回空文本 → 抛 AgentError，不静默返回空串', async () => {
     let i = 0;
     const responses = [toolCallResp('wiki_list', {}), finalResp('')];

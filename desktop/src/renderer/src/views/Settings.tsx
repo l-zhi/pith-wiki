@@ -2,6 +2,7 @@ import React from 'react';
 import { Check, FolderPlus, KeyRound, Plus, Settings2, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Badge, Button, Card, Input, SegmentedControl, Switch } from '../ds';
+import { DocEditor, type DocPreset } from './DocEditor';
 import { useStore, type Theme } from '../store';
 import type { SettingsDTO, SettingsSaveDTO, WatchDirDTO } from '../../../shared/protocol';
 
@@ -29,6 +30,7 @@ interface ProviderDraft {
 interface Draft {
   activeProvider: string;
   hydrationProvider: string;
+  reviewProvider: string;
   providers: ProviderDraft[];
   watchDirs: WatchDirDTO[];
   readOnly: boolean;
@@ -38,6 +40,7 @@ function toDraft(s: SettingsDTO): Draft {
   return {
     activeProvider: s.activeProvider,
     hydrationProvider: s.hydrationProvider,
+    reviewProvider: s.reviewProvider,
     providers: s.providers.map((p) => ({ ...p, newApiKey: '' })),
     watchDirs: s.watchDirs.map((w) => ({ ...w })),
     readOnly: s.readOnly,
@@ -61,17 +64,163 @@ function toPayload(d: Draft): SettingsSaveDTO {
   };
 }
 
+/**
+ * SOUL 风格预设：不知道填什么时一键套用（套进草稿后仍可编辑再保存）。
+ * 内容按语言给两份——SOUL 本身带语气示范，随 UI 语言走更自然。
+ */
+const SOUL_PRESETS: DocPreset[] = [
+  {
+    key: 'concise',
+    label: { zh: '简洁直接', en: 'Concise & direct' },
+    body: {
+      zh: [
+        '- 用简体中文，语气直接，省去寒暄和客套',
+        '- 先给结论，再给依据；能一句话说清就不展开',
+        '- 涉及取舍时明确给出你的推荐，不要罗列所有选项让我自己挑',
+        '- 不确定就说不确定，绝不编造',
+      ].join('\n'),
+      en: [
+        '- Answer in a direct tone; skip greetings and filler',
+        '- Lead with the conclusion, then the reasoning; if one line suffices, stop there',
+        "- On trade-offs, state your recommendation — don't just list options for me to pick",
+        "- If you're unsure, say so; never fabricate",
+      ].join('\n'),
+    },
+  },
+  {
+    key: 'advisor',
+    label: { zh: '深度顾问', en: 'Thorough advisor' },
+    body: {
+      zh: [
+        '- 用简体中文，像资深顾问一样回答',
+        '- 先给结论和推荐，再展开背景、权衡与风险',
+        '- 主动补充我没问到但重要的点',
+        '- 关键判断给出理由链，方便我复核',
+      ].join('\n'),
+      en: [
+        '- Answer like a seasoned advisor',
+        '- Give the conclusion and recommendation first, then background, trade-offs and risks',
+        "- Proactively surface important points I didn't ask about",
+        '- Show the reasoning chain for key judgments so I can double-check',
+      ].join('\n'),
+    },
+  },
+  {
+    key: 'critic',
+    label: { zh: '犀利批判', en: 'Critical & challenging' },
+    body: {
+      zh: [
+        '- 用简体中文，语气犀利、不迁就',
+        '- 我的想法有漏洞时直接指出，先反驳、找反例和风险，再补充',
+        '- 默认对我的假设持怀疑态度，不要为了让我舒服而附和',
+        '- 但结论要落地，别只批评不给方向',
+      ].join('\n'),
+      en: [
+        "- Be sharp and don't coddle me",
+        '- When my idea has holes, say so first — find counterexamples and risks before agreeing',
+        "- Default to skepticism about my assumptions; don't agree just to please me",
+        '- But land on something actionable — no critique without a direction',
+      ].join('\n'),
+    },
+  },
+  {
+    key: 'editor',
+    label: { zh: '知识整理', en: 'Knowledge editor' },
+    body: {
+      zh: [
+        '- 用简体中文，以编辑/整理者的视角回答',
+        '- 善于把零散信息归纳成结构化要点、清单、对照表',
+        '- 措辞适合直接用作笔记 / 公众号素材',
+        '- 标注信息来源，区分事实与推测',
+      ].join('\n'),
+      en: [
+        '- Answer as an editor who organizes information',
+        '- Turn scattered input into structured points, lists and comparison tables',
+        '- Phrase things so they can be reused directly as notes or article material',
+        '- Cite sources and separate fact from speculation',
+      ].join('\n'),
+    },
+  },
+];
+
+/** REVIEW.md 审核标准预设(审稿模式下 reviewer 对着它打分)。 */
+const REVIEW_PRESETS: DocPreset[] = [
+  {
+    key: 'general',
+    label: { zh: '通用严格', en: 'General & strict' },
+    body: {
+      zh: [
+        '- 结论明确:先给结论/推荐,不含糊、不骑墙',
+        '- 契合任务:确实回答了诉求,没跑题、没遗漏关键点',
+        '- 有据可依:关键论断有依据,不编造事实、不虚构来源',
+        '- 结构清晰:该分点/分段处分点,便于阅读',
+        '- 无冗余、重复、自相矛盾',
+      ].join('\n'),
+      en: [
+        '- Clear conclusion: lead with the takeaway/recommendation, no hedging',
+        '- On-task: actually answers the ask, no drift, no missing key points',
+        '- Grounded: key claims are backed; no fabricated facts or sources',
+        '- Well-structured: break into points/sections where it helps reading',
+        '- No redundancy, repetition, or self-contradiction',
+      ].join('\n'),
+    },
+  },
+  {
+    key: 'factual',
+    label: { zh: '重事实核查', en: 'Fact-check heavy' },
+    body: {
+      zh: [
+        '- 每个事实性论断都必须能追溯到知识库条目或明确来源,否则打回',
+        '- 数字、日期、人名、专有名词必须与来源一致,不许含糊近似',
+        '- 推测与事实必须显式区分(用"据推测/可能"等措辞)',
+        '- 宁可少说,不许编造;拿不准的点要标注存疑',
+      ].join('\n'),
+      en: [
+        '- Every factual claim must trace to a wiki entry or explicit source, else bounce',
+        '- Numbers, dates, names, proper nouns must match sources exactly — no fuzzy approximations',
+        '- Speculation must be explicitly marked as such (e.g. "likely / presumably")',
+        '- Prefer saying less over fabricating; flag anything uncertain',
+      ].join('\n'),
+    },
+  },
+  {
+    key: 'publish',
+    label: { zh: '公众号发布', en: 'Ready to publish' },
+    body: {
+      zh: [
+        '- 有抓人的标题/开头,不是平铺直叙的流水账',
+        '- 观点鲜明,有信息增量,不是常识堆砌',
+        '- 语言通顺、节奏好,适合直接作为公众号/笔记发布',
+        '- 结尾有落点(行动建议/总结/引子),不烂尾',
+        '- 无明显 AI 腔、空话套话',
+      ].join('\n'),
+      en: [
+        '- Has a hooky title/opening, not a flat play-by-play',
+        '- A clear point of view with real information gain, not common-sense filler',
+        '- Fluent, well-paced prose ready to publish as an article/note',
+        '- Ends with a payoff (takeaway/summary/hook), no abrupt stop',
+        '- No obvious AI-speak or empty boilerplate',
+      ].join('\n'),
+    },
+  },
+];
+
 export function Settings() {
   const { t } = useTranslation();
   const settings = useStore((s) => s.settings);
   const saveSettings = useStore((s) => s.saveSettings);
   const switchProvider = useStore((s) => s.switchProvider);
   const setHydrationProvider = useStore((s) => s.setHydrationProvider);
+  const setReviewProvider = useStore((s) => s.setReviewProvider);
   const theme = useStore((s) => s.theme);
   const setTheme = useStore((s) => s.setTheme);
   const lang = useStore((s) => s.lang);
   const setLang = useStore((s) => s.setLang);
   const chat = useStore((s) => s.chat);
+  const getSoul = useStore((s) => s.getSoul);
+  const saveSoul = useStore((s) => s.saveSoul);
+  const getReview = useStore((s) => s.getReview);
+  const saveReview = useStore((s) => s.saveReview);
 
   const [draft, setDraft] = React.useState<Draft | null>(null);
   const [saving, setSaving] = React.useState(false);
@@ -159,6 +308,10 @@ export function Settings() {
   const onChatChange = (value: string) => {
     patch((d) => ({ ...d, activeProvider: value }));
     void switchProvider(value);
+  };
+  const onReviewProviderChange = (value: string) => {
+    patch((d) => ({ ...d, reviewProvider: value }));
+    void setReviewProvider(value);
   };
   const onHydrationChange = (value: string) => {
     patch((d) => ({ ...d, hydrationProvider: value }));
@@ -315,6 +468,49 @@ export function Settings() {
         </Row>
         <Row title={t('settings.readOnly')} desc={t('settings.readOnlyDesc')}>
           <Switch checked={draft.readOnly} onChange={(v) => patch((d) => ({ ...d, readOnly: v }))} tone="accent" />
+        </Row>
+      </Section>
+
+      {/* ───── Soul（人设 / 语气；保存 = Engine 重建） ───── */}
+      <DocEditor
+        title={t('settings.soulTitle')}
+        desc={t('settings.soulDesc')}
+        presetHint={t('settings.soulPresetHint')}
+        presets={SOUL_PRESETS}
+        placeholder={t('settings.soulPlaceholder')}
+        saveLabel={t('settings.soulSave')}
+        savingLabel={t('settings.soulSaving')}
+        savedLabel={t('settings.soulSaved')}
+        load={getSoul}
+        save={saveSoul}
+      />
+
+      {/* ───── Review（审稿标准；保存 = Engine 重建） ───── */}
+      <DocEditor
+        title={t('settings.reviewTitle')}
+        desc={t('settings.reviewDesc')}
+        presetHint={t('settings.reviewPresetHint')}
+        presets={REVIEW_PRESETS}
+        placeholder={t('settings.reviewPlaceholder')}
+        saveLabel={t('settings.soulSave')}
+        savingLabel={t('settings.soulSaving')}
+        savedLabel={t('settings.soulSaved')}
+        load={getReview}
+        save={saveReview}
+      />
+
+      {/* ───── 审稿模型（选择器，选了即生效） ───── */}
+      <Section title={t('settings.reviewProviderTitle')}>
+        <Row title={t('settings.reviewProvider')} desc={t('settings.reviewProviderHint')}>
+          <SegmentedControl
+            size="sm"
+            value={draft.reviewProvider}
+            onChange={onReviewProviderChange}
+            options={[
+              { value: '', label: t('settings.reviewProviderSame') },
+              ...openaiProviders.map((p) => ({ value: p.name, label: p.name })),
+            ]}
+          />
         </Row>
       </Section>
 
