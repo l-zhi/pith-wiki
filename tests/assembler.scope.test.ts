@@ -30,6 +30,7 @@ function entry(o: Partial<Entry>): Entry {
   return {
     id: o.id ?? 'x',
     collection: o.collection ?? 'tech',
+    subpath: o.subpath,
     title: o.title ?? 'x',
     summary: o.summary ?? '',
     tags: o.tags ?? [],
@@ -69,6 +70,55 @@ describe('ContextAssembler — 集合 scope', () => {
     expect(r.referencedEntries).toContain('seed');
     expect(r.referencedEntries).toContain('in');
     expect(r.referencedEntries).not.toContain('out'); // 跨集合链接被挡
+  });
+});
+
+describe('ContextAssembler — 子文件夹 scope（folders）', () => {
+  it('只召回 subpath 前缀下的条目（含目录本身及子孙）', () => {
+    lib.put(entry({ id: 'q1', collection: 'work', subpath: '2024/q1', title: 'agent' }));
+    lib.put(entry({ id: 'q2', collection: 'work', subpath: '2024/q2', title: 'agent' }));
+    lib.put(entry({ id: 'old', collection: 'work', subpath: '2023', title: 'agent' }));
+    lib.put(entry({ id: 'root', collection: 'work', title: 'agent' })); // 集合根，无 subpath
+
+    const r = assembler.query('agent', 4000, { folders: [{ collection: 'work', subpath: '2024' }] });
+    expect(r.referencedEntries).toEqual(expect.arrayContaining(['q1', 'q2']));
+    expect(r.referencedEntries).not.toContain('old');
+    expect(r.referencedEntries).not.toContain('root');
+  });
+
+  it('前缀按目录段匹配，不误伤同前缀的兄弟目录', () => {
+    lib.put(entry({ id: 'in', collection: 'work', subpath: '2024', title: 'agent' }));
+    lib.put(entry({ id: 'sibling', collection: 'work', subpath: '20240', title: 'agent' }));
+
+    const r = assembler.query('agent', 4000, { folders: [{ collection: 'work', subpath: '2024' }] });
+    expect(r.referencedEntries).toContain('in');
+    expect(r.referencedEntries).not.toContain('sibling'); // '20240' 不是 '2024' 的子目录
+  });
+
+  it('folders 与 collections 取并集', () => {
+    lib.put(entry({ id: 'f', collection: 'work', subpath: '2024', title: 'agent' }));
+    lib.put(entry({ id: 'c', collection: 'tech', title: 'agent' }));
+    lib.put(entry({ id: 'out', collection: 'work', subpath: '2023', title: 'agent' }));
+
+    const r = assembler.query('agent', 4000, {
+      collections: ['tech'],
+      folders: [{ collection: 'work', subpath: '2024' }],
+    });
+    expect(r.referencedEntries).toEqual(expect.arrayContaining(['f', 'c']));
+    expect(r.referencedEntries).not.toContain('out');
+  });
+
+  it('链接扩展不越出子文件夹 scope', () => {
+    lib.put(
+      entry({ id: 'seed', collection: 'work', subpath: '2024', title: 'agent', links: ['near', 'far'] }),
+    );
+    lib.put(entry({ id: 'near', collection: 'work', subpath: '2024/detail', title: '同目录邻居' }));
+    lib.put(entry({ id: 'far', collection: 'work', subpath: '2023', title: '目录外邻居' }));
+
+    const r = assembler.query('agent', 4000, { folders: [{ collection: 'work', subpath: '2024' }] });
+    expect(r.referencedEntries).toContain('seed');
+    expect(r.referencedEntries).toContain('near');
+    expect(r.referencedEntries).not.toContain('far');
   });
 });
 

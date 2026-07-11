@@ -35,15 +35,31 @@ export interface QueryResult {
   references: ReferencedEntry[];
 }
 
+/** 子文件夹范围：集合内某个 subpath 前缀（`<wikiRoot>/<collection>/<subpath>/…`）。 */
+export interface FolderScope {
+  collection: string;
+  /** POSIX 相对前缀，无首尾斜杠；命中该目录本身及其所有子目录。 */
+  subpath: string;
+}
+
 /**
- * 本轮检索范围（来自 REPL `@`-mention）。
- *   - collections：硬过滤——候选池与链接扩展都只在这些集合内
- *   - entryIds   ：钉死——这些条目强制注入（即使打分 0 / 不在集合过滤内），且排在最前
- * 两者皆空 / 未传 → 整库召回（v0 行为）。
+ * 本轮检索范围（来自 `@`-mention）。
+ *   - collections：硬过滤——候选池与链接扩展都只在这些集合内（整个集合）
+ *   - folders    ：硬过滤——收窄到集合内某个 subpath 前缀（子文件夹粒度）
+ *   - entryIds   ：钉死——这些条目强制注入（即使打分 0 / 不在过滤内），且排在最前
+ * collections 与 folders 取并集（命中任一即在范围内）。三者皆空 / 未传 → 整库召回。
  */
 export interface QueryScope {
   collections?: string[];
+  folders?: FolderScope[];
   entryIds?: string[];
+}
+
+/** 条目是否落在某个子文件夹前缀内（目录本身或其子孙）。 */
+function underFolder(entry: { collection: string; subpath?: string }, f: FolderScope): boolean {
+  if (entry.collection !== f.collection) return false;
+  const sp = entry.subpath ?? '';
+  return sp === f.subpath || sp.startsWith(f.subpath + '/');
 }
 
 const TOKEN_CHARS = 4;
@@ -55,8 +71,13 @@ export class ContextAssembler {
   query(text: string, maxTokens = 4000, scope?: QueryScope): QueryResult {
     const queryTokens = new Set(tokenize(text));
     const pinnedIds = scope?.entryIds ?? [];
-    const collFilter =
+    const collSet =
       scope?.collections && scope.collections.length > 0 ? new Set(scope.collections) : null;
+    const folders = scope?.folders ?? [];
+    const hasScope = collSet !== null || folders.length > 0;
+    // 集合 scope ∪ 子文件夹 scope 的硬过滤谓词。
+    const inScope = (e: { collection: string; subpath?: string }): boolean =>
+      (collSet?.has(e.collection) ?? false) || folders.some((f) => underFolder(e, f));
 
     // 没有 query token 时通常直接返回空——但若有钉死条目（用户只 @文件 不提问），
     // 仍要把它们渲染出来。
@@ -64,10 +85,8 @@ export class ContextAssembler {
       return { context: '', referencedEntries: [], references: [] };
     }
 
-    // 候选池：集合 scope 下只取这些集合，否则全量。
-    const all = collFilter
-      ? this.library.list().filter((e) => collFilter.has(e.collection))
-      : this.library.list();
+    // 候选池：有范围时只取范围内条目，否则全量。
+    const all = hasScope ? this.library.list().filter(inScope) : this.library.list();
     const scored: Scored[] = [];
     for (const entry of all) {
       const score = queryTokens.size > 0 ? scoreEntry(entry, queryTokens) : 0;
@@ -95,10 +114,10 @@ export class ContextAssembler {
       const node = linkIndex.get(s.entry.id);
       if (node) {
         for (const linkId of node.forward) {
-          // 集合 scope 下，链接扩展不越界（只跟进仍在 scope 内的条目）。
-          if (collFilter) {
+          // 有范围时链接扩展不越界（只跟进仍在 scope 内的条目）。
+          if (hasScope) {
             const target = this.library.get(linkId);
-            if (!target || !collFilter.has(target.collection)) continue;
+            if (!target || !inScope(target)) continue;
           }
           if (!seen.has(linkId)) {
             ordered.push(linkId);

@@ -42,8 +42,16 @@ export type DisplayItem =
   | { role: 'assistant'; text: string; refs?: EntryRefDTO[]; browsed?: EntryRefDTO[] }
   | { role: 'tool'; name: string; argsPreview: string; resultPreview: string };
 
+/** 子文件夹范围：集合内某个 subpath 前缀（命中该目录及其子孙）。 */
+export interface FolderScopeDTO {
+  collection: string;
+  subpath: string;
+}
+
 export interface ScopeDTO {
   collections: string[];
+  /** 子文件夹粒度的范围（`@集合/子目录/`）。 */
+  folders: FolderScopeDTO[];
   entryIds: string[];
 }
 
@@ -72,6 +80,23 @@ export interface EntryDetail extends EntrySummary {
   sourceValue?: string;
   compressionRatio?: number;
   raw: string;
+}
+
+/**
+ * `@`-mention 目录树（可序列化形态：CLI 版 buildMentionTree 的 Map → Record）。
+ * engine 从完整的 LibraryService 建（含 subpath 层级），renderer 拿来渲染引用选择器。
+ * 层级 = [collection, ...subpath]；叶子挂条目。
+ */
+export interface MentionNodeDTO {
+  /** 子目录：段名 → 子节点。 */
+  dirs: Record<string, MentionNodeDTO>;
+  /** 直属该目录的条目。 */
+  entries: { id: string; title: string; collection: string }[];
+  /** 该子树下条目总数（含子目录）。 */
+  count: number;
+}
+export interface MentionTreeDTO {
+  root: MentionNodeDTO;
 }
 
 export interface QueueJobDTO {
@@ -304,6 +329,7 @@ export type EngineRequest =
   | { kind: 'approval.answer'; approvalId: string; answer: 'yes' | 'no' | 'always' }
   | { kind: 'library.collections' }
   | { kind: 'library.entries'; collection: string }
+  | { kind: 'library.mentionTree' }
   | { kind: 'library.entry'; id: string; collection?: string }
   | { kind: 'library.graph' }
   | { kind: 'queue.digest' }

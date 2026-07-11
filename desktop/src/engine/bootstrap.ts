@@ -61,6 +61,8 @@ import {
   type EntryDetail,
   type EntrySummary,
   type GraphDTO,
+  type MentionNodeDTO,
+  type MentionTreeDTO,
   type CliDTO,
   type ProviderDTO,
   type QueueDigestDTO,
@@ -675,6 +677,30 @@ async function handle(req: EngineRequest): Promise<unknown> {
         .list(req.collection)
         .sort((a, b) => (a.updated < b.updated ? 1 : -1))
         .map(entrySummary);
+    }
+    case 'library.mentionTree': {
+      const s = requireSvc();
+      s.library.refreshIfStale();
+      // CLI buildMentionTree 的可序列化翻版：Map → Record。按 [collection, ...subpath]
+      // 把条目铺进目录树，每层记 count（含子树），叶子挂条目。renderer 用来渲染引用选择器。
+      const root: MentionNodeDTO = { dirs: {}, entries: [], count: 0 };
+      for (const e of s.library.list()) {
+        const segs = [e.collection, ...(e.subpath ? e.subpath.split('/') : [])];
+        let node = root;
+        node.count += 1;
+        for (const seg of segs) {
+          let child = node.dirs[seg];
+          if (!child) {
+            child = { dirs: {}, entries: [], count: 0 };
+            node.dirs[seg] = child;
+          }
+          child.count += 1;
+          node = child;
+        }
+        node.entries.push({ id: e.id, title: e.title, collection: e.collection });
+      }
+      const tree: MentionTreeDTO = { root };
+      return tree;
     }
     case 'library.entry': {
       const s = requireSvc();

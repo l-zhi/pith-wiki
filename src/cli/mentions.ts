@@ -13,7 +13,6 @@
  * 的内存索引；不命中任何已知集合 / 条目的 token 在解析时被忽略（当普通文本）。
  */
 import type { LibraryService } from '../wiki/library.js';
-import type { QueryScope } from '../wiki/assembler.js';
 
 export type MentionCandidate =
   | { kind: 'collection'; token: string; label: string; count: number }
@@ -21,10 +20,11 @@ export type MentionCandidate =
 
 /**
  * 提交时旁路传给 agent 的本轮检索范围。
- * 复用 wiki 层的 QueryScope（assembler 直接吃这个类型），这里把数组定为必填，
- * 表示"已解析出至少一个有效 mention"。
+ * QueryScope 的集合 / 条目两级（REPL 选择器只产出这两级；子文件夹粒度是桌面端特性）。
+ * 显式写字段而非 `Required<QueryScope>`，这样 QueryScope 新增可选字段（如 folders）
+ * 不会牵连本类型。
  */
-export type TurnScope = Required<QueryScope>;
+export type TurnScope = { collections: string[]; entryIds: string[] };
 
 /**
  * 从库的内存索引建候选列表：集合在前（带尾斜杠 token），条目在后。

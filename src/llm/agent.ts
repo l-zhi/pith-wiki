@@ -471,6 +471,8 @@ export class Agent {
     if (!result.context) return '';
     const hints: string[] = [];
     if (scope.collections?.length) hints.push(`collections: ${scope.collections.join(', ')}`);
+    if (scope.folders?.length)
+      hints.push(`folders: ${scope.folders.map((f) => `${f.collection}/${f.subpath}`).join(', ')}`);
     if (scope.entryIds?.length) hints.push(`pinned entries: ${scope.entryIds.join(', ')}`);
     return (
       `[Scoped context for this question — ${hints.join(' · ')}. ` +
@@ -547,9 +549,10 @@ export class Agent {
 function normalizeScope(scope: QueryScope | undefined): QueryScope | null {
   if (!scope) return null;
   const collections = scope.collections ?? [];
+  const folders = scope.folders ?? [];
   const entryIds = scope.entryIds ?? [];
-  if (collections.length === 0 && entryIds.length === 0) return null;
-  return { collections, entryIds };
+  if (collections.length === 0 && folders.length === 0 && entryIds.length === 0) return null;
+  return { collections, folders, entryIds };
 }
 
 export type AgentErrorKind =

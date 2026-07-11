@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import type { AgentLike } from './sessionManager.js';
+import type { ScopeDTO } from '../shared/protocol.js';
 
 /**
  * ClaudeCodeAgent —— 把一次问答委托给本机 `claude` CLI（headless），让 Claude Code
@@ -219,7 +220,8 @@ export class ClaudeCodeAgent implements AgentLike {
     text: string,
     opts: {
       signal?: AbortSignal;
-      scope?: { collections: string[]; entryIds: string[] };
+      // scope 目前不参与 claude-code 检索（它经 MCP 工具自查库），保留以满足 AgentLike。
+      scope?: ScopeDTO;
       events?: StreamEvents;
     } = {},
   ): Promise<string> {

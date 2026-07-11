@@ -29,7 +29,7 @@ export interface AgentLike {
     text: string,
     opts: {
       signal?: AbortSignal;
-      scope?: { collections: string[]; entryIds: string[] };
+      scope?: ScopeDTO;
       events?: {
         onThinking?: (e: { text: string; source: string }) => void;
         onAssistantText?: (e: { text: string; final: boolean }) => void;
@@ -293,7 +293,10 @@ export class SessionManager {
     try {
       await l.agent.send(text, {
         signal: l.abort.signal,
-        scope: scope && (scope.collections.length || scope.entryIds.length) ? scope : undefined,
+        scope:
+          scope && (scope.collections.length || scope.folders.length || scope.entryIds.length)
+            ? scope
+            : undefined,
         events: {
           onThinking: ({ text }) => this.emit({ kind: 'session.thinking', sessionId, text }),
           onAssistantText: ({ text, final }) =>
