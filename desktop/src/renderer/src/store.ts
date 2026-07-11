@@ -9,6 +9,7 @@ import type {
   EntryRefDTO,
   EntrySummary,
   GraphDTO,
+  MentionTreeDTO,
   QueueDigestDTO,
   ScheduledTaskDTO,
   ScheduleSavePayload,
@@ -94,6 +95,8 @@ interface PithStore {
   entries: EntrySummary[];
   entryId: string | null;
   entry: EntryDetail | null;
+  /** `@`-mention 引用选择器的目录树（engine 下发）。null = 未加载 → 不弹选择器。 */
+  mentionTree: MentionTreeDTO | null;
 
   sessions: SessionMeta[];
   activeSession: string | null;
@@ -116,6 +119,7 @@ interface PithStore {
   setNav(nav: Nav): void;
   bootstrap(): Promise<void>;
   refreshCollections(): Promise<void>;
+  refreshMentionTree(): Promise<void>;
   openCollection(id: string): Promise<void>;
   openEntry(id: string, collection?: string): Promise<void>;
   refreshSessions(): Promise<void>;
@@ -183,6 +187,7 @@ export const useStore = create<PithStore>((set, get) => {
     entries: [],
     entryId: null,
     entry: null,
+    mentionTree: null,
 
     sessions: [],
     activeSession: null,
@@ -248,6 +253,17 @@ export const useStore = create<PithStore>((set, get) => {
     async refreshCollections() {
       const collections = await bridge.request<CollectionInfo[]>({ kind: 'library.collections' });
       set({ collections });
+      // 引用选择器的目录树随库刷新（fire-and-forget，别拖慢集合加载）。
+      void get().refreshMentionTree();
+    },
+
+    async refreshMentionTree() {
+      try {
+        const mentionTree = await bridge.request<MentionTreeDTO>({ kind: 'library.mentionTree' });
+        set({ mentionTree });
+      } catch {
+        /* 非致命：拉不到树时选择器不弹，@ 仍可手打并在提交时解析 scope */
+      }
     },
 
     async openCollection(id) {
@@ -765,7 +781,14 @@ export const useStore = create<PithStore>((set, get) => {
   };
 });
 
-/** composer 文本里的 @-mention → ScopeDTO（尾随 `/` 视为集合）。 */
+/**
+ * composer 文本里的 @-mention → ScopeDTO。
+ * token 形态（由选择器产出，也兼容手打）：
+ *   - `@集合/`            → 整个集合（collections）
+ *   - `@集合/子目录/…/`   → 子文件夹前缀（folders，subpath = 首段之后的路径）
+ *   - `@条目id`（无斜杠） → 钉死条目（entryIds）
+ * 尾斜杠但首段不是已知集合 → 忽略。
+ */
 export function parseScopeFromText(
   text: string,
   collections: CollectionInfo[],
@@ -773,11 +796,19 @@ export function parseScopeFromText(
   const tokens = [...text.matchAll(/@([\p{L}\p{N}_/-]+)/gu)].map((m) => m[1]);
   if (tokens.length === 0) return undefined;
   const colSet = new Set(collections.map((c) => c.id));
-  const scope: ScopeDTO = { collections: [], entryIds: [] };
+  const scope: ScopeDTO = { collections: [], folders: [], entryIds: [] };
   for (const t of tokens) {
-    const clean = t.replace(/\/$/, '');
-    if (t.endsWith('/') || colSet.has(clean)) scope.collections.push(clean);
-    else scope.entryIds.push(clean);
+    if (t.endsWith('/')) {
+      const segs = t.replace(/\/+$/, '').split('/').filter(Boolean);
+      const [collection, ...rest] = segs;
+      if (!collection || !colSet.has(collection)) continue; // 首段非已知集合 → 忽略
+      if (rest.length === 0) scope.collections.push(collection);
+      else scope.folders.push({ collection, subpath: rest.join('/') });
+    } else {
+      scope.entryIds.push(t); // 无斜杠 → 条目候选
+    }
   }
-  return scope.collections.length || scope.entryIds.length ? scope : undefined;
+  return scope.collections.length || scope.folders.length || scope.entryIds.length
+    ? scope
+    : undefined;
 }

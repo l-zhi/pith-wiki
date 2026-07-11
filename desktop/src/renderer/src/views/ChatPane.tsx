@@ -21,6 +21,15 @@ import remarkGfm from 'remark-gfm';
 import { useTranslation } from 'react-i18next';
 import { Button, IconButton, Spinner, TokenMeter, ToolApprovalCard } from '../ds';
 import { parseScopeFromText, useStore, type ChatItem } from '../store';
+import {
+  confirmEntryValue,
+  confirmSelfValue,
+  descendValue,
+  listLevel,
+  parseMentionInput,
+  type MentionEdit,
+  type MentionLevelItem,
+} from '../mentions';
 import type { EntryRefDTO } from '../../../shared/protocol';
 
 /**
@@ -716,7 +725,8 @@ function ToolRow({ item }: { item: Extract<ChatItem, { kind: 'tool' }> }) {
 
 /* ───────── composer ───────── */
 
-const SLASH_CMDS = ['/digest', '/reset'] as const;
+/** 引用选择器的一行：合成的「全选」项（钉住当前所在文件夹）+ 目录树列举项。 */
+type PickerRow = { kind: 'all'; pathSegs: string[] } | MentionLevelItem;
 
 function Composer() {
   const { t } = useTranslation();
@@ -725,6 +735,7 @@ function Composer() {
   const resetSession = useStore((s) => s.resetSession);
   const digestSession = useStore((s) => s.digestSession);
   const collections = useStore((s) => s.collections);
+  const mentionTree = useStore((s) => s.mentionTree);
   const activeSession = useStore((s) => s.activeSession);
   const chat = useStore((s) => (activeSession ? s.chat[activeSession] : undefined));
   const boot = useStore((s) => s.boot);
@@ -732,12 +743,15 @@ function Composer() {
   const composerDraft = useStore((s) => s.composerDraft);
 
   const [text, setText] = React.useState('');
+  // textarea 光标位置（@-mention 检测锚点）。onChange/onSelect 同步。
+  const [cursor, setCursor] = React.useState(0);
   const taRef = React.useRef<HTMLTextAreaElement>(null);
 
   // Reader「在聊天中打开」的预填
   React.useEffect(() => {
     if (composerDraft !== null) {
       setText(composerDraft);
+      setCursor(composerDraft.length);
       useStore.setState({ composerDraft: null });
       taRef.current?.focus();
     }
@@ -750,6 +764,69 @@ function Composer() {
     { cmd: '/reset', desc: t('chat.slashReset') },
   ];
   const slashMatches = slashHints.filter((s) => s.cmd.startsWith(text));
+
+  /* ── @-mention 引用选择器 ── */
+  const [mentionSel, setMentionSel] = React.useState(0);
+  // Esc 关闭当前 mention 弹层；任何 onChange 复位（重新打字即再开）。
+  const [mentionClosed, setMentionClosed] = React.useState(false);
+  // 程序化改写输入后要恢复的光标（在 layout effect 里落位，避免 React 受控输入把光标弹到末尾）。
+  const pendingCursor = React.useRef<number | null>(null);
+
+  const mentionInput = React.useMemo(
+    () => (mentionTree ? parseMentionInput(text, cursor) : null),
+    [mentionTree, text, cursor],
+  );
+  const mentionItems = React.useMemo<MentionLevelItem[]>(
+    () =>
+      mentionInput && mentionTree
+        ? listLevel(mentionTree, mentionInput.pathSegs, mentionInput.partial)
+        : [],
+    [mentionInput, mentionTree],
+  );
+  // 未输入过滤词时，每层顶部插一个「全选」= 选中当前文件夹整体（默认高亮）。
+  const rows = React.useMemo<PickerRow[]>(
+    () =>
+      mentionInput && mentionInput.partial === ''
+        ? [{ kind: 'all', pathSegs: mentionInput.pathSegs }, ...mentionItems]
+        : mentionItems,
+    [mentionInput, mentionItems],
+  );
+  const showMention = !showSlash && !mentionClosed && rows.length > 0;
+  const mSel = Math.min(mentionSel, Math.max(0, rows.length - 1));
+
+  React.useLayoutEffect(() => {
+    if (pendingCursor.current !== null && taRef.current) {
+      const c = pendingCursor.current;
+      pendingCursor.current = null;
+      taRef.current.focus();
+      taRef.current.setSelectionRange(c, c);
+      setCursor(c);
+    }
+  });
+
+  const applyEdit = (edit: MentionEdit) => {
+    setText(edit.value);
+    setMentionSel(0);
+    pendingCursor.current = edit.cursor;
+  };
+  // 选中一行（Enter / Tab / 单击统一入口）：
+  //   全选 → 钉住当前所在文件夹整体；目录 → 进入下一层；条目 → 确认插入。
+  // 「锁定整个文件夹为范围」由该层的「全选」负责，所以点目录只负责下钻。
+  const activateRow = (row: PickerRow) => {
+    if (!mentionInput) return;
+    if (row.kind === 'all') applyEdit(confirmSelfValue(text, cursor, mentionInput.pathSegs));
+    else if (row.kind === 'dir')
+      applyEdit(descendValue(text, cursor, mentionInput.pathSegs, row.segment));
+    else applyEdit(confirmEntryValue(text, cursor, row.segment));
+  };
+
+  // textarea 值 / 光标变更的统一入口：同步 text + cursor，并重新开启 mention 弹层。
+  const onText = (value: string, caret: number) => {
+    setText(value);
+    setCursor(caret);
+    setMentionSel(0);
+    setMentionClosed(false);
+  };
 
   const submit = () => {
     const t = text.trim();
@@ -771,6 +848,30 @@ function Composer() {
     // 中文输入法的确认键也是 Enter：composition 进行中（isComposing / keyCode 229）
     // 绝不能提交，否则消息带着未上屏的拼音发出去、上屏文本残留在输入框里。
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    // @-mention 弹层打开时优先吃掉导航键（不提交、不换行）。
+    if (showMention) {
+      const row = rows[mSel];
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionSel(Math.min(rows.length - 1, mSel + 1));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionSel(Math.max(0, mSel - 1));
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMentionClosed(true);
+        return;
+      }
+      if ((e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) && row) {
+        e.preventDefault();
+        activateRow(row);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (!busy) submit();
@@ -826,6 +927,137 @@ function Composer() {
           </div>
         )}
 
+        {showMention && (
+          <div
+            style={{
+              position: 'absolute',
+              bottom: '100%',
+              left: 0,
+              right: 0,
+              marginBottom: 8,
+              background: 'var(--surface-raised)',
+              borderRadius: 'var(--radius-md)',
+              boxShadow: 'var(--shadow-popover), var(--ring-card)',
+              padding: 6,
+              zIndex: 5,
+              maxHeight: 280,
+              overflowY: 'auto',
+            }}
+          >
+            {/* 当前所在路径面包屑：xxx/xxx 层级，告诉用户钻到了哪一层。 */}
+            {mentionInput && mentionInput.pathSegs.length > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px 8px',
+                  marginBottom: 2,
+                  borderBottom: '1px solid var(--separator)',
+                  fontSize: 'var(--text-caption)',
+                  color: 'var(--text-tertiary)',
+                }}
+              >
+                <FolderOpen size={12} style={{ flex: 'none', color: 'var(--text-quaternary)' }} />
+                <span
+                  style={{
+                    fontWeight: 600,
+                    color: 'var(--text-secondary)',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {mentionInput.pathSegs.join('/')}/
+                </span>
+              </div>
+            )}
+            {rows.map((row, i) => {
+              const active = i === mSel;
+              const key = row.kind === 'all' ? 'all' : `${row.kind}:${row.segment}`;
+              // 主文案 + 右侧灰字（全选：范围目标；目录：条数；条目：所属集合）。
+              const label =
+                row.kind === 'all'
+                  ? t('chat.mentionAll')
+                  : row.kind === 'dir'
+                    ? `${row.segment}/`
+                    : row.label;
+              const meta =
+                row.kind === 'all'
+                  ? row.pathSegs.length === 0
+                    ? t('chat.mentionAllRoot')
+                    : `${row.pathSegs.join('/')}/`
+                  : row.kind === 'dir'
+                    ? t('chat.mentionDirCount', { count: row.count ?? 0 })
+                    : row.collection;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  // 目录 → 进入下一层；全选 / 条目 → 确认插入（与键盘一致）。
+                  onMouseDown={(e) => {
+                    e.preventDefault(); // 别让 textarea 失焦
+                    activateRow(row);
+                  }}
+                  onMouseEnter={() => setMentionSel(i)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    width: '100%',
+                    padding: '8px 10px',
+                    border: 'none',
+                    borderRadius: 'var(--radius-sm)',
+                    background: active ? 'var(--surface-sunken)' : 'transparent',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                >
+                  {row.kind === 'all' ? (
+                    <Check size={14} style={{ flex: 'none', color: 'var(--accent)' }} />
+                  ) : row.kind === 'dir' ? (
+                    <FolderOpen size={14} style={{ flex: 'none', color: 'var(--accent)' }} />
+                  ) : (
+                    <FileText size={14} style={{ flex: 'none', color: 'var(--text-tertiary)' }} />
+                  )}
+                  <span
+                    style={{
+                      fontSize: 'var(--text-subhead)',
+                      color: 'var(--text-primary)',
+                      fontWeight: row.kind === 'entry' ? 500 : 600,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      maxWidth: 260,
+                    }}
+                  >
+                    {label}
+                  </span>
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      flex: 'none',
+                      fontSize: 'var(--text-caption)',
+                      color: 'var(--text-quaternary)',
+                    }}
+                  >
+                    {meta}
+                  </span>
+                </button>
+              );
+            })}
+            <div
+              style={{
+                padding: '4px 10px 2px',
+                fontSize: 'var(--text-caption)',
+                color: 'var(--text-quaternary)',
+              }}
+            >
+              {t('chat.mentionHint')}
+            </div>
+          </div>
+        )}
+
         <div
           className="pith-card"
           style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}
@@ -840,7 +1072,9 @@ function Composer() {
                 : t('chat.composerPlaceholder')
             }
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => onText(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+            // 光标移动（点击 / 方向键 / 选区）也要更新 @-mention 锚点。
+            onSelect={(e) => setCursor((e.target as HTMLTextAreaElement).selectionStart ?? cursor)}
             onKeyDown={onKeyDown}
             disabled={boot?.needsOnboarding ?? false}
           />
