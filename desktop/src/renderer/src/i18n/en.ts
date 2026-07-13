@@ -49,7 +49,12 @@ export const en: Shape<typeof zh> = {
     library: 'Library',
     subtitle: '{{n}} entries',
     filter: 'Filter entries…',
+    filterHere: 'Filter this folder…',
     noMatch: 'No entries match.',
+    subfolders: 'Folders',
+    entriesGroup: 'Entries',
+    folderCount: '{{count}} entries',
+    emptyFolder: 'This folder is empty.',
   },
   reader: {
     read: 'Read',

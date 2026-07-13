@@ -66,6 +66,8 @@ export interface CollectionInfo {
 export interface EntrySummary {
   id: string;
   collection: string;
+  /** 集合内子目录（POSIX，无首尾斜杠）；缺省 = 落在集合根。中栏按此分层浏览。 */
+  subpath?: string;
   title: string;
   summary: string;
   tags: string[];

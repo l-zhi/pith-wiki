@@ -488,6 +488,7 @@ function relTime(iso: string): string {
 function entrySummary(e: {
   id: string;
   collection: string;
+  subpath?: string;
   title: string;
   summary: string;
   tags: string[];
@@ -497,6 +498,7 @@ function entrySummary(e: {
   return {
     id: e.id,
     collection: e.collection,
+    subpath: e.subpath,
     title: e.title,
     summary: e.summary,
     tags: e.tags,

@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  ChevronRight,
   Clipboard,
   FileText,
   Folder,
@@ -11,6 +12,8 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
+import type { EntrySummary } from '../../../shared/protocol';
+import { folderView } from '../libraryTree';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import { EntryListItem, IconButton, Input, Spinner, StatusDot } from '../ds';
@@ -92,13 +95,37 @@ function ColumnHeader({
 function EntryColumn() {
   const collection = useStore((s) => s.collection);
   const entries = useStore((s) => s.entries);
+  const path = useStore((s) => s.libraryPath);
   const entryId = useStore((s) => s.entryId);
   const openEntry = useStore((s) => s.openEntry);
+  const enterFolder = useStore((s) => s.enterFolder);
+  const goToPath = useStore((s) => s.goToPath);
   const { t } = useTranslation();
   const [q, setQ] = React.useState('');
 
-  const shown = entries.filter(
-    (e) => !q || (e.title + ' ' + e.summary + ' ' + e.tags.join(' ')).toLowerCase().includes(q.toLowerCase()),
+  const searching = q.trim() !== '';
+  // 搜索态：跨整个集合平铺过滤（忽略层级，方便全局找）。
+  const searchResults = React.useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return entries.filter((e) =>
+      (e.title + ' ' + e.summary + ' ' + e.tags.join(' ')).toLowerCase().includes(needle),
+    );
+  }, [entries, q]);
+
+  // 浏览态：当前 path 层的直接子目录（含子树计数）+ 直属条目。
+  const { folders, atLevel } = React.useMemo(() => folderView(entries, path), [entries, path]);
+
+  const renderEntry = (e: EntrySummary) => (
+    <EntryListItem
+      key={e.id}
+      icon={SOURCE_ICON[e.sourceType] ?? SOURCE_ICON.unknown}
+      title={e.title}
+      summary={e.summary}
+      tags={e.tags}
+      updated={e.updated}
+      selected={entryId === e.id}
+      onClick={() => void openEntry(e.id, e.collection)}
+    />
   );
 
   return (
@@ -108,35 +135,140 @@ function EntryColumn() {
         title={collection ?? t('entryList.library')}
         subtitle={t('entryList.subtitle', { n: entries.length })}
       />
+      {/* 面包屑：集合 › 子目录 ›…，点任一段跳回；只在钻入子目录后出现。 */}
+      {!searching && path.length > 0 && (
+        <div
+          style={{
+            flex: 'none',
+            padding: '0 16px 10px',
+            display: 'flex',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 3,
+            fontSize: 'var(--text-caption)',
+          }}
+        >
+          <Crumb label={collection ?? ''} onClick={() => goToPath(0)} />
+          {path.map((seg, i) => (
+            <React.Fragment key={i}>
+              <ChevronRight size={12} style={{ color: 'var(--text-quaternary)', flex: 'none' }} />
+              {i === path.length - 1 ? (
+                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{seg}</span>
+              ) : (
+                <Crumb label={seg} onClick={() => goToPath(i + 1)} />
+              )}
+            </React.Fragment>
+          ))}
+        </div>
+      )}
       <div style={{ flex: 'none', padding: '0 16px 12px' }}>
         <Input
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder={t('entryList.filter')}
+          placeholder={path.length > 0 ? t('entryList.filterHere') : t('entryList.filter')}
           iconLeft={<Search size={15} />}
           size="sm"
         />
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 8px 12px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        {shown.map((e) => (
-          <EntryListItem
-            key={e.id}
-            icon={SOURCE_ICON[e.sourceType] ?? SOURCE_ICON.unknown}
-            title={e.title}
-            summary={e.summary}
-            tags={e.tags}
-            updated={e.updated}
-            selected={entryId === e.id}
-            onClick={() => void openEntry(e.id, e.collection)}
-          />
-        ))}
-        {shown.length === 0 && (
-          <p style={{ padding: '24px 14px', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 'var(--text-subhead)' }}>
-            {t('entryList.noMatch')}
-          </p>
+        {searching ? (
+          <>
+            {searchResults.map(renderEntry)}
+            {searchResults.length === 0 && <EmptyNote text={t('entryList.noMatch')} />}
+          </>
+        ) : (
+          <>
+            {folders.length > 0 && <GroupLabel text={t('entryList.subfolders')} />}
+            {folders.map((f) => (
+              <FolderRow
+                key={f.name}
+                name={f.name}
+                countLabel={t('entryList.folderCount', { count: f.count })}
+                onClick={() => enterFolder(f.name)}
+              />
+            ))}
+            {folders.length > 0 && atLevel.length > 0 && <GroupLabel text={t('entryList.entriesGroup')} />}
+            {atLevel.map(renderEntry)}
+            {folders.length === 0 && atLevel.length === 0 && (
+              <EmptyNote text={t('entryList.emptyFolder')} />
+            )}
+          </>
         )}
       </div>
     </ColumnShell>
+  );
+}
+
+/** 面包屑里可点的一段。 */
+function Crumb({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <span
+      role="button"
+      onClick={onClick}
+      style={{ color: 'var(--text-secondary)', cursor: 'pointer' }}
+      onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
+      onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
+    >
+      {label}
+    </span>
+  );
+}
+
+function GroupLabel({ text }: { text: string }) {
+  return (
+    <div style={{ padding: '8px 10px 2px', fontSize: 'var(--text-caption)', color: 'var(--text-quaternary)' }}>
+      {text}
+    </div>
+  );
+}
+
+function EmptyNote({ text }: { text: string }) {
+  return (
+    <p style={{ padding: '24px 14px', textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 'var(--text-subhead)' }}>
+      {text}
+    </p>
+  );
+}
+
+/** 中栏子目录行：文件夹图标 + 名字 + 条数 + ›，点进下钻。 */
+function FolderRow({
+  name,
+  countLabel,
+  onClick,
+}: {
+  name: string;
+  countLabel: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        width: '100%',
+        padding: '9px 10px',
+        border: 'none',
+        borderRadius: 'var(--radius-md)',
+        background: 'transparent',
+        cursor: 'pointer',
+        textAlign: 'left',
+        color: 'var(--text-primary)',
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-sunken)')}
+      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+    >
+      <Folder size={16} style={{ flex: 'none', color: 'var(--status-watch)' }} />
+      <span style={{ fontSize: 'var(--text-subhead)', fontWeight: 600, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {name}
+      </span>
+      <span style={{ flex: 'none', fontSize: 'var(--text-caption)', color: 'var(--text-quaternary)' }}>
+        {countLabel}
+      </span>
+      <ChevronRight size={15} style={{ flex: 'none', color: 'var(--text-quaternary)' }} />
+    </button>
   );
 }
 
