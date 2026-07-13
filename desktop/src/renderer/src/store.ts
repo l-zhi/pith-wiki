@@ -93,6 +93,8 @@ interface PithStore {
   collections: CollectionInfo[];
   collection: string | null;
   entries: EntrySummary[];
+  /** 中栏文件夹浏览器：当前集合内的子目录路径（段数组），[] = 集合根。 */
+  libraryPath: string[];
   entryId: string | null;
   entry: EntryDetail | null;
   /** `@`-mention 引用选择器的目录树（engine 下发）。null = 未加载 → 不弹选择器。 */
@@ -121,6 +123,10 @@ interface PithStore {
   refreshCollections(): Promise<void>;
   refreshMentionTree(): Promise<void>;
   openCollection(id: string): Promise<void>;
+  /** 进入当前集合内的一个子目录（中栏文件夹浏览器）。 */
+  enterFolder(seg: string): void;
+  /** 跳到面包屑的某一层（depth = 保留的段数，0 = 集合根）。 */
+  goToPath(depth: number): void;
   openEntry(id: string, collection?: string): Promise<void>;
   refreshSessions(): Promise<void>;
   newSession(): Promise<void>;
@@ -185,6 +191,7 @@ export const useStore = create<PithStore>((set, get) => {
     collections: [],
     collection: null,
     entries: [],
+    libraryPath: [],
     entryId: null,
     entry: null,
     mentionTree: null,
@@ -267,7 +274,7 @@ export const useStore = create<PithStore>((set, get) => {
     },
 
     async openCollection(id) {
-      set({ collection: id, nav: 'library' });
+      set({ collection: id, nav: 'library', libraryPath: [] });
       const entries = await bridge.request<EntrySummary[]>({
         kind: 'library.entries',
         collection: id,
@@ -275,6 +282,14 @@ export const useStore = create<PithStore>((set, get) => {
       set({ entries });
       if (entries.length > 0) await get().openEntry(entries[0].id, id);
       else set({ entry: null, entryId: null });
+    },
+
+    enterFolder(seg) {
+      set((s) => ({ libraryPath: [...s.libraryPath, seg] }));
+    },
+
+    goToPath(depth) {
+      set((s) => ({ libraryPath: s.libraryPath.slice(0, depth) }));
     },
 
     async openEntry(id, collection) {

@@ -49,7 +49,12 @@ export const zh = {
     library: '知识库',
     subtitle: '{{n}} 条条目',
     filter: '筛选条目…',
+    filterHere: '筛选此目录…',
     noMatch: '没有匹配的条目。',
+    subfolders: '子目录',
+    entriesGroup: '条目',
+    folderCount: '{{count}} 条',
+    emptyFolder: '此目录暂无内容。',
   },
   reader: {
     read: '阅读',
