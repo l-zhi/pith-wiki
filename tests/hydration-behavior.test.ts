@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import OpenAI from 'openai';
-import { HydrationService } from '../src/wiki/hydration.js';
+import { HydrationService, sanitizeHydrationInput } from '../src/wiki/hydration.js';
 import { LibraryService } from '../src/wiki/library.js';
 import type { Entry } from '../src/wiki/types.js';
 
@@ -424,5 +424,57 @@ describe('hydrate — JSON 自修复轮（repairJsonViaModel）', () => {
       }),
     ).rejects.toMatchObject({ name: 'HydrationJsonError', rawResponse: brokenOutput });
     expect(calls).toHaveLength(2); // 只修一次，不无限重试
+  });
+});
+
+describe('sanitizeHydrationInput — 剥图 + 截断', () => {
+  const dataUri = 'data:image/png;base64,' + 'A'.repeat(400);
+
+  it('剥掉 markdown data:URI 图片，换成 [image]', () => {
+    const { text, strippedImages } = sanitizeHydrationInput(`前\n![截图](${dataUri})\n后`);
+    expect(text).toBe('前\n[image]\n后');
+    expect(strippedImages).toBe(true);
+    expect(text).not.toContain('base64');
+  });
+
+  it('剥掉 HTML <img src="data:…"> 与裸露的超长 base64', () => {
+    expect(sanitizeHydrationInput(`<img alt="x" src="${dataUri}">`).text).toBe('[image]');
+    expect(sanitizeHydrationInput(`噪声 ${dataUri} 噪声`).text).toBe('噪声 [image] 噪声');
+  });
+
+  it('保留普通 http 图片链接（不是 token 炸弹）', () => {
+    const md = '![logo](https://ex.com/a.png)';
+    expect(sanitizeHydrationInput(md).text).toBe(md);
+  });
+
+  it('超过上限则截断并加省略标注', () => {
+    const { text, truncated } = sanitizeHydrationInput('x'.repeat(100), 40);
+    expect(truncated).toBe(true);
+    expect(text.startsWith('x'.repeat(40))).toBe(true);
+    expect(text).toContain('truncated: 60 chars omitted');
+  });
+
+  it('未超限且无图片 → 原样返回', () => {
+    const { text, truncated, strippedImages } = sanitizeHydrationInput('干净短文本');
+    expect(text).toBe('干净短文本');
+    expect(truncated).toBe(false);
+    expect(strippedImages).toBe(false);
+  });
+});
+
+describe('hydrate — 输入清洗贯穿到请求', () => {
+  it('base64 图片被剥、超长被截断后才进 user message', async () => {
+    const { client, calls } = makeMockClient([validOutput]);
+    const hydrator = new HydrationService(client, 'test-model', lib, true, 500);
+    const bomb = 'data:image/png;base64,' + 'A'.repeat(5000);
+    await hydrator.hydrate({
+      rawContent: `开头\n![图](${bomb})\n` + '正文'.repeat(1000),
+      source: { type: 'inline' },
+      collectionId: 'tech',
+    });
+    const msg = calls[0].userMessage;
+    expect(msg).not.toContain('base64'); // 图片已剥
+    expect(msg).toContain('[image]');
+    expect(msg).toContain('truncated'); // 超 500 字符已截断
   });
 });
