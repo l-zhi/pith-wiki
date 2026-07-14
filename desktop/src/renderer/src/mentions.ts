@@ -60,30 +60,37 @@ function nodeAt(tree: MentionTreeDTO, pathSegs: string[]): MentionNodeDTO | null
   return node;
 }
 
-/** 列出某层（pathSegs）的目录 + 条目，按 partial 大小写无关子串过滤，上限 limit。 */
+/**
+ * 列出某层（pathSegs）的目录 + 条目，按 partial 大小写无关子串过滤。
+ *
+ * 目录**永不截断**——弹层可滚动，全部文件夹都必须可达（否则排在末尾的集合，
+ * 如中文 collation 下的 `AI协作内容` / `Clippings`，会被限流吞掉，用户根本看不到）。
+ * 只有条目按 entryLimit 限流（单层可能上千条），不够就靠打字过滤。
+ */
 export function listLevel(
   tree: MentionTreeDTO,
   pathSegs: string[],
   partial = '',
-  limit = 8,
+  entryLimit = 50,
 ): MentionLevelItem[] {
   const node = nodeAt(tree, pathSegs);
   if (!node) return [];
+  const needle = partial.toLowerCase();
+  const match = (it: MentionLevelItem) =>
+    !needle || `${it.label} ${it.segment} ${it.collection ?? ''}`.toLowerCase().includes(needle);
+
   const dirs: MentionLevelItem[] = Object.entries(node.dirs)
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([seg, child]) => ({ kind: 'dir', label: seg, segment: seg, count: child.count }));
+    .map(([seg, child]) => ({ kind: 'dir' as const, label: seg, segment: seg, count: child.count }))
+    .filter(match);
   const entries: MentionLevelItem[] = node.entries
     .slice()
     .sort((a, b) => a.id.localeCompare(b.id))
-    .map((e) => ({ kind: 'entry', label: e.title, segment: e.id, collection: e.collection }));
-  const all = [...dirs, ...entries];
-  const needle = partial.toLowerCase();
-  const filtered = needle
-    ? all.filter((it) =>
-        `${it.label} ${it.segment} ${it.collection ?? ''}`.toLowerCase().includes(needle),
-      )
-    : all;
-  return filtered.slice(0, limit);
+    .map((e) => ({ kind: 'entry' as const, label: e.title, segment: e.id, collection: e.collection }))
+    .filter(match);
+
+  // 目录全留；条目限流。
+  return [...dirs, ...entries.slice(0, entryLimit)];
 }
 
 // ── 输入框改写（光标感知）──────────────────────────────────────────────────

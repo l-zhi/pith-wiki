@@ -793,6 +793,11 @@ function Composer() {
   );
   const showMention = !showSlash && !mentionClosed && rows.length > 0;
   const mSel = Math.min(mentionSel, Math.max(0, rows.length - 1));
+  // 键盘 ↑↓ 导航时把高亮行滚进可视区（列表可能长于弹层高度）。
+  const activeRowRef = React.useRef<HTMLButtonElement>(null);
+  React.useEffect(() => {
+    activeRowRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [mSel]);
 
   React.useLayoutEffect(() => {
     if (pendingCursor.current !== null && taRef.current) {
@@ -994,6 +999,7 @@ function Composer() {
                 <button
                   key={key}
                   type="button"
+                  ref={active ? activeRowRef : undefined}
                   // 目录 → 进入下一层；全选 / 条目 → 确认插入（与键盘一致）。
                   onMouseDown={(e) => {
                     e.preventDefault(); // 别让 textarea 失焦
