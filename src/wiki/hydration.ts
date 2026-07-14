@@ -28,6 +28,14 @@ const LONG_DOC_THRESHOLD_CHARS = 3000;
  */
 const SCORING_PROBE_CHARS = 4000;
 
+/**
+ * hydration 输入字符上限。超过则截断——避免把巨型对话记录 / 内嵌 base64 图片的
+ * markdown 原样塞给模型，触发 provider 的 "max message tokens" 400。
+ * 60k 字符 ≈ 15-20k token，给 system prompt + 输出留足预算（脱水本就要求 ≤ 30%
+ * 压缩，信息在前段已足够）。可经构造参数覆盖。
+ */
+const MAX_INPUT_CHARS = 60_000;
+
 // ── 共享提示词片段 ──────────────────────────────────────────────────────────
 // SYSTEM_PROMPT 与 CONVERSATION_SYSTEM_PROMPT 历史上把下面这些规则逐字复制了两份，
 // 改一处极易漏另一处。这里抽成可组合片段，两个 prompt 由 builder 拼装。
@@ -348,6 +356,34 @@ export function extractJson(text: string): unknown {
 }
 
 /**
+ * hydration 前清洗原始输入，防两类"整批倒下"的失败：
+ *   1. 剥掉图片的 data:URI —— base64 图片对文本脱水零价值，却是 token 炸弹，
+ *      直接触发 provider 的 "Total tokens of image and text exceed max" 400。
+ *      覆盖 markdown `![alt](data:…)`、HTML `<img src="data:…">`、以及裸露的超长
+ *      base64 串，统一换成 `[image]` 占位。
+ *   2. 截断到 maxChars（保留头段，尾部加省略标注），防止超模型上下文。
+ * 先剥图再截断——否则预算被 base64 占满、真正的正文反被截掉。
+ */
+export function sanitizeHydrationInput(
+  raw: string,
+  maxChars = MAX_INPUT_CHARS,
+): { text: string; truncated: boolean; strippedImages: boolean } {
+  const before = raw.length;
+  let text = raw
+    .replace(/!\[[^\]]*\]\(\s*data:[^)]*\)/gi, '[image]')
+    .replace(/<img\b[^>]*\bsrc\s*=\s*["']data:[^"']*["'][^>]*>/gi, '[image]')
+    .replace(/data:[a-z0-9.+/-]+;base64,[A-Za-z0-9+/=]{200,}/gi, '[image]');
+  const strippedImages = text.length !== before;
+  let truncated = false;
+  if (text.length > maxChars) {
+    const omitted = text.length - maxChars;
+    text = text.slice(0, maxChars) + `\n\n[...truncated: ${omitted} chars omitted...]`;
+    truncated = true;
+  }
+  return { text, truncated, strippedImages };
+}
+
+/**
  * Plan pass 的输出 schema。容错：outline 至少 1 节，target_chars 兜底到 600。
  * 验证失败 → runPlan 返 null，写正文阶段无 plan 注入（等价于单次模式）。
  */
@@ -370,6 +406,8 @@ export class HydrationService {
     private readonly model: string,
     private readonly library: LibraryService,
     private readonly supportsJsonMode: boolean = true,
+    /** 输入字符上限（剥图后仍超则截断）。默认 MAX_INPUT_CHARS。 */
+    private readonly maxInputChars: number = MAX_INPUT_CHARS,
   ) {}
 
   /**
@@ -417,6 +455,13 @@ export class HydrationService {
   }
 
   async hydrate(input: HydrateInput): Promise<Entry> {
+    // ── 输入清洗（剥 data:URI 图片 + 超长截断）────────────────────────────────
+    // 挡住两类"整批倒下"：内嵌 base64 图片 / 巨型对话记录触发 provider 400。
+    // 清洗后的文本贯穿 scoring / plan / write，保持一致。
+    const { text: rawContent } = sanitizeHydrationInput(input.rawContent, this.maxInputChars);
+    const src: HydrateInput =
+      rawContent === input.rawContent ? input : { ...input, rawContent };
+
     // ── 候选链接来源（与旧版一致）───────────────────────────────────────────
     //   1. 显式注入的 linkCandidates（批量场景，由 runner / batch 一次性 snapshot）
     //   2. autoLink=true 时 library.list 实时取（单文件场景）
@@ -433,7 +478,7 @@ export class HydrationService {
     // pool ≤ TOP_N 时不筛（省一次 tokenize），> TOP_N 才走 scoring。
     const filteredCandidates =
       candidatePool && candidatePool.length > TOP_N_LINK_CANDIDATES
-        ? topNByQuery(this.scoringProbe(input), candidatePool, TOP_N_LINK_CANDIDATES)
+        ? topNByQuery(this.scoringProbe(src), candidatePool, TOP_N_LINK_CANDIDATES)
         : candidatePool;
     const candidates = filteredCandidates
       ? filteredCandidates.map((e) => `- ${e.id}: ${e.title} — ${e.summary}`).join('\n')
@@ -443,17 +488,17 @@ export class HydrationService {
     // conversation 模式靠 Q/A 轮次天然分段，再 plan 就多余且会扭曲问题视角，跳过。
     // plan 失败 → 静默回退到无 plan 模式；绝不让 plan 阶段把 ingest 拖死。
     let plan: Plan | null = null;
-    if (input.mode !== 'conversation' && input.rawContent.length > LONG_DOC_THRESHOLD_CHARS) {
-      plan = await this.runPlan(input);
+    if (src.mode !== 'conversation' && rawContent.length > LONG_DOC_THRESHOLD_CHARS) {
+      plan = await this.runPlan(src);
     }
 
     // ── write pass ───────────────────────────────────────────────────────
     const filenameLine = input.filenameHint ? `Filename: ${input.filenameHint}\n\n` : '';
     const planBlock = plan ? this.formatPlanBlock(plan) : '';
     const linksBlock = candidates ? `Existing entries you may link to:\n${candidates}\n\n` : '';
-    const userMessage = `${filenameLine}${planBlock}${linksBlock}Raw input:\n---\n${input.rawContent}\n---`;
+    const userMessage = `${filenameLine}${planBlock}${linksBlock}Raw input:\n---\n${rawContent}\n---`;
 
-    const systemPrompt = systemPromptFor(input);
+    const systemPrompt = systemPromptFor(src);
     const completion = await this.client.chat.completions.create({
       model: this.model,
       ...this.jsonModeArg,
@@ -518,9 +563,7 @@ export class HydrationService {
     }
 
     const compressionRatio =
-      input.rawContent.length > 0
-        ? Math.min(1, out.content.length / input.rawContent.length)
-        : undefined;
+      rawContent.length > 0 ? Math.min(1, out.content.length / rawContent.length) : undefined;
 
     return {
       id: finalId,
