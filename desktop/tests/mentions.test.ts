@@ -81,6 +81,23 @@ describe('listLevel（按目录层列举 + 过滤）', () => {
     expect(listLevel(tree, ['技术相关'], 'config').map((i) => i.segment)).toEqual(['ts-config']);
     expect(listLevel(tree, [], '生活').map((i) => i.segment)).toEqual(['生活']);
   });
+
+  it('目录永不被 entryLimit 截断（全部文件夹都可达）；只有条目限流', () => {
+    // 根有 20 个集合目录 + 100 条直属条目；entryLimit=5。
+    const dirs: Record<string, { dirs: Record<string, never>; entries: never[]; count: number }> = {};
+    for (let i = 0; i < 20; i++) dirs[`col-${String(i).padStart(2, '0')}`] = { dirs: {}, entries: [], count: 1 };
+    const rootEntries = Array.from({ length: 100 }, (_, i) => ({
+      id: `e-${String(i).padStart(3, '0')}`,
+      title: `t${i}`,
+      collection: 'root',
+    }));
+    const big: MentionTreeDTO = { root: { dirs, entries: rootEntries, count: 120 } };
+    const items = listLevel(big, [], '', 5);
+    const gotDirs = items.filter((i) => i.kind === 'dir');
+    const gotEntries = items.filter((i) => i.kind === 'entry');
+    expect(gotDirs).toHaveLength(20); // 20 个目录一个不少
+    expect(gotEntries).toHaveLength(5); // 条目被 entryLimit 截到 5
+  });
 });
 
 describe('改写函数（返回 { value, cursor }）', () => {
