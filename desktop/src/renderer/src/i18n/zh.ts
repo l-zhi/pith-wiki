@@ -199,6 +199,10 @@ export const zh = {
     clear: '清除',
     saved: '已保存',
     empty: '没有可安装的内置技能。',
+    test: '测试连接',
+    testing: '测试中…',
+    testPass: '可用',
+    testFail: '不可用',
   },
   schedule: {
     title: '定时任务',

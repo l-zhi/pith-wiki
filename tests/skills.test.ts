@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildSkillRegistry } from '../src/skills/index.js';
+import { buildSkillRegistry, loadSkill } from '../src/skills/index.js';
 import { makeSkillTool } from '../src/tools/skill.js';
 import type { ToolContext } from '../src/tools/index.js';
 
@@ -142,5 +142,47 @@ describe('skill tool', () => {
     const reg = await buildSkillRegistry({ skillDirs: [root] });
     const tool = makeSkillTool(reg);
     expect(tool.description).toContain('alpha: the alpha skill');
+  });
+});
+
+// ---- 自测探针 test 字段 ----
+
+describe('loadSkill — 自测探针 test', () => {
+  it('解析 command 探针', () => {
+    const dir = mkSkill(
+      tmp,
+      'lark-x',
+      '---\nname: lark-x\ndescription: d\ncommands: [lark-cli]\ntest:\n  kind: command\n  command: lark-cli\n  args: [auth, status]\n---\nbody\n',
+    );
+    expect(loadSkill(dir).test).toEqual({
+      kind: 'command',
+      command: 'lark-cli',
+      args: ['auth', 'status'],
+    });
+  });
+
+  it('解析 http 探针', () => {
+    const dir = mkSkill(
+      tmp,
+      'wr-x',
+      '---\nname: wr-x\ndescription: d\ntest:\n  kind: http\n  url: https://i.weread.qq.com/api/agent/gateway\n  method: POST\n---\nbody\n',
+    );
+    expect(loadSkill(dir).test).toMatchObject({
+      kind: 'http',
+      url: 'https://i.weread.qq.com/api/agent/gateway',
+      method: 'POST',
+    });
+  });
+
+  it('无 test → undefined', () => {
+    const dir = mkSkill(tmp, 'plain', skillMd('plain', 'd', 'body'));
+    expect(loadSkill(dir).test).toBeUndefined();
+  });
+
+  it('bundled lark / weread 都声明了探针', () => {
+    const lark = loadSkill(path.join(process.cwd(), 'bundled-skills', 'lark'));
+    const weread = loadSkill(path.join(process.cwd(), 'bundled-skills', 'weread'));
+    expect(lark.test).toMatchObject({ kind: 'command', command: 'lark-cli' });
+    expect(weread.test).toMatchObject({ kind: 'http' });
   });
 });

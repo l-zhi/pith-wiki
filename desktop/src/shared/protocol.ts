@@ -252,10 +252,19 @@ export interface SkillCardDTO {
   requiredEnv: SkillEnvDTO[];
   /** 该 skill 声明的 requires（依赖 CLI）及在 PATH 上的检测状态；非空时 UI 显示依赖提示 */
   requires: SkillReqDTO[];
+  /** skill 是否声明了自测探针（frontmatter `test`）；true 时 UI 显示「测试」按钮 */
+  testable: boolean;
 }
 
 export interface SkillsDTO {
   skills: SkillCardDTO[];
+}
+
+/** skill 自测结果（skills.test 的返回）。 */
+export interface SkillTestResultDTO {
+  ok: boolean;
+  /** 通过时的简短输出 / 失败时的原因，UI 直接展示。 */
+  detail?: string;
 }
 
 /* ───── 定时任务（Schedule 视图） ───── */
@@ -351,6 +360,7 @@ export type EngineRequest =
   | { kind: 'skills.list' }
   | { kind: 'skills.install'; name: string }
   | { kind: 'skills.remove'; name: string }
+  | { kind: 'skills.test'; name: string } // 跑 skill 声明的自测探针 → SkillTestResultDTO
   | { kind: 'skills.setEnv'; key: string; value: string } // value 空串 = 清除
   | { kind: 'schedule.list' }
   | { kind: 'schedule.create'; payload: ScheduleSavePayload }
