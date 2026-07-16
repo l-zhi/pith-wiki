@@ -27,6 +27,7 @@ import { wikiGrepTool } from '../src/tools/wiki_grep.js';
 import { wikiGetTool } from '../src/tools/wiki_get.js';
 import { wikiListTool } from '../src/tools/wiki_list.js';
 import { wikiReadSourceTool } from '../src/tools/wiki_read_source.js';
+import { wereadGatewayTool } from '../src/tools/weread_gateway.js';
 
 const RETRIEVAL_TOOLS: AnyToolDef[] = [
   wikiQueryTool,
@@ -34,6 +35,8 @@ const RETRIEVAL_TOOLS: AnyToolDef[] = [
   wikiGetTool,
   wikiListTool,
   wikiReadSourceTool,
+  // 微信读书网关：走 MCP 工具绕开 claude-code 的 Bash 沙箱（simple_expansion + 审批）。
+  wereadGatewayTool,
 ];
 
 async function main(): Promise<void> {
