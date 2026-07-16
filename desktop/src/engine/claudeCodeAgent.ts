@@ -15,6 +15,17 @@ import type { ScopeDTO } from '../shared/protocol.js';
  * exportHistory/restoreHistory 仍保留对话本体供 UI 回放，但 CC 侧 session 续不上
  * （v1 限制：重开历史会话会丢 CC 端上下文，新会话不受影响）。
  */
+/**
+ * claude-code provider 的默认 `--allowedTools`（逗号分隔）。除 pith 自家 MCP 工具外，
+ * 默认放行两类外部技能，好让无人值守的定时任务也能核验飞书 / 微信读书当日动态：
+ *   - `Bash(lark-cli:*)` —— 飞书 lark-* 技能全走 lark-cli（用用户已登录的飞书凭据）。
+ *   - `Bash(curl:*)`     —— 微信读书技能用 curl POST i.weread.qq.com 网关（读 WEREAD_API_KEY）。
+ * 安全取舍：等于允许无监督执行 lark-cli 与 curl；curl 无法按 URL 收窄，实际等于放开出站
+ * HTTP。这是为「飞书/weread 默认可用」接受的代价。要收紧就传 opts.allowedTools 覆盖。
+ * 前提：微信读书还需在设置里配好 WEREAD_API_KEY（否则 curl 拿不到 Bearer）。
+ */
+export const DEFAULT_ALLOWED_TOOLS = 'mcp__pith__*,Bash(lark-cli:*),Bash(curl:*)';
+
 export interface ClaudeCodeAgentOptions {
   /** claude 可执行文件（绝对路径或 PATH 中的名字）。 */
   binary: string;
@@ -26,7 +37,7 @@ export interface ClaudeCodeAgentOptions {
   mcpConfigPath: string;
   /** spawn 环境（含 CLAUDE_CODE_OAUTH_TOKEN，且应剔除 ANTHROPIC_API_KEY）。 */
   env: NodeJS.ProcessEnv;
-  /** 允许的工具白名单，默认只放行 pith 的 MCP 工具。 */
+  /** 允许的工具白名单（逗号分隔）；不传用 DEFAULT_ALLOWED_TOOLS（pith MCP + 飞书/weread）。 */
   allowedTools?: string;
   /**
    * spawn 的工作目录。也是 acceptEdits 的写入沙箱边界（只能写该目录内）——
@@ -237,7 +248,7 @@ export class ClaudeCodeAgent implements AgentLike {
       '--mcp-config',
       this.opts.mcpConfigPath,
       '--allowedTools',
-      this.opts.allowedTools ?? 'mcp__pith__*',
+      this.opts.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
       // 默认放行写文件，免去每次写 wiki output 都要授权。acceptEdits 只自动
       // 批准 Edit/Write，且实测把写入沙箱限定在进程 cwd（= pith home）内——
       // 写得了知识库目录，写不出 pith home（实测 Desktop 等外部路径仍被拒）。

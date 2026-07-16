@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest';
-import { parseClaudeStream, type StreamEvents } from '../src/engine/claudeCodeAgent.js';
+import {
+  parseClaudeStream,
+  DEFAULT_ALLOWED_TOOLS,
+  type StreamEvents,
+} from '../src/engine/claudeCodeAgent.js';
+
+describe('DEFAULT_ALLOWED_TOOLS', () => {
+  it('默认放行 pith MCP + 飞书(lark-cli) + 微信读书(curl)', () => {
+    const tools = DEFAULT_ALLOWED_TOOLS.split(',');
+    expect(tools).toContain('mcp__pith__*');
+    expect(tools).toContain('Bash(lark-cli:*)'); // 飞书
+    expect(tools).toContain('Bash(curl:*)'); // 微信读书网关
+  });
+});
 
 /** 把字符串行数组变成 async iterable，模拟 claude stdout 的逐行输出。 */
 async function* lines(arr: string[]): AsyncIterable<string> {
