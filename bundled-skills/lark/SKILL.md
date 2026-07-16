@@ -6,6 +6,10 @@ commands:
 requires:
   - bin: lark-cli
     install: npx @larksuite/cli@latest install
+test:
+  kind: command
+  command: lark-cli
+  args: [auth, status]
 ---
 
 # 飞书（lark-cli）

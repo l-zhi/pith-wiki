@@ -4,6 +4,11 @@ description: 微信读书助手 — 搜索书籍、查看书架、笔记划线�
 http_allow:
   - host: i.weread.qq.com
     auth_env: WEREAD_API_KEY
+test:
+  kind: http
+  url: https://i.weread.qq.com/api/agent/gateway
+  method: POST
+  body: '{"api_name":"/_list","skill_version":"1.0.3"}'
 ---
 
 # 微信读书助手

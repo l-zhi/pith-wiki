@@ -10,7 +10,9 @@ export {
   type SkillFrontmatter,
   type SkillRequirement,
   type HttpAllowRule,
+  type SkillProbe,
   SkillFrontmatterSchema,
+  SkillProbeSchema,
   SKILL_NAME_RE,
   COMMAND_BIN_RE,
   HTTP_HOST_RE,
@@ -81,5 +83,6 @@ export function loadSkill(skillDir: string): Skill {
     commands: fm.commands,
     requires: fm.requires,
     httpAllow: fm.http_allow,
+    test: fm.test,
   };
 }

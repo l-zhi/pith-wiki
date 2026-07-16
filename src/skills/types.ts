@@ -27,6 +27,29 @@ export const COMMAND_BIN_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 /** http_allow 里的 host:裸主机名(可含端口),不含 scheme / 路径 / 通配。 */
 export const HTTP_HOST_RE = /^[A-Za-z0-9.-]+(:\d+)?$/;
 
+/**
+ * skill 自测探针:一条只读的"可用性"检查,由 skill 自己在 frontmatter 声明,
+ * 桌面「测试」按钮据此就地验证该 skill 是否真的能用(装了没 / 认证了没 / key 对不对)。
+ *   - command:跑一条 skill 自己 commands 白名单内的只读命令,exit 0 = 通过
+ *             (如 lark 的 `lark-cli auth status`)。
+ *   - http   :打一次 skill 自己 http_allow 内的请求,响应 2xx = 通过
+ *             (如 weread 网关 `/_list` ping,顺带验证 auth_env 密钥有效)。
+ */
+export const SkillProbeSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('command'),
+    command: z.string().regex(COMMAND_BIN_RE, 'probe command must be a bare binary name'),
+    args: z.array(z.string()).default([]),
+  }),
+  z.object({
+    kind: z.literal('http'),
+    url: z.string().url('probe url must be a valid https URL'),
+    method: z.enum(['GET', 'POST']).default('GET'),
+    body: z.string().optional(),
+  }),
+]);
+export type SkillProbe = z.infer<typeof SkillProbeSchema>;
+
 /** SKILL.md frontmatter 校验:name / description 必填,commands / requires 可选。 */
 export const SkillFrontmatterSchema = z.object({
   name: z.string().regex(SKILL_NAME_RE, 'skill name must be slug-like (letters/digits/-/_/.)'),
@@ -68,6 +91,8 @@ export const SkillFrontmatterSchema = z.object({
       }),
     )
     .default([]),
+  /** 可选的自测探针,桌面「测试」按钮用(见 SkillProbeSchema)。 */
+  test: SkillProbeSchema.optional(),
 });
 
 export type SkillFrontmatter = z.infer<typeof SkillFrontmatterSchema>;
@@ -97,4 +122,6 @@ export interface Skill {
   requires: SkillRequirement[];
   /** 该 skill 声明的 HTTP host 白名单 + 鉴权(可能为空)。 */
   httpAllow: HttpAllowRule[];
+  /** 可选的自测探针(桌面「测试」按钮)。 */
+  test?: SkillProbe;
 }

@@ -194,6 +194,10 @@ export const en: Shape<typeof zh> = {
     clear: 'Clear',
     saved: 'Saved',
     empty: 'No bundled skills available to install.',
+    test: 'Test',
+    testing: 'Testing…',
+    testPass: 'Works',
+    testFail: 'Failed',
   },
   schedule: {
     title: 'Scheduled tasks',

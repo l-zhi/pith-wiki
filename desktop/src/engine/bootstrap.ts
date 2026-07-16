@@ -75,6 +75,7 @@ import {
   type SkillEnvDTO,
   type SkillReqDTO,
   type SkillsDTO,
+  type SkillTestResultDTO,
   type Transport,
 } from '../shared/protocol.js';
 import { SessionStore } from './sessionStore.js';
@@ -859,6 +860,8 @@ async function handle(req: EngineRequest): Promise<unknown> {
       await rebuildServices();
       return { ok: true };
     }
+    case 'skills.test':
+      return runSkillProbe(req.name);
     case 'schedule.list': {
       const s = requireSvc();
       return s.scheduleService.list().map((t) => scheduleTaskToDTO(s.scheduleService, t));
@@ -1289,9 +1292,55 @@ function skillsList(): SkillsDTO {
       installed: isInstalled,
       requiredEnv: sk ? skillEnvStatus(sk) : [],
       requires: sk ? skillReqStatus(sk) : [],
+      testable: !!sk?.test,
     };
   });
   return { skills };
+}
+
+/**
+ * 跑一个已安装 skill 声明的自测探针（frontmatter `test`），返回通过/失败 + 简短原因。
+ * 复用引擎已有的 run_command / http_request 工具：command 探针就地放行（探针命令本就
+ * 在该 skill 的 commands 白名单里）；http 探针经 http_allow host 白名单 + 注入 auth_env。
+ */
+async function runSkillProbe(name: string): Promise<SkillTestResultDTO> {
+  const s = requireSvc();
+  const skill = s.skillRegistry.get(name);
+  if (!skill) return { ok: false, detail: `skill "${name}" 未安装` };
+  const probe = skill.test;
+  if (!probe) return { ok: false, detail: '该 skill 未声明自测探针' };
+
+  const ctx = buildContext(s.config, s.client, async () => 'no', s.library, {
+    converterRegistry: s.converters.registry,
+    converterCache: s.converters.cache,
+    skillRegistry: s.skillRegistry,
+    // 自测：探针命令是 skill 自己 commands 白名单里的只读命令，就地放行（无交互审批）。
+    requestCommandApproval: async () => 'always',
+  });
+
+  try {
+    if (probe.kind === 'command') {
+      const r = (await runCommandTool.handler({ command: probe.command, args: probe.args }, ctx)) as {
+        ok: boolean;
+        exitCode?: number;
+        output?: string;
+        error?: string;
+      };
+      if (r.ok) return { ok: true, detail: (r.output ?? '').trim().slice(0, 400) || 'exit 0' };
+      return {
+        ok: false,
+        detail: r.error ?? ((r.output ?? '').trim().slice(0, 400) || `exit ${r.exitCode ?? '?'}`),
+      };
+    }
+    const r = (await httpRequestTool.handler(
+      { url: probe.url, method: probe.method, body: probe.body },
+      ctx,
+    )) as { ok: boolean; status?: number; body?: string; error?: string };
+    if (r.ok) return { ok: true, detail: `HTTP ${r.status} · ${(r.body ?? '').trim().slice(0, 300)}` };
+    return { ok: false, detail: r.error ?? `HTTP ${r.status ?? '?'}` };
+  } catch (err) {
+    return { ok: false, detail: (err as Error).message };
+  }
 }
 
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;

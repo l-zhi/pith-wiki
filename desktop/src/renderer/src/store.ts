@@ -20,6 +20,7 @@ import type {
   SoulDTO,
   SkillCardDTO,
   SkillsDTO,
+  SkillTestResultDTO,
 } from '../../shared/protocol';
 import { bridge } from './bridge';
 import i18n, { resolveLang, storedLangPref, type LangPref } from './i18n';
@@ -150,6 +151,8 @@ interface PithStore {
   loadSkills(): Promise<void>;
   installSkill(name: string): Promise<void>;
   removeSkill(name: string): Promise<void>;
+  /** 跑 skill 的自测探针，结果直接返给调用组件（不入全局 state）。 */
+  testSkill(name: string): Promise<SkillTestResultDTO>;
   setSkillEnv(key: string, value: string): Promise<void>;
   loadSchedule(): Promise<void>;
   createSchedule(payload: ScheduleSavePayload): Promise<void>;
@@ -618,6 +621,11 @@ export const useStore = create<PithStore>((set, get) => {
       } finally {
         set({ skillsBusy: false });
       }
+    },
+
+    async testSkill(name) {
+      // 跑 skill 声明的自测探针；结果由卡片本地展示，不入全局 state。
+      return bridge.request<SkillTestResultDTO>({ kind: 'skills.test', name });
     },
 
     async setSkillEnv(key, value) {

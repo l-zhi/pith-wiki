@@ -1,9 +1,14 @@
 import React from 'react';
-import { Blocks, Check, Copy, KeyRound, Terminal, Trash2 } from 'lucide-react';
+import { Blocks, Check, Copy, FlaskConical, KeyRound, Terminal, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Badge, Button, Card, Input, Spinner } from '../ds';
 import { useStore } from '../store';
-import type { SkillCardDTO, SkillEnvDTO, SkillReqDTO } from '../../../shared/protocol';
+import type {
+  SkillCardDTO,
+  SkillEnvDTO,
+  SkillReqDTO,
+  SkillTestResultDTO,
+} from '../../../shared/protocol';
 
 /**
  * 技能管理页（PRD-desktop-skill-manager）：策展的 bundled 建议清单 + 安装状态。
@@ -114,7 +119,67 @@ function SkillCard({
           ))}
         </div>
       )}
+
+      {/* 已安装且声明了自测探针 → 就地「测试」按钮（闭环验证是否可用） */}
+      {skill.installed && skill.testable && <TestSection name={skill.name} />}
     </Card>
+  );
+}
+
+/** 技能自测：点一下跑 skill 声明的探针，就地显示可用 / 不可用 + 原因。 */
+function TestSection({ name }: { name: string }) {
+  const { t } = useTranslation();
+  const testSkill = useStore((s) => s.testSkill);
+  const [busy, setBusy] = React.useState(false);
+  const [result, setResult] = React.useState<SkillTestResultDTO | null>(null);
+
+  const run = async () => {
+    setBusy(true);
+    setResult(null);
+    try {
+      setResult(await testSkill(name));
+    } catch (e) {
+      setResult({ ok: false, detail: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ borderTop: '0.5px solid var(--separator)', padding: '12px 20px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <Button
+        size="sm"
+        variant="secondary"
+        iconLeft={busy ? <Spinner size={12} /> : <FlaskConical size={13} />}
+        disabled={busy}
+        onClick={() => void run()}
+      >
+        {busy ? t('skills.testing') : t('skills.test')}
+      </Button>
+      {result && (
+        <>
+          <Badge tone={result.ok ? 'done' : 'dead'} dot>
+            {result.ok ? t('skills.testPass') : t('skills.testFail')}
+          </Badge>
+          {result.detail && (
+            <code
+              style={{
+                fontSize: 'var(--text-caption)',
+                color: 'var(--text-tertiary)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                flex: 1,
+                minWidth: 0,
+              }}
+              title={result.detail}
+            >
+              {result.detail}
+            </code>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
