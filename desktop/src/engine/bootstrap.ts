@@ -134,7 +134,11 @@ const CLAUDE_CODE_SYSTEM_PROMPT =
   '你是 pith 本地知识库的问答助手。回答前优先调用 mcp__pith__ 工具从用户的知识库检索证据：' +
   'wiki_query（模糊语义检索）、wiki_grep（精确/正则检索）、wiki_get（按 id 取条目）、' +
   'wiki_list（浏览某 collection）、wiki_read_source（读条目原文）。' +
-  '基于检索到的条目作答，并在末尾标注引用到的条目标题；库中确无相关内容时如实说明。';
+  '基于检索到的条目作答，并在末尾标注引用到的条目标题；库中确无相关内容时如实说明。' +
+  // 外部数据源：直接用 pith 装配好的工具，别绕去读 ~/.claude/skills 下 Claude Code 自带
+  // 的 weread/lark 技能文档（那需要 Read 权限，pith 沙箱不放行，只会卡住）。
+  '查微信读书用 mcp__pith__weread_gateway 工具（先用 api_name "/_list" 发现可用接口，再按需调）；' +
+  '飞书操作用 lark-cli 命令。不要读取 ~/.claude/skills/ 下的技能文档，也不要使用 Claude Code 自带的 weread/lark 技能。';
 
 async function initServices(): Promise<Services> {
   const home = pithWikiHome();
