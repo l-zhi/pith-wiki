@@ -112,7 +112,53 @@ pi                                          # 交互模式里 /login 选订阅�
 然后在 pith 桌面端「设置 → 对话模型」里选 **pi CLI**（本机检测到才会出现），确保
 `~/.pith-wiki/pith-mcp.json` 存在（三个委托 CLI 共用）。不填 key = 走订阅；填了 key = 按量计费。
 
-## 7. 下一步（路线 B）
+## 7. 路线 B（已实现）：`pi-ai` 作为可选传输层
 
-`pi-ai` 替掉 `openai` SDK 作为传输层，保留 pith 自己的 agent loop 与安全 wrap。见调研报告 §5
-方案 B 与 §6 的 spike 3/4/5（流式下的 mask 还原、hydration 的结构化输出替代、Electron 打包体积）。
+### 7.1 做法：一个与 OpenAI SDK 同形的传输接口
+
+`src/llm/transport.ts` 的 `ChatClient` 是**故意**与 `chat.completions.create` 同形的结构化接口。
+换来三件事：`OpenAI` 实例天然满足它、安全过滤层逻辑一行不改、Agent/Hydration/buildContext
+只改类型标注。于是「换传输」= 换一个实现了 `ChatClient` 的对象。
+
+`src/llm/piAiTransport.ts` 是 pi-ai 实现：
+`toPiContext()` 把 pith 的 OpenAI 形状历史翻成 pi-ai `Context`（system→systemPrompt、
+`reasoning_content`→thinking 块、`tool_calls`→toolCall 块、tool→toolResult 并按 id 反查 toolName），
+`models.completeSimple()` 出站，`toChatCompletion()` 翻回 OpenAI 形状（thinking→`reasoning_content`，
+usage→`prompt_tokens/completion_tokens`，stopReason→`finish_reason`）。
+
+两种 provider 装配：不设 `piProvider` → 用 `baseURL/apiKey/model` 现造 openai-completions
+自定义 provider（等价于现状）；设了（如 `anthropic`）→ 动态 import pi-ai 内建 provider 全集，
+鉴权走它的解析链。**动态** import 是刻意的：内建全集会牵进 Anthropic/Google/Mistral/Bedrock
+四个 SDK，不用就不该付启动与体积成本。
+
+### 7.2 关键约束：水合必须留在 openai SDK
+
+pi-ai 没有 `response_format: json_object` 的对等物，而水合/digest/`wiki_ingest` 依赖它。
+`createClient(config, { purpose: 'hydration' })` 强制回落 openai SDK；带 `response_format`
+的请求进了 pi-ai 传输会**显式抛错**（不静默降级）。因此 App.tsx / bootstrap / 子命令 /
+队列 worker 各自持一份水合 client，`buildContext` 收的也是水合 client（它的 client 参数只用来造 hydrator）。
+
+### 7.3 实测
+
+- **单测**（`tests/pi-transport.test.ts`，12 例）：用 pi-ai 的 `fauxProvider()`，`FauxResponseFactory`
+  能拿到 pith 真正喂进去的 `Context` —— 映射是被断言的，不是纸上推演。含 JSON 模式报错、
+  `stopReason=error/aborted` 的抛错语义、以及**安全过滤层覆盖 pi-ai 传输**（出站只见 `[PHONE_1]`，
+  入站还原成真号码）。
+- **真机**（本地假 openai 端点）：`pith 真 Agent + 真 wiki_list 工具 + 安全层 + pi-ai 传输`
+  跑完两轮 —— 工具在真实库上命中 1 条，最终答案正确，usage 两轮分别 120/20 与 300/15。
+
+### 7.4 已知取舍
+
+1. **thinking 签名不保真**：pith 历史是 OpenAI 形状，thinking 只有文本、没有 provider 签名。
+   对 DeepSeek/GLM 的 `reasoning_content` 语义无损；Anthropic 原生 extended thinking 不是这条路
+   的目标（要用就走 §0–§6 的委托 provider，或等路线 A）。
+2. **仍是非流式**：pith 的 agent loop 是 `stream: false`，这里用 `completeSimple` 对齐。流式、
+   compaction、steering 属于路线 A 的收益。
+3. **没有 UI 开关**：transport 目前只在 config.json / env / provider entry 上配（`transport`、
+   `piProvider`、`PITH_WIKI_TRANSPORT`、`PITH_WIKI_PI_PROVIDER`）。要不要进设置页，等实际用过再定。
+
+## 8. 下一步（路线 A，暂不做）
+
+用 `pi-agent-core` 替掉 `src/llm/agent.ts` 才能拿到流式/自动 compaction/steering/树形会话。
+前置未答的 spike：流式下的 mask 跨 chunk 还原、hydration 的结构化输出替代、Electron 打包体积。
+另外先看上游：0.x → 1.0 的稳定性、Earendil 商业化后开源包的维护承诺。

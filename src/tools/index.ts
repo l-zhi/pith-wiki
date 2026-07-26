@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type OpenAI from 'openai';
+import type { ChatClient } from '../llm/transport.js';
 import type { Config } from '../config.js';
 import { LibraryService } from '../wiki/library.js';
 import { ContextAssembler, type QueryScope } from '../wiki/assembler.js';
@@ -107,7 +107,7 @@ export interface BuildContextExtras {
 
 export function buildContext(
   config: Config,
-  client: OpenAI,
+  client: ChatClient,
   requestApproval: ToolContext['requestApproval'],
   /**
    * 可选传入一个已经构造好的 LibraryService。
@@ -196,8 +196,7 @@ function zodToJsonSchema(schema: z.ZodTypeAny): Record<string, unknown> {
     const required: string[] = [];
     for (const [key, value] of Object.entries(shape)) {
       properties[key] = zodToJsonSchema(value);
-      const isOptional =
-        value instanceof z.ZodOptional || value instanceof z.ZodDefault;
+      const isOptional = value instanceof z.ZodOptional || value instanceof z.ZodDefault;
       if (!isOptional) required.push(key);
     }
     return {
@@ -227,6 +226,4 @@ export function toolsForOpenAI(tools: AnyToolDef[] = ALL_TOOLS) {
   }));
 }
 
-export const TOOL_REGISTRY: Map<string, AnyToolDef> = new Map(
-  ALL_TOOLS.map((t) => [t.name, t]),
-);
+export const TOOL_REGISTRY: Map<string, AnyToolDef> = new Map(ALL_TOOLS.map((t) => [t.name, t]));

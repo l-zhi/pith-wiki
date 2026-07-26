@@ -206,10 +206,18 @@ async function initServices(): Promise<Services> {
     onSecurityNotice: (msg, kind) =>
       emitNotice(kind === 'warning' ? 'warning' : 'info', `🔒 ${msg}`),
   });
-  // 水合专属 client：聊天 provider 是委托型 CLI（claude-code/codex）时，后台水合 / digest
-  // 仍走一个 API provider（委托型 CLI 不能做批量 JSON 水合）。openai 聊天时直接复用主 client。
-  let hydrationClient = client;
+  // 水合专属 client。两条理由必须与聊天 client 分开建：
+  //   1. 聊天 provider 是委托型 CLI（claude-code/codex/pi）时，后台水合 / digest 仍要走一个
+  //      API provider（委托型 CLI 不能做批量 JSON 水合）；
+  //   2. 聊天 transport 可能是 pi-ai，而水合依赖 `response_format: json_object`（pi-ai 没有）
+  //      —— `purpose:'hydration'` 强制回落到 openai SDK。
+  let hydrationClient = createClient(config, {
+    purpose: 'hydration',
+    onSecurityNotice: (msg, kind) =>
+      emitNotice(kind === 'warning' ? 'warning' : 'info', `🔒 ${msg}`),
+  });
   let hydrationModel = config.model;
+  let hydrationBaseURL = config.baseURL;
   let hydrationSupportsJson = config.supportsJsonMode;
   if (config.providerKind !== 'openai') {
     const he = pickHydrationProvider(config);
@@ -218,11 +226,13 @@ async function initServices(): Promise<Services> {
       hydrationClient = createClient(
         { ...config, ...r },
         {
+          purpose: 'hydration',
           onSecurityNotice: (msg, kind) =>
             emitNotice(kind === 'warning' ? 'warning' : 'info', `🔒 ${msg}`),
         },
       );
       hydrationModel = r.model;
+      hydrationBaseURL = r.baseURL;
       hydrationSupportsJson = r.supportsJsonMode;
     } else {
       emitNotice(
@@ -232,7 +242,7 @@ async function initServices(): Promise<Services> {
     }
   }
   console.log(
-    `[pith/route] hydration → model=${hydrationModel} baseURL=${hydrationClient.baseURL} json=${hydrationSupportsJson}`,
+    `[pith/route] hydration → model=${hydrationModel} baseURL=${hydrationBaseURL} json=${hydrationSupportsJson}`,
   );
   // 审稿专用 client：reviewProvider 指向 openai → 建独立 client，reviewer 走它；
   // 指向委托型 CLI（claude-code/codex）→ 保持 null，agentFactory 用该 CLI 造 reviewer（每轮 spawn）；
@@ -251,7 +261,8 @@ async function initServices(): Promise<Services> {
         },
       );
       reviewModel = r.model;
-      console.log(`[pith/route] reviewer → model=${reviewModel} baseURL=${reviewClient.baseURL}`);
+      // baseURL 从 resolve 结果读（ChatClient 是传输抽象，不再暴露端点字段）。
+      console.log(`[pith/route] reviewer → model=${reviewModel} baseURL=${r.baseURL}`);
     } else if (!re) {
       emitNotice(
         'warning',

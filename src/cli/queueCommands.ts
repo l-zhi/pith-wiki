@@ -285,7 +285,8 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
       }
 
       // 统一走 createClient 工厂：securityEnabled 时自动带上出站过滤/脱敏层
-      const client = createClient(config);
+      // 队列 worker 只做水合 → 强制 openai SDK（JSON 模式）。
+      const client = createClient(config, { purpose: 'hydration' });
       const library = new LibraryService(config.wikiRoot, { ignoredDirs: [config.outputDir] });
       const hydrator = new HydrationService(client, config.model, library, config.supportsJsonMode);
 

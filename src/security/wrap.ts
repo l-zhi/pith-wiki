@@ -1,11 +1,14 @@
-import type OpenAI from 'openai';
 import { SecurityBlockError, type Sanitizer } from './sanitizer.js';
+import type { ChatClient } from '../llm/transport.js';
 import type { BlockHit } from './types.js';
 
 /**
  * client 层统一拦截：monkey-patch `chat.completions.create`，对所有 LLM 出站
  * 请求做 块断/脱敏，对响应做占位符还原。Agent / Hydration / queue worker 共用
  * 这一个收口点，没有第二条出站路径。
+ *
+ * 拦截的是 `ChatClient`（见 src/llm/transport.ts）而不是具体的 OpenAI 实例 ——
+ * 所以 openai SDK 与 pi-ai 两种传输都被同一层覆盖，逻辑零分叉。
  *
  * 出站（请求前）：
  *   - 逐条扫描 messages 的 content / tool_calls.arguments / reasoning 字段
@@ -48,10 +51,10 @@ export interface WrapOptions {
 type AnyRecord = Record<string, unknown>;
 
 export function wrapClientWithSecurity(
-  client: OpenAI,
+  client: ChatClient,
   sanitizer: Sanitizer,
   opts: WrapOptions = {},
-): OpenAI {
+): ChatClient {
   if (!sanitizer.hasRules) return client;
   const onNotice = opts.onNotice ?? ((msg) => process.stderr.write(`[security] ${msg}\n`));
   const original = client.chat.completions.create.bind(client.chat.completions);
@@ -62,7 +65,10 @@ export function wrapClientWithSecurity(
     if (newLabels.length > 0) onNotice(formatMaskNotice(newLabels), 'masked');
 
     // eslint 风格的窄化没必要：SDK 的 create 是重载签名，这里按运行时实际用法直传
-    const completion = (await original(clean as never, requestOpts as never)) as unknown as AnyRecord;
+    const completion = (await original(
+      clean as never,
+      requestOpts as never,
+    )) as unknown as AnyRecord;
 
     if (params.stream) {
       // 现有调用全部 stream:false。真出现流式调用时只保证出站安全，不做增量还原。
@@ -70,8 +76,7 @@ export function wrapClientWithSecurity(
       return completion;
     }
 
-    const jsonMode =
-      (params.response_format as AnyRecord | undefined)?.type === 'json_object';
+    const jsonMode = (params.response_format as AnyRecord | undefined)?.type === 'json_object';
     const leftover = restoreCompletion(completion, sanitizer, jsonMode);
     if (leftover > 0) {
       onNotice(
@@ -151,11 +156,7 @@ function sanitizeParams(params: AnyRecord, sanitizer: Sanitizer): SanitizedParam
 }
 
 /** 原地还原 completion 的所有文本承载字段，返回残留占位符总数。 */
-function restoreCompletion(
-  completion: AnyRecord,
-  sanitizer: Sanitizer,
-  jsonMode: boolean,
-): number {
+function restoreCompletion(completion: AnyRecord, sanitizer: Sanitizer, jsonMode: boolean): number {
   let leftover = 0;
   const choices = Array.isArray(completion.choices) ? (completion.choices as AnyRecord[]) : [];
   for (const choice of choices) {

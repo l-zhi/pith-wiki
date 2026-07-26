@@ -78,6 +78,16 @@ const ProviderSchema = z
      * 三级抢救 (直 parse → 剥 markdown fence → 找首{...末}) 兜底解析非严格 JSON 输出。
      */
     supportsJsonMode: z.boolean().optional(),
+    /**
+     * 该 provider 的对话请求走哪个传输实现（见 src/llm/transport.ts）。缺省 `openai`。
+     * `pi-ai` = 经 @earendil-works/pi-ai 出站；仅影响对话，水合永远走 openai SDK。
+     */
+    transport: z.enum(['openai', 'pi-ai']).optional(),
+    /**
+     * transport='pi-ai' 且想用 pi-ai 内建 provider（原生 Anthropic/Google/… API）时填其
+     * provider id；不填则用本 entry 的 baseURL+apiKey 造一个 openai-completions 自定义 provider。
+     */
+    piProvider: z.string().optional(),
     /** 委托型 CLI（claude-code/codex/pi）共用：可执行路径（默认 'claude'/'codex'/'pi'，PATH 里能找到就不用填）。 */
     binary: z.string().optional(),
     /** claude-code 专属：走订阅的 OAuth token（`claude setup-token` 生成；设置页填写）。codex 走 `codex login` 写的 ~/.codex/auth.json，不用此字段。 */
@@ -118,6 +128,23 @@ const ConfigSchema = z.object({
    * claude-code/codex/pi → 桌面端该会话走委托 agent（spawn 对应 CLI），不走 chat.completions。
    */
   providerKind: z.enum(['openai', 'claude-code', 'codex', 'pi']).default('openai'),
+  /**
+   * LLM 出站传输实现（见 src/llm/transport.ts）：
+   *   - `openai`（默认）：OpenAI SDK 直连 OpenAI 兼容端点（现状，行为不变）
+   *   - `pi-ai`：经 @earendil-works/pi-ai 走它的 provider 生态（原生 Anthropic/Google/
+   *     Mistral/Bedrock API、模型目录、成本核算、统一 thinking 等级）
+   * 只影响**对话**链路；水合/队列永远走 openai SDK（pi-ai 没有 JSON 模式）。
+   * env: PITH_WIKI_TRANSPORT。
+   */
+  transport: z.enum(['openai', 'pi-ai']).default('openai'),
+  /**
+   * transport='pi-ai' 时可选：pi-ai 内建 provider id（如 `anthropic` / `openai` /
+   * `google` / `mistral`），此时 model 按该 provider 的模型 id 解析、鉴权走 pi-ai 的
+   * 解析链（env var / credential store）。
+   * 不设 → 用 baseURL + apiKey 现造一个 openai-completions 自定义 provider（等价于现状）。
+   * env: PITH_WIKI_PI_PROVIDER。
+   */
+  piProvider: z.string().optional(),
   /** Multi-provider map（可选）。空 → 走顶层 apiKey/baseURL/model（v0 行为）。 */
   providers: z.record(z.string(), ProviderSchema).default({}),
   /**
@@ -585,6 +612,10 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     // 用了 activeProvider 时会被 applyActiveProvider 用 entry 的同名字段覆盖。
     // 这里走 file 字段（无 CLI/env 入口，结构小且改动频率低）。
     supportsJsonMode: file.supportsJsonMode,
+    // 传输实现：env > file > 默认 openai。与 supportsJsonMode 同理，用了 provider map 时
+    // 会被 applyActiveProvider 用 entry 的同名字段覆盖（一个 provider 一种传输）。
+    transport: process.env.PITH_WIKI_TRANSPORT ?? file.transport,
+    piProvider: process.env.PITH_WIKI_PI_PROVIDER ?? file.piProvider,
     // multi-provider：providers 表来自 file（不接受 env，结构复杂），activeProvider
     // 走 CLI > env > file。Zod 校验之后再 overlay 到顶层 apiKey/baseURL/model。
     providers: overrides.providers ?? file.providers ?? {},
@@ -624,6 +655,8 @@ export function resolveProviderEntry(entry: ProviderConfig): {
   baseURL: string;
   model: string;
   supportsJsonMode: boolean;
+  transport?: 'openai' | 'pi-ai';
+  piProvider?: string;
 } {
   const fromEnv = entry.apiKeyEnv ? (process.env[entry.apiKeyEnv] ?? '') : '';
   const apiKey = entry.apiKey && entry.apiKey.length > 0 ? entry.apiKey : fromEnv;
@@ -641,7 +674,14 @@ export function resolveProviderEntry(entry: ProviderConfig): {
         : entry.kind === 'pi'
           ? 'https://pi.invalid'
           : '');
-  return { apiKey, baseURL, model: entry.model, supportsJsonMode };
+  return {
+    apiKey,
+    baseURL,
+    model: entry.model,
+    supportsJsonMode,
+    ...(entry.transport ? { transport: entry.transport } : {}),
+    ...(entry.piProvider ? { piProvider: entry.piProvider } : {}),
+  };
 }
 
 /**
@@ -669,6 +709,9 @@ export function applyActiveProvider(parsed: Config): Config {
     model: resolved.model,
     supportsJsonMode: resolved.supportsJsonMode,
     providerKind: entry.kind ?? 'openai',
+    // entry 没声明 transport/piProvider → 保留顶层值（env / file 的全局设定）
+    transport: resolved.transport ?? parsed.transport,
+    ...(resolved.piProvider ? { piProvider: resolved.piProvider } : {}),
   };
 }
 

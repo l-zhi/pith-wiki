@@ -1,4 +1,3 @@
-import OpenAI from 'openai';
 import PQueue from 'p-queue';
 import type {
   ChatCompletion,
@@ -6,6 +5,7 @@ import type {
   ChatCompletionMessageToolCall,
 } from 'openai/resources/chat/completions';
 import { ALL_TOOLS, ToolContext, toolsForOpenAI, type AnyToolDef } from '../tools/index.js';
+import type { ChatClient } from './transport.js';
 import { SecurityBlockError } from '../security/index.js';
 import type { QueryScope } from '../wiki/assembler.js';
 
@@ -157,7 +157,7 @@ export class Agent {
   private currentScope: QueryScope | null = null;
 
   constructor(
-    private readonly client: OpenAI,
+    private readonly client: ChatClient,
     private readonly model: string,
     private readonly toolCtx: ToolContext,
     options: AgentOptions = {},
@@ -273,123 +273,123 @@ export class Agent {
     const tools = this.toolsPayload;
 
     try {
-    let finalText = '';
-    let answered = false;
-    let warnedLowBudget = false;
-    let safety = 0;
-    while (safety++ < this.maxSteps) {
-      // 预算告警：在触顶前若干轮注入一次提醒，让模型趁 tools 还在时优先完成关键的
-      // 副作用操作（write_file / wiki_ingest），而不是把它留到最后被截断。否则跑满
-      // maxSteps 后 forceFinalAnswer 会摘掉 tools，模型只能"描述如何写"却写不进去——
-      // 定时日报"生成了却没落盘"正是这个失败模式。reserve=3 是经验值。
-      const remaining = this.maxSteps - safety;
-      if (!warnedLowBudget && remaining <= LOW_BUDGET_RESERVE && remaining > 0) {
-        warnedLowBudget = true;
-        this.messages.push({
-          role: 'user',
-          content:
-            `[工具调用即将达到上限（还剩约 ${remaining} 轮）。如果你还有未完成的关键操作——` +
-            `尤其是把结果写入文件（write_file）或入库（wiki_ingest）——请立即在接下来 1-2 轮内` +
-            `真正执行完成，不要只描述步骤或给出手动命令。完成后再给出最终答复。]`,
-        });
-      }
-
-      let completion: ChatCompletion;
-      try {
-        completion = await this.client.chat.completions.create(
-          {
-            model: this.model,
-            messages: this.messages,
-            tools,
-            tool_choice: 'auto',
-            stream: false,
-          },
-          { signal: opts.signal },
-        );
-      } catch (err) {
-        const e = err as { status?: number; message?: string; name?: string };
-        if (e.name === 'AbortError') throw err;
-        if (err instanceof SecurityBlockError) {
-          this.messages.splice(historyMark);
-          throw err;
+      let finalText = '';
+      let answered = false;
+      let warnedLowBudget = false;
+      let safety = 0;
+      while (safety++ < this.maxSteps) {
+        // 预算告警：在触顶前若干轮注入一次提醒，让模型趁 tools 还在时优先完成关键的
+        // 副作用操作（write_file / wiki_ingest），而不是把它留到最后被截断。否则跑满
+        // maxSteps 后 forceFinalAnswer 会摘掉 tools，模型只能"描述如何写"却写不进去——
+        // 定时日报"生成了却没落盘"正是这个失败模式。reserve=3 是经验值。
+        const remaining = this.maxSteps - safety;
+        if (!warnedLowBudget && remaining <= LOW_BUDGET_RESERVE && remaining > 0) {
+          warnedLowBudget = true;
+          this.messages.push({
+            role: 'user',
+            content:
+              `[工具调用即将达到上限（还剩约 ${remaining} 轮）。如果你还有未完成的关键操作——` +
+              `尤其是把结果写入文件（write_file）或入库（wiki_ingest）——请立即在接下来 1-2 轮内` +
+              `真正执行完成，不要只描述步骤或给出手动命令。完成后再给出最终答复。]`,
+          });
         }
-        throw new AgentError(classifyError(e), e.message ?? 'LLM request failed');
+
+        let completion: ChatCompletion;
+        try {
+          completion = await this.client.chat.completions.create(
+            {
+              model: this.model,
+              messages: this.messages,
+              tools,
+              tool_choice: 'auto',
+              stream: false,
+            },
+            { signal: opts.signal },
+          );
+        } catch (err) {
+          const e = err as { status?: number; message?: string; name?: string };
+          if (e.name === 'AbortError') throw err;
+          if (err instanceof SecurityBlockError) {
+            this.messages.splice(historyMark);
+            throw err;
+          }
+          throw new AgentError(classifyError(e), e.message ?? 'LLM request failed');
+        }
+
+        const choice = completion.choices[0];
+        if (!choice) throw new AgentError('model_error', 'No choice returned by model');
+
+        if (completion.usage) {
+          events.onUsage?.({
+            inputTokens: completion.usage.prompt_tokens ?? 0,
+            outputTokens: completion.usage.completion_tokens ?? 0,
+          });
+        }
+
+        const msg = choice.message;
+        const toolCalls = msg.tool_calls ?? [];
+
+        // thinking-mode 模型的回传协议：上一轮如果产生了"思考过程"，下一轮请求里
+        // 这条 assistant 消息必须把它原样带回，否则 provider 直接 400。
+        //   - reasoning_content: DeepSeek（v4-pro / r1 系列）扩展字段
+        //   - thinking: Anthropic Claude 4 extended thinking（OpenAI-compatible
+        //     代理透传时也用这个名字；不同 proxy 实现可能略有差异，best-effort）
+        // 这两个字段都不在 OpenAI SDK 的 ChatCompletionMessage 类型里——但 SDK
+        // 用 JSON.stringify 直传 messages，多塞的字段会原样进 request body。
+        // 对 non-thinking 模型（deepseek-chat / glm / qwen 等）字段就是 undefined，
+        // 不会带出去，零副作用。
+        const m = msg as unknown as Record<string, unknown>;
+        const extras: Record<string, unknown> = {};
+        if (typeof m.reasoning_content === 'string') extras.reasoning_content = m.reasoning_content;
+        if (m.thinking !== undefined) extras.thinking = m.thinking;
+
+        // API 历史保留原始 content（含 <think>，不动回合制语义）；UI/transcript 走拆分后的视图。
+        const rawContent = msg.content ?? '';
+        this.messages.push({
+          role: 'assistant',
+          content: rawContent,
+          ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
+          ...extras,
+        } as ChatCompletionMessageParam);
+
+        // thinking 来源优先级：结构化字段 > content 内的 <think> 标签。
+        const fieldReasoning =
+          typeof m.reasoning_content === 'string'
+            ? m.reasoning_content
+            : typeof m.thinking === 'string'
+              ? m.thinking
+              : null;
+        const split = splitThinking(rawContent);
+        // 字段来源时 content 通常不含 <think>，正文取原文；标签来源时取剥离后的 body。
+        const body = fieldReasoning ? rawContent.trim() : split.body;
+        const thinking = fieldReasoning ?? split.thinking;
+        if (thinking) {
+          events.onThinking?.({ text: thinking, source: fieldReasoning ? 'field' : 'tag' });
+        }
+
+        if (toolCalls.length === 0) {
+          finalText = body;
+          answered = true;
+          if (body) events.onAssistantText?.({ text: body, final: true });
+          break;
+        }
+
+        // 中间轮叙述（"我去查…"）：终端默认不显，但事件仍发出，供 transcript 记录。
+        if (body) events.onAssistantText?.({ text: body, final: false });
+
+        for (const call of toolCalls) {
+          await this.queue.add(() => this.runToolCall(call, events));
+        }
       }
 
-      const choice = completion.choices[0];
-      if (!choice) throw new AgentError('model_error', 'No choice returned by model');
-
-      if (completion.usage) {
-        events.onUsage?.({
-          inputTokens: completion.usage.prompt_tokens ?? 0,
-          outputTokens: completion.usage.completion_tokens ?? 0,
-        });
+      // 跑满 maxSteps 仍未给出"不带 tool_call 的正式答案"：模型还想继续调工具，但被上限拦下。
+      // 不能静默返回空串（用户只会看到 spinner 停下、没有任何回答，像卡死）。
+      // 强制收尾一轮：不再提供 tools，让模型基于已收集到的信息直接作答。
+      if (!answered) {
+        finalText = await this.forceFinalAnswer(events, opts.signal);
       }
 
-      const msg = choice.message;
-      const toolCalls = msg.tool_calls ?? [];
-
-      // thinking-mode 模型的回传协议：上一轮如果产生了"思考过程"，下一轮请求里
-      // 这条 assistant 消息必须把它原样带回，否则 provider 直接 400。
-      //   - reasoning_content: DeepSeek（v4-pro / r1 系列）扩展字段
-      //   - thinking: Anthropic Claude 4 extended thinking（OpenAI-compatible
-      //     代理透传时也用这个名字；不同 proxy 实现可能略有差异，best-effort）
-      // 这两个字段都不在 OpenAI SDK 的 ChatCompletionMessage 类型里——但 SDK
-      // 用 JSON.stringify 直传 messages，多塞的字段会原样进 request body。
-      // 对 non-thinking 模型（deepseek-chat / glm / qwen 等）字段就是 undefined，
-      // 不会带出去，零副作用。
-      const m = msg as unknown as Record<string, unknown>;
-      const extras: Record<string, unknown> = {};
-      if (typeof m.reasoning_content === 'string') extras.reasoning_content = m.reasoning_content;
-      if (m.thinking !== undefined) extras.thinking = m.thinking;
-
-      // API 历史保留原始 content（含 <think>，不动回合制语义）；UI/transcript 走拆分后的视图。
-      const rawContent = msg.content ?? '';
-      this.messages.push({
-        role: 'assistant',
-        content: rawContent,
-        ...(toolCalls.length ? { tool_calls: toolCalls } : {}),
-        ...extras,
-      } as ChatCompletionMessageParam);
-
-      // thinking 来源优先级：结构化字段 > content 内的 <think> 标签。
-      const fieldReasoning =
-        typeof m.reasoning_content === 'string'
-          ? m.reasoning_content
-          : typeof m.thinking === 'string'
-            ? m.thinking
-            : null;
-      const split = splitThinking(rawContent);
-      // 字段来源时 content 通常不含 <think>，正文取原文；标签来源时取剥离后的 body。
-      const body = fieldReasoning ? rawContent.trim() : split.body;
-      const thinking = fieldReasoning ?? split.thinking;
-      if (thinking) {
-        events.onThinking?.({ text: thinking, source: fieldReasoning ? 'field' : 'tag' });
-      }
-
-      if (toolCalls.length === 0) {
-        finalText = body;
-        answered = true;
-        if (body) events.onAssistantText?.({ text: body, final: true });
-        break;
-      }
-
-      // 中间轮叙述（"我去查…"）：终端默认不显，但事件仍发出，供 transcript 记录。
-      if (body) events.onAssistantText?.({ text: body, final: false });
-
-      for (const call of toolCalls) {
-        await this.queue.add(() => this.runToolCall(call, events));
-      }
-    }
-
-    // 跑满 maxSteps 仍未给出"不带 tool_call 的正式答案"：模型还想继续调工具，但被上限拦下。
-    // 不能静默返回空串（用户只会看到 spinner 停下、没有任何回答，像卡死）。
-    // 强制收尾一轮：不再提供 tools，让模型基于已收集到的信息直接作答。
-    if (!answered) {
-      finalText = await this.forceFinalAnswer(events, opts.signal);
-    }
-
-    return finalText;
+      return finalText;
     } finally {
       this.currentScope = null;
     }

@@ -80,10 +80,22 @@ export function App({ config: initialConfig }: Props) {
   // append，用 ref 间接转发，避免闭包捕获声明顺序问题。
   const securityNoticeRef = useRef<(msg: string, kind: SecurityNoticeKind) => void>(() => {});
 
-  // OpenAI client 跟随 config；切换 provider 时自动重建。
+  // 对话用 client 跟随 config；切换 provider 时自动重建。transport='pi-ai' 时这条走 pi-ai。
   const client = useMemo(
     () =>
       createClient(config, {
+        onSecurityNotice: (msg, kind) => securityNoticeRef.current(msg, kind),
+      }),
+    [config],
+  );
+
+  // 水合用 client：水合 / digest / wiki_ingest 依赖 `response_format: json_object`，
+  // 而 pi-ai 传输没有对等能力 —— `purpose:'hydration'` 强制走 openai SDK。
+  // transport='openai' 时两者行为一致（只是各持一份 Sanitizer 映射，互不干扰）。
+  const hydrationClient = useMemo(
+    () =>
+      createClient(config, {
+        purpose: 'hydration',
         onSecurityNotice: (msg, kind) => securityNoticeRef.current(msg, kind),
       }),
     [config],
@@ -261,7 +273,12 @@ export function App({ config: initialConfig }: Props) {
     }
 
     const ac = new AbortController();
-    const hydrator = new HydrationService(client, config.model, library, config.supportsJsonMode);
+    const hydrator = new HydrationService(
+      hydrationClient,
+      config.model,
+      library,
+      config.supportsJsonMode,
+    );
 
     const workerPromise = runQueue({
       store,
@@ -395,7 +412,8 @@ export function App({ config: initialConfig }: Props) {
   const agent = useMemo(() => {
     // 共用的 library + converter pipeline 透传进 toolCtx；wiki_* 工具和 worker /
     // watcher 看到同一份索引、同一份转换器注册表。
-    const ctx = buildContext(config, client, requestApproval, library, {
+    // buildContext 的 client 只用于造 hydrator（wiki_ingest）→ 传水合专用 client。
+    const ctx = buildContext(config, hydrationClient, requestApproval, library, {
       converterRegistry: converters.registry,
       converterCache: converters.cache,
       skillRegistry,
@@ -408,7 +426,7 @@ export function App({ config: initialConfig }: Props) {
     if (skillRegistry.allowedCommands().size > 0) extraTools.push(runCommandTool);
     if (skillRegistry.allowedHosts().size > 0) extraTools.push(httpRequestTool);
     return new Agent(client, config.model, ctx, { systemPrompt, extraTools, maxSteps: config.maxSteps });
-  }, [config, client, requestApproval, requestCommandApproval, library, converters, soul, skillRegistry]);
+  }, [config, client, hydrationClient, requestApproval, requestCommandApproval, library, converters, soul, skillRegistry]);
 
   // 统一盖时间戳（HH:MM，design 稿消息头的 time）；显式传了 ts 的不覆盖。
   const append = (msg: Omit<DisplayMessage, 'id'>) =>
@@ -1029,7 +1047,12 @@ export function App({ config: initialConfig }: Props) {
       ensureWikiRoot(config);
       // 复用 session 共享的 library —— 写入立即被 agent 后续的 wiki_query/list 看到，
       // 也共用同一份 index.json 的写入节流，不会和 worker 互相覆盖。
-      const hydrator = new HydrationService(client, config.model, library, config.supportsJsonMode);
+      const hydrator = new HydrationService(
+        hydrationClient,
+        config.model,
+        library,
+        config.supportsJsonMode,
+      );
       const entry = await hydrator.hydrate({
         rawContent: snapshot,
         collectionId: collection,

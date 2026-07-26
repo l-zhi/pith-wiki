@@ -16,6 +16,7 @@
     "dist": "electron-vite build && electron-builder"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "^0.82.1",
     "chokidar": "^5.0.0",
     "fast-glob": "^3.3.3",
     "graphology": "^0.26.0",

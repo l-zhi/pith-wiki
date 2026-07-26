@@ -1,4 +1,4 @@
-import OpenAI from 'openai';
+import type { ChatClient } from '../llm/transport.js';
 import { z } from 'zod';
 import { Entry, HydrationOutputSchema, Source } from './types.js';
 import type { LibraryService } from './library.js';
@@ -402,7 +402,7 @@ export class HydrationService {
    *                          src/config.ts ProviderSchema.supportsJsonMode 的注释。
    */
   constructor(
-    private readonly client: OpenAI,
+    private readonly client: ChatClient,
     private readonly model: string,
     private readonly library: LibraryService,
     private readonly supportsJsonMode: boolean = true,
@@ -459,8 +459,7 @@ export class HydrationService {
     // 挡住两类"整批倒下"：内嵌 base64 图片 / 巨型对话记录触发 provider 400。
     // 清洗后的文本贯穿 scoring / plan / write，保持一致。
     const { text: rawContent } = sanitizeHydrationInput(input.rawContent, this.maxInputChars);
-    const src: HydrateInput =
-      rawContent === input.rawContent ? input : { ...input, rawContent };
+    const src: HydrateInput = rawContent === input.rawContent ? input : { ...input, rawContent };
 
     // ── 候选链接来源（与旧版一致）───────────────────────────────────────────
     //   1. 显式注入的 linkCandidates（批量场景，由 runner / batch 一次性 snapshot）
