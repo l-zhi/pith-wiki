@@ -64,6 +64,14 @@ export interface LibraryServiceOptions {
    * 落在 wikiRoot 之外的条目是无害的 no-op（本来就不会被扫到）。
    */
   ignoredDirs?: string[];
+  /**
+   * 扫描时某个 .md 解析失败（违反 ID_RE、frontmatter 类型不合等）的通知回调。
+   *
+   * 这类文件会被跳过——v0 不尝试修复。但**静默**跳过极难排查（文件明明在磁盘上，
+   * 库里就是不出现，没有任何提示）。缺省 no-op 保持既有行为；桌面端接 emitNotice、
+   * CLI 接 stderr，就能把「为什么我的文件没进库」变成一条可见的原因。
+   */
+  onWarn?: (msg: string) => void;
 }
 
 export class LibraryService {
@@ -76,6 +84,8 @@ export class LibraryService {
   private readonly persistDelayMs: number;
   /** 被显式忽略的目录绝对路径集合（含子树）。见 LibraryServiceOptions.ignoredDirs。 */
   private readonly ignoredDirs: Set<string>;
+  /** 解析失败通知（缺省 no-op）。见 LibraryServiceOptions.onWarn。 */
+  private readonly onWarn: (msg: string) => void;
 
   private persistTimer: NodeJS.Timeout | null = null;
 
@@ -86,6 +96,7 @@ export class LibraryService {
     this.persistEnabled = options.persist ?? true;
     this.persistDelayMs = options.persistDelayMs ?? 5000;
     this.ignoredDirs = new Set((options.ignoredDirs ?? []).map((p) => path.resolve(p)));
+    this.onWarn = options.onWarn ?? (() => {});
   }
 
   /** 该目录（连同子树）是否被显式排除在扫描 / mtime 计算之外。 */
@@ -462,8 +473,10 @@ export class LibraryService {
       } else if (e.isFile() && e.name.endsWith('.md')) {
         try {
           out.push(this.readFile(abs, collection, subpath));
-        } catch {
-          // Skip malformed files; v0 doesn't try to repair them.
+        } catch (err) {
+          // 跳过解析失败的文件（v0 不尝试修复），但**报出原因**——静默跳过会变成
+          // 「文件在磁盘上、库里死活不出现」的幽灵问题，没有任何线索可查。
+          this.onWarn(`skipped ${abs}: ${firstIssue(err)}`);
         }
       }
     }
@@ -497,9 +510,50 @@ export class LibraryService {
       updated,
       // 旧条目没有 ingestedAt → 回退到 updated（至少不为空，且对未再水合的条目就等于入库时间）
       ingestedAt: (parsed.data.ingestedAt as string) ?? updated,
-      date: parsed.data.date as string | undefined,
+      // YAML 会把无引号的 `date: 2026-07-24` 解析成 Date 对象（YAML 1.1 timestamp），
+      // 而 EntrySchema.date 是 string → 不归一化就整条 parse 失败、文件被静默丢弃。
+      // agent 用 write_file 直接写的日报正是这种写法（曾导致日报在库里不可见）。
+      date: normalizeDate(parsed.data.date),
       compressionRatio: parsed.data.compressionRatio,
     };
     return EntrySchema.parse(candidate);
   }
+}
+
+/**
+ * frontmatter 的 `date` 归一化成 `YYYY-MM-DD` 字符串。
+ *
+ * 为什么需要：YAML 1.1 把无引号的 `date: 2026-07-24` 当 timestamp，js-yaml（gray-matter
+ * 的解析器）直接给回一个 **Date 对象**。`EntrySchema.date` 是 `z.string()`，于是整条
+ * EntrySchema.parse 抛错 → readFile 抛错 → scanDirRecursive 的 catch 静默跳过整个文件。
+ * 症状是「文件在磁盘上、库里却看不到」，且没有任何报错（曾丢掉 agent 写的日报）。
+ * 姊妹字段 `updated` 一直有这个归一化，`date` 漏了，还被 `as string` 断言骗过了 TS。
+ *
+ * 纯日期在 YAML 里按 UTC 午夜解析，所以 toISOString().slice(0,10) 忠实还原原始日期。
+ * 非 Date 非字符串（数字等异常值）→ undefined，让条目仍可入库（date 本就是可选的）。
+ */
+/**
+ * 把解析异常压成一行人读得懂的原因，供 onWarn 上报。
+ * zod 的 message 是一整串 JSON issue 数组（多行、含 code/expected 等噪声），
+ * 直接抛给用户没法读——这里只取第一个 issue 的 `字段: 说明`。
+ */
+function firstIssue(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  try {
+    const issues = JSON.parse(msg) as Array<{ path?: (string | number)[]; message?: string }>;
+    if (Array.isArray(issues) && issues.length > 0) {
+      const i = issues[0];
+      const where = i.path?.length ? i.path.join('.') : 'entry';
+      return `${where}: ${i.message ?? 'invalid'}`;
+    }
+  } catch {
+    /* 不是 zod 的 JSON message（如 readFileSync 的 IO 错）→ 用首行 */
+  }
+  return msg.split('\n')[0];
+}
+
+export function normalizeDate(raw: unknown): string | undefined {
+  if (raw instanceof Date) return Number.isNaN(raw.getTime()) ? undefined : raw.toISOString().slice(0, 10);
+  if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  return undefined;
 }

@@ -775,3 +775,64 @@ describe('LibraryService — ingestedAt / date 时间戳', () => {
     expect(lib.get('old')?.ingestedAt).toBe('2026-06-01T00:00:00.000Z');
   });
 });
+
+describe('LibraryService — frontmatter date 归一化（回归：YAML 把日期解析成 Date）', () => {
+  /**
+   * 真实事故：agent 用 write_file 写的日报带 `date: 2026-07-24`（无引号）。YAML 1.1 把它
+   * 当 timestamp，js-yaml 回传 **Date 对象**，而 EntrySchema.date 是 string → 整条 parse
+   * 抛错 → scanDirRecursive 静默跳过 → 日报在磁盘上但库里死活看不到，且无任何报错。
+   */
+  it('无引号 date（YAML → Date 对象）仍能入库，归一化成 YYYY-MM-DD', () => {
+    const dir = path.join(tmpDir, 'output');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, '2026-07-24.md'),
+      '---\ntitle: 2026-07-24 内容日报\ndate: 2026-07-24\ntags: [daily-report]\n---\n# 日报正文',
+    );
+    const lib = new LibraryService(tmpDir, { persist: false });
+    const e = lib.get('2026-07-24');
+    expect(e).toBeDefined(); // 修复前：undefined（被静默丢弃）
+    expect(e?.date).toBe('2026-07-24');
+    expect(e?.title).toBe('2026-07-24 内容日报');
+  });
+
+  it('带引号的 date 字符串原样保留', () => {
+    const dir = path.join(tmpDir, 'output');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'a.md'), '---\ntitle: A\ndate: "2026-07-24"\n---\nbody');
+    expect(new LibraryService(tmpDir, { persist: false }).get('a')?.date).toBe('2026-07-24');
+  });
+
+  it('没有 date 字段 → date 缺省（不影响入库）', () => {
+    const dir = path.join(tmpDir, 'output');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'b.md'), '# 纯正文，无 frontmatter');
+    const e = new LibraryService(tmpDir, { persist: false }).get('b');
+    expect(e).toBeDefined();
+    expect(e?.date).toBeUndefined();
+  });
+});
+
+describe('LibraryService — onWarn（解析失败不再静默）', () => {
+  it('违反 ID_RE 的文件名（含大写）被跳过，并经 onWarn 报出文件与原因', () => {
+    const dir = path.join(tmpDir, 'output');
+    fs.mkdirSync(dir, { recursive: true });
+    // 真实案例：agent 写出 `AI绘画四强对决-...md`，id 含大写 AI → ID_RE 拒绝
+    fs.writeFileSync(path.join(dir, 'AI绘画四强对决.md'), '# 标题\n正文');
+    fs.writeFileSync(path.join(dir, '正常条目.md'), '# 正常\n正文');
+    const warns: string[] = [];
+    const lib = new LibraryService(tmpDir, { persist: false, onWarn: (m) => warns.push(m) });
+
+    expect(lib.list('output').map((e) => e.id)).toEqual(['正常条目']); // 非法的被跳过
+    expect(warns).toHaveLength(1);
+    expect(warns[0]).toContain('AI绘画四强对决.md'); // 说清是哪个文件
+    expect(warns[0]).toContain('id'); // 说清是 id 不合法
+  });
+
+  it('不传 onWarn 时保持既有行为（静默跳过，不抛错）', () => {
+    const dir = path.join(tmpDir, 'output');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'BAD.md'), '# x\ny');
+    expect(() => new LibraryService(tmpDir, { persist: false }).list('output')).not.toThrow();
+  });
+});
