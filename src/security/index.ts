@@ -3,6 +3,7 @@ export type { SanitizeResult, RestoreResult } from './sanitizer.js';
 export { loadSecurityRules, ensureSecurityRulesFile } from './rules.js';
 export { compilePresets, luhnValid } from './presets.js';
 export { wrapClientWithSecurity, type SecurityNoticeKind } from './wrap.js';
+export { createStreamRestorer, type StreamRestorer } from './streamRestore.js';
 export {
   SecurityRulesFileSchema,
   PRESET_NAMES,

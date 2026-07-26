@@ -3,22 +3,16 @@ import {
   createProvider,
   envApiKeyAuth,
   type AssistantMessage,
-  type Context as PiContext,
-  type Message as PiMessage,
   type Model as PiModel,
   type Models,
-  type TSchema,
-  type Tool as PiTool,
 } from '@earendil-works/pi-ai';
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import type {
   ChatCompletion,
-  ChatCompletionCreateParamsNonStreaming,
-  ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
-  ChatCompletionTool,
 } from 'openai/resources/chat/completions';
 import type { Config } from '../config.js';
+import { toPiContext } from './piMessageMap.js';
 import type { ChatClient } from './transport.js';
 
 /**
@@ -80,6 +74,11 @@ function customProviderModels(config: Config): {
     // pith 不做 context window 管理（agent loop 自己有 maxSteps + 预算告警），给宽松值。
     contextWindow: 128_000,
     maxTokens: 8_192,
+    // 保守兼容：pi-ai 会按 baseUrl 猜端点能力，猜错就会往 body 里多塞字段（实测见到过
+    // `store` / `prompt_cache_key` / `prompt_cache_retention`）。pith 的用户端点五花八门
+    // （火山 Ark、自建 vLLM、各家兼容层），有的对未知字段直接 400。`store` pith 从不需要，
+    // 显式关掉；若日后遇到别的字段被拒，OpenAICompletionsCompat 还有一组同类开关可加。
+    compat: { supportsStore: false },
   };
   const provider = createProvider<'openai-completions'>({
     id: providerId,
@@ -111,120 +110,6 @@ async function builtinProviderModels(
     );
   }
   return { models, model: model as PiModel<never> };
-}
-
-/** OpenAI 的 tool 声明（JSON Schema）→ pi-ai Tool。C 阶段已实测 TypeBox 接受普通 JSON Schema。 */
-function toPiTools(tools: ChatCompletionTool[] | undefined): PiTool[] | undefined {
-  if (!tools || tools.length === 0) return undefined;
-  return tools.map((t) => ({
-    name: t.function.name,
-    description: t.function.description ?? '',
-    parameters: (t.function.parameters ?? { type: 'object', properties: {} }) as unknown as TSchema,
-  }));
-}
-
-function textOf(content: ChatCompletionMessageParam['content']): string {
-  if (typeof content === 'string') return content;
-  if (!content) return '';
-  // pith 只产纯文本 content；数组形态兜底拼接 text 片段。
-  return content
-    .map((part) => (typeof part === 'string' ? part : 'text' in part ? (part.text ?? '') : ''))
-    .join('');
-}
-
-/**
- * OpenAI 形状的历史 → pi-ai Context。
- *
- * 细节：
- *   - 所有 system 消息拼成 `systemPrompt`（pith 只有一条，位置固定在头部）
- *   - assistant 的 `reasoning_content` / `thinking` 还原成 thinking 块（无签名，见类注释）
- *   - assistant 的 `tool_calls` → toolCall 块（arguments 从 JSON 字符串 parse 回对象）
- *   - tool 消息 → toolResult；`toolName` 由前面 assistant 的 tool_calls 按 id 反查
- *     （pi-ai 的 ToolResultMessage 要求 toolName，OpenAI 形状里没有这个字段）
- */
-export function toPiContext(body: ChatCompletionCreateParamsNonStreaming): PiContext {
-  const systemParts: string[] = [];
-  const messages: PiMessage[] = [];
-  const toolNameById = new Map<string, string>();
-  const ts = 0; // 确定性时间戳：pith 不用它做排序，固定值让请求可比对（测试友好）
-
-  for (const raw of body.messages) {
-    const m = raw as ChatCompletionMessageParam & {
-      reasoning_content?: unknown;
-      thinking?: unknown;
-      tool_calls?: ChatCompletionMessageToolCall[];
-      tool_call_id?: string;
-    };
-    if (m.role === 'system' || m.role === 'developer') {
-      systemParts.push(textOf(m.content));
-      continue;
-    }
-    if (m.role === 'user') {
-      messages.push({ role: 'user', content: textOf(m.content), timestamp: ts });
-      continue;
-    }
-    if (m.role === 'assistant') {
-      const content: AssistantMessage['content'] = [];
-      const thinking =
-        typeof m.reasoning_content === 'string'
-          ? m.reasoning_content
-          : typeof m.thinking === 'string'
-            ? m.thinking
-            : '';
-      if (thinking.trim()) content.push({ type: 'thinking', thinking });
-      const text = textOf(m.content);
-      if (text.trim()) content.push({ type: 'text', text });
-      for (const call of m.tool_calls ?? []) {
-        toolNameById.set(call.id, call.function.name);
-        let args: Record<string, unknown> = {};
-        try {
-          args = JSON.parse(call.function.arguments || '{}') as Record<string, unknown>;
-        } catch {
-          // 参数不是合法 JSON（模型抽风）：原样塞进一个字段，别让整轮请求崩掉
-          args = { _raw: call.function.arguments };
-        }
-        content.push({ type: 'toolCall', id: call.id, name: call.function.name, arguments: args });
-      }
-      messages.push({
-        role: 'assistant',
-        content,
-        // 下面这些字段是 pi-ai 的响应元数据；回放历史时不参与请求构造，给最小合法值。
-        api: 'openai-completions',
-        provider: 'pith-endpoint',
-        model: body.model,
-        usage: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
-        stopReason: content.some((c) => c.type === 'toolCall') ? 'toolUse' : 'stop',
-        timestamp: ts,
-      });
-      continue;
-    }
-    if (m.role === 'tool') {
-      const id = m.tool_call_id ?? '';
-      messages.push({
-        role: 'toolResult',
-        toolCallId: id,
-        toolName: toolNameById.get(id) ?? 'tool',
-        content: [{ type: 'text', text: textOf(m.content) }],
-        isError: false,
-        timestamp: ts,
-      });
-      continue;
-    }
-  }
-
-  const tools = toPiTools(body.tools as ChatCompletionTool[] | undefined);
-  return {
-    ...(systemParts.length ? { systemPrompt: systemParts.join('\n\n') } : {}),
-    messages,
-    ...(tools ? { tools } : {}),
-  };
 }
 
 /** pi-ai 的 stopReason → OpenAI 的 finish_reason。 */
@@ -300,6 +185,29 @@ class PiAiRequestError extends Error {
   }
 }
 
+
+/**
+ * pi-ai 会往 openai-completions 的 body 里塞一些 OpenAI 专有字段（实测：`store`、
+ * `prompt_cache_key`、`prompt_cache_retention`；后两个对非 api.openai.com 也无条件下发，
+ * `compat` 与 `cacheRetention:'none'` 都关不掉）。pith 的用户端点五花八门（火山 Ark、
+ * 自建 vLLM、各家兼容层），有的对未知字段直接 400 —— 而 pith 现有实现只发最小必要字段，
+ * 换传输不该引入这种回归。
+ *
+ * 所以自定义端点路径上用 `onPayload` 把这些字段剥掉（pi-ai 的官方扩展点，返回新 payload
+ * 即生效）。内建 provider 路径不动：那里 pi-ai 知道端点支持什么。
+ */
+const NON_STANDARD_FIELDS = ['store', 'prompt_cache_key', 'prompt_cache_retention'] as const;
+
+export function stripNonStandardFields(payload: unknown): unknown {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const body = payload as Record<string, unknown>;
+  const hit = NON_STANDARD_FIELDS.some((f) => f in body);
+  if (!hit) return undefined; // 无需改写：按 pi-ai 约定返回 undefined
+  const clean = { ...body };
+  for (const f of NON_STANDARD_FIELDS) delete clean[f];
+  return clean;
+}
+
 /** 从 pi-ai 的错误文案里嗅出 HTTP 状态码，喂给 Agent 的 classifyError。 */
 function sniffStatus(message: string): number | undefined {
   const m = /\b(4\d{2}|5\d{2})\b/.exec(message);
@@ -313,17 +221,27 @@ function sniffStatus(message: string): number | undefined {
  * 之后缓存。这样 createClient 保持同步签名，且不用的时候零成本。
  */
 export function createPiAiChatClient(config: Config, opts: PiAiClientOptions = {}): ChatClient {
-  let resolved: Promise<{ models: Models; model: PiModel<never> }> | null = null;
-  const resolve = (): Promise<{ models: Models; model: PiModel<never> }> => {
+  type Resolved = { models: Models; model: PiModel<never>; custom: boolean };
+  let resolved: Promise<Resolved> | null = null;
+  const resolve = (): Promise<Resolved> => {
     if (opts.models && opts.model) {
-      return Promise.resolve({ models: opts.models, model: opts.model as PiModel<never> });
+      // 注入路径（测试）：按自定义端点处理，保持与生产同一条 payload 清理逻辑。
+      return Promise.resolve({
+        models: opts.models,
+        model: opts.model as PiModel<never>,
+        custom: true,
+      });
     }
     if (!resolved) {
       resolved = config.piProvider
-        ? builtinProviderModels(config)
-        : Promise.resolve(
-            customProviderModels(config) as unknown as { models: Models; model: PiModel<never> },
-          );
+        ? builtinProviderModels(config).then((r) => ({ ...r, custom: false }))
+        : Promise.resolve({
+            ...(customProviderModels(config) as unknown as {
+              models: Models;
+              model: PiModel<never>;
+            }),
+            custom: true,
+          });
     }
     return resolved;
   };
@@ -339,12 +257,14 @@ export function createPiAiChatClient(config: Config, opts: PiAiClientOptions = {
                 'Hydration must use the openai transport; see docs/research-pi-harness-migration.md §3 L7.',
             );
           }
-          const { models, model } = await resolve();
+          const { models, model, custom } = await resolve();
           const context = toPiContext(body);
           const msg = await models.completeSimple(model, context, {
             signal: options?.signal,
             timeoutMs: config.requestTimeoutMs,
             ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+            // 自定义端点路径才清理 payload：pi-ai 对内建 provider 知道该发什么，别乱动。
+            ...(custom ? { onPayload: stripNonStandardFields } : {}),
           });
           if (msg.stopReason === 'aborted') {
             // 与 OpenAI SDK 的 abort 行为对齐：Agent 靠 err.name === 'AbortError' 透传中断。

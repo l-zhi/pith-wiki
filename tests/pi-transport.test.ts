@@ -18,7 +18,8 @@ import {
 } from '@earendil-works/pi-ai';
 import type { ChatCompletionCreateParamsNonStreaming } from 'openai/resources/chat/completions';
 import type { Config } from '../src/config.js';
-import { createPiAiChatClient, toChatCompletion, toPiContext } from '../src/llm/piAiTransport.js';
+import { createPiAiChatClient, toChatCompletion } from '../src/llm/piAiTransport.js';
+import { fromPiMessages, toPiContext } from '../src/llm/piMessageMap.js';
 import { compilePresets, Sanitizer, wrapClientWithSecurity } from '../src/security/index.js';
 
 const baseConfig = {
@@ -275,5 +276,85 @@ describe('安全过滤层覆盖 pi-ai 传输（ChatClient 同形的意义）', (
     expect(userMsg.content).toContain('[PHONE_1]');
     // 入站：占位符被还原成原值
     expect(completion.choices[0].message.content).toBe(`记下了，号码是 ${PHONE}`);
+  });
+});
+
+describe('fromPiMessages — pi-ai 消息序列 → OpenAI 形状（路线 A 的回程）', () => {
+  it('assistant 的 text/thinking/toolCall 与 toolResult 都翻得回来（往返等价）', () => {
+    const original = HISTORY.messages;
+    const { messages: pi } = toPiContext(HISTORY) as unknown as { messages: unknown[] };
+    const back = fromPiMessages(pi);
+    // system 由 systemPrompt 承载，不在 messages 里；其余顺序/角色保持
+    expect(back.map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
+    const assistant = back[1] as unknown as Record<string, unknown>;
+    expect(assistant.content).toBe('我查一下。');
+    expect(assistant.reasoning_content).toBe('先列目录');
+    const calls = assistant.tool_calls as Array<{ id: string; function: { name: string; arguments: string } }>;
+    expect(calls[0].id).toBe('call_1');
+    expect(JSON.parse(calls[0].function.arguments)).toEqual({ collection: 'tech' });
+    // tool 结果按 tool_call_id 归位（deriveDisplay / SessionStore 依赖这个字段）
+    expect(back[2]).toMatchObject({ role: 'tool', tool_call_id: 'call_1' });
+    expect((original[3] as { content: string }).content).toBe((back[2] as { content: string }).content);
+  });
+
+  it('pi 的非 LLM 消息（自定义角色）不落进 pith 历史', () => {
+    const back = fromPiMessages([
+      { role: 'user', content: 'hi', timestamp: 0 },
+      { role: 'compactionSummary', text: '压缩摘要', timestamp: 0 },
+      { role: 'bashExecution', command: 'ls', timestamp: 0 },
+    ]);
+    expect(back).toHaveLength(1);
+    expect(back[0].role).toBe('user');
+  });
+});
+
+describe('createClient — 传输选择与延迟加载', () => {
+  it('transport=pi-ai + purpose=chat → 延迟加载 pi-ai（首次请求才 import）', async () => {
+    const { createClient } = await import('../src/llm/client.js');
+    const client = createClient(
+      { ...baseConfig, securityEnabled: false, transport: 'pi-ai' } as Config,
+      { purpose: 'chat' },
+    );
+    // 构造阶段不 import pi-ai（不会抛、也不付 ~130ms）；带 response_format 的请求在
+    // 动态 import 之后才报错 —— 报错说明惰性链路真的走通了。
+    await expect(
+      client.chat.completions.create({
+        model: 'faux-model',
+        stream: false,
+        messages: [{ role: 'user', content: 'hi' }],
+        response_format: { type: 'json_object' },
+      }),
+    ).rejects.toThrow(/response_format|JSON mode/i);
+  });
+
+  it('transport=pi-ai 但 purpose=hydration → 强制回落 openai SDK（JSON 模式可用）', async () => {
+    const { createClient } = await import('../src/llm/client.js');
+    const client = createClient(
+      { ...baseConfig, securityEnabled: false, transport: 'pi-ai' } as Config,
+      { purpose: 'hydration' },
+    );
+    // openai SDK 实例带 baseURL 字段；pi-ai 的惰性包装没有 —— 用它区分走了哪条路。
+    expect((client as unknown as { baseURL?: string }).baseURL).toBe(baseConfig.baseURL);
+  });
+});
+
+describe('stripNonStandardFields — 别把 OpenAI 专有字段发给第三方端点', () => {
+  it('剥掉 store / prompt_cache_key / prompt_cache_retention，其余原样', async () => {
+    const { stripNonStandardFields } = await import('../src/llm/piAiTransport.js');
+    const cleaned = stripNonStandardFields({
+      model: 'm',
+      messages: [],
+      stream: true,
+      store: false,
+      prompt_cache_key: 'k',
+      prompt_cache_retention: 'in_memory',
+      tools: [{ type: 'function' }],
+    }) as Record<string, unknown>;
+    expect(Object.keys(cleaned).sort()).toEqual(['messages', 'model', 'stream', 'tools']);
+  });
+
+  it('没有可剥字段时返回 undefined（pi-ai 约定：不改写）', async () => {
+    const { stripNonStandardFields } = await import('../src/llm/piAiTransport.js');
+    expect(stripNonStandardFields({ model: 'm', messages: [] })).toBeUndefined();
   });
 });

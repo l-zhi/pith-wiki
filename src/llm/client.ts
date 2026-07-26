@@ -8,7 +8,6 @@ import {
   type SecurityNoticeKind,
 } from '../security/index.js';
 import type { ChatClient, TransportPurpose } from './transport.js';
-import { createPiAiChatClient } from './piAiTransport.js';
 
 export interface CreateClientOptions {
   /**
@@ -55,7 +54,7 @@ export function createClient(config: Config, opts: CreateClientOptions = {}): Ch
 /** 按 transport + purpose 造未包裹安全层的裸传输。 */
 function makeTransport(config: Config, purpose: TransportPurpose): ChatClient {
   if (config.transport === 'pi-ai' && purpose === 'chat') {
-    return createPiAiChatClient(config);
+    return lazyPiAiClient(config);
   }
   return new OpenAI({
     apiKey: config.apiKey,
@@ -64,4 +63,30 @@ function makeTransport(config: Config, purpose: TransportPurpose): ChatClient {
     // （REPL 会转圈最长 10 分钟才报错）。可通过 config.requestTimeoutMs 调整。
     timeout: config.requestTimeoutMs,
   });
+}
+
+/**
+ * pi-ai 传输的**延迟加载**包装。
+ *
+ * 为什么不直接 `import { createPiAiChatClient }`：实测 import `@earendil-works/pi-ai`
+ * 本身要 ~130ms（加 pi-agent-core 共 ~160ms），静态 import 会让**所有**用户在启动时
+ * 付这笔钱——包括 transport='openai'（默认）从不碰 pi-ai 的用户。这里把 import 推到
+ * 第一次真正发请求时，默认路径的启动成本回到零。
+ *
+ * 首个 create() 调用会 await 一次动态 import（之后缓存）；对一次 LLM 请求的整体耗时
+ * 而言 130ms 可忽略。
+ */
+function lazyPiAiClient(config: Config): ChatClient {
+  let impl: Promise<ChatClient> | null = null;
+  const load = (): Promise<ChatClient> => {
+    impl ??= import('./piAiTransport.js').then((m) => m.createPiAiChatClient(config));
+    return impl;
+  };
+  return {
+    chat: {
+      completions: {
+        create: async (body, options) => (await load()).chat.completions.create(body, options),
+      },
+    },
+  };
 }
