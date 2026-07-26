@@ -22,11 +22,13 @@ import {
   pickHydrationProvider,
   resolveProviderEntry,
   type Config,
+  type ProviderConfig,
 } from '@core/config.js';
 import { pithWikiHome } from '@core/paths.js';
 import { createClient } from '@core/llm/client.js';
 import { Agent, defaultSystemPrompt } from '@core/llm/agent.js';
 import { ClaudeCodeAgent } from './claudeCodeAgent.js';
+import { CodexAgent } from './codexAgent.js';
 import { ReviewingAgent, type ReviewTrace } from './reviewingAgent.js';
 import { composeSystemPrompt, loadSoul, SOUL_PROMPT_HEADER, type LoadedSoul } from '@core/llm/soul.js';
 import { buildContext } from '@core/tools/index.js';
@@ -140,6 +142,34 @@ const CLAUDE_CODE_SYSTEM_PROMPT =
   '查微信读书用 mcp__pith__weread_gateway 工具（先用 api_name "/_list" 发现可用接口，再按需调）；' +
   '飞书操作用 lark-cli 命令。不要读取 ~/.claude/skills/ 下的技能文档，也不要使用 Claude Code 自带的 weread/lark 技能。';
 
+/**
+ * 读 pith-mcp 配置文件（JSON，`mcpServers.pith`）解析出 codex 内联注册用的启动规格。
+ * claude-code 把该文件路径直接作为 `--mcp-config <file>` 传入；codex 无此标志，需读出
+ * command/args/env 翻成 `-c mcp_servers.pith.*` 覆盖（见 CodexAgent.mcpConfigArgs）。
+ * 文件缺失 / 解析失败 / 无 pith 条目 → undefined（codex 能聊天但读不到知识库）。
+ */
+function readPithMcpSpec(
+  configPath: string,
+): { command: string; args: string[]; env?: Record<string, string> } | undefined {
+  try {
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+      mcpServers?: Record<string, { command?: string; args?: unknown; env?: unknown }>;
+    };
+    const s = raw.mcpServers?.pith;
+    if (!s || typeof s.command !== 'string' || !s.command) return undefined;
+    const args = Array.isArray(s.args) ? s.args.map(String) : [];
+    const env =
+      s.env && typeof s.env === 'object'
+        ? Object.fromEntries(
+            Object.entries(s.env as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
+          )
+        : undefined;
+    return { command: s.command, args, env };
+  } catch {
+    return undefined;
+  }
+}
+
 async function initServices(): Promise<Services> {
   const home = pithWikiHome();
   fs.mkdirSync(home, { recursive: true });
@@ -156,12 +186,12 @@ async function initServices(): Promise<Services> {
     onSecurityNotice: (msg, kind) =>
       emitNotice(kind === 'warning' ? 'warning' : 'info', `🔒 ${msg}`),
   });
-  // 水合专属 client：聊天 provider 是 claude-code 时，后台水合 / digest 仍走一个 API
-  // provider（claude-code 不能做批量 JSON 水合）。openai 聊天时直接复用主 client。
+  // 水合专属 client：聊天 provider 是委托型 CLI（claude-code/codex）时，后台水合 / digest
+  // 仍走一个 API provider（委托型 CLI 不能做批量 JSON 水合）。openai 聊天时直接复用主 client。
   let hydrationClient = client;
   let hydrationModel = config.model;
   let hydrationSupportsJson = config.supportsJsonMode;
-  if (config.providerKind === 'claude-code') {
+  if (config.providerKind !== 'openai') {
     const he = pickHydrationProvider(config);
     if (he) {
       const r = resolveProviderEntry(he);
@@ -177,20 +207,21 @@ async function initServices(): Promise<Services> {
     } else {
       emitNotice(
         'warning',
-        '聊天用的是 claude-code，但没有可做水合的 API provider —— 后台水合会失败。请在设置里加一个 OpenAI 兼容 provider。',
+        `聊天用的是 ${config.providerKind}，但没有可做水合的 API provider —— 后台水合会失败。请在设置里加一个 OpenAI 兼容 provider。`,
       );
     }
   }
   console.log(
     `[pith/route] hydration → model=${hydrationModel} baseURL=${hydrationClient.baseURL} json=${hydrationSupportsJson}`,
   );
-  // 审稿专用 client（P2b）：配了 reviewProvider（须为 API provider）→ reviewer 走它；
-  // 否则 null → reviewer 与 writer 同 provider（见 agentFactory）。
+  // 审稿专用 client：reviewProvider 指向 openai → 建独立 client，reviewer 走它；
+  // 指向委托型 CLI（claude-code/codex）→ 保持 null，agentFactory 用该 CLI 造 reviewer（每轮 spawn）；
+  // 未配 / 指向不存在的 provider → null → reviewer 与 writer 同 provider（见 agentFactory）。
   let reviewClient: ReturnType<typeof createClient> | null = null;
   let reviewModel = '';
   if (config.reviewProvider) {
     const re = config.providers[config.reviewProvider];
-    if (re && re.kind !== 'claude-code') {
+    if (re && (re.kind ?? 'openai') === 'openai') {
       const r = resolveProviderEntry(re);
       reviewClient = createClient(
         { ...config, ...r },
@@ -201,14 +232,19 @@ async function initServices(): Promise<Services> {
       );
       reviewModel = r.model;
       console.log(`[pith/route] reviewer → model=${reviewModel} baseURL=${reviewClient.baseURL}`);
-    } else {
+    } else if (!re) {
       emitNotice(
         'warning',
-        `审稿 provider "${config.reviewProvider}" 不可用（须为 API provider，非 claude-code）—— 审稿将回退为与聊天同模型。`,
+        `审稿 provider "${config.reviewProvider}" 不存在 —— 审稿将回退为与聊天同模型。`,
       );
     }
+    // else：re 是委托型 CLI → 合法，由 agentFactory 造 reviewer，无需 client、无警告。
   }
-  const library = new LibraryService(config.wikiRoot, { ignoredDirs: [config.outputDir] });
+  const library = new LibraryService(config.wikiRoot, {
+    ignoredDirs: [config.outputDir],
+    // 解析失败的 .md 不再静默消失——报到通知区，用户能看到「哪个文件、为什么没进库」。
+    onWarn: (m) => emitNotice('warning', `library: ${m}`),
+  });
   const converters = buildConverterPipeline({
     wikiRoot: config.wikiRoot,
     cacheConverted: config.cacheConverted,
@@ -295,42 +331,80 @@ async function initServices(): Promise<Services> {
     let model: string;
     let provider: string | undefined;
 
-    if (config.providerKind === 'claude-code') {
-      // claude-code：委托本机 claude CLI（headless + pith-mcp），复用订阅额度。
-      const entry = config.activeProvider ? config.providers[config.activeProvider] : undefined;
-      const token =
-        entry?.oauthToken ?? (entry?.oauthTokenEnv ? process.env[entry.oauthTokenEnv] : undefined);
-      const env: NodeJS.ProcessEnv = { ...process.env };
-      delete env.ANTHROPIC_API_KEY;
-      delete env.ANTHROPIC_AUTH_TOKEN;
-      if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
+    // 委托型 CLI（claude-code/codex）共用的 writer 人设：检索人设 + 输出落点 + soul。
+    const soulSuffix = soul.content.trim()
+      ? `\n\n${SOUL_PROMPT_HEADER}\n\n${soul.content.trim()}`
+      : '';
+    const delegateWriterPrompt =
+      `${CLAUDE_CODE_SYSTEM_PROMPT}\n\n` +
+      `如需把结果写成文件（日报/报告等），文件路径必须是绝对路径且写入这个确切目录：` +
+      `${outputDir}/（pith 知识库的 output collection），文件名用「主题或日期.md」。` +
+      `这是唯一的输出落点，不要自己拼路径或省略其中任何一层目录。` +
+      soulSuffix;
+
+    // 用一个委托型 provider entry 造 CLI agent（claude-code/codex）。writer 与 CLI-reviewer 共用：
+    // 审稿模式下可把某个 CLI provider 选作 reviewer（每轮 spawn），复用同一套 env/mcp 装配逻辑。
+    const makeDelegatedAgent = (
+      kind: 'claude-code' | 'codex',
+      entry: ProviderConfig | undefined,
+      systemPrompt: string,
+    ): AgentLike => {
       const mcpConfigPath = entry?.mcpConfigPath ?? path.join(home, 'pith-mcp.json');
-      console.log(
-        `[pith/route] chat → claude-code CLI | provider=${config.activeProvider} model=${config.model} ` +
-          `binary=${entry?.binary ?? 'claude'} mcp=${mcpConfigPath} review=${reviewMode}`,
-      );
-      const soulSuffix = soul.content.trim()
-        ? `\n\n${SOUL_PROMPT_HEADER}\n\n${soul.content.trim()}`
-        : '';
-      const writerPrompt =
-        `${CLAUDE_CODE_SYSTEM_PROMPT}\n\n` +
-        `如需把结果写成文件（日报/报告等），文件路径必须是绝对路径且写入这个确切目录：` +
-        `${outputDir}/（pith 知识库的 output collection），文件名用「主题或日期.md」。` +
-        `这是唯一的输出落点，不要自己拼路径或省略其中任何一层目录。` +
-        soulSuffix;
-      const mkCC = (systemPrompt: string): AgentLike =>
-        new ClaudeCodeAgent({
+      const mdl = entry?.model ?? config.model;
+      if (kind === 'claude-code') {
+        // 复用订阅：注入 CLAUDE_CODE_OAUTH_TOKEN，剔除 ANTHROPIC_API_KEY。
+        const token =
+          entry?.oauthToken ??
+          (entry?.oauthTokenEnv ? process.env[entry.oauthTokenEnv] : undefined);
+        const env: NodeJS.ProcessEnv = { ...process.env };
+        delete env.ANTHROPIC_API_KEY;
+        delete env.ANTHROPIC_AUTH_TOKEN;
+        if (token) env.CLAUDE_CODE_OAUTH_TOKEN = token;
+        return new ClaudeCodeAgent({
           binary: entry?.binary ?? 'claude',
-          model: config.model,
+          model: mdl,
           systemPrompt,
           mcpConfigPath,
           env,
           cwd: home,
         });
-      writer = mkCC(writerPrompt);
-      makeReviewer = () => mkCC(REVIEWER_SYSTEM_PROMPT);
+      }
+      // codex：订阅优先——配了 API key 才注入 OPENAI_API_KEY，否则删 key 走 ~/.codex/auth.json。
+      const apiKey =
+        entry?.apiKey && entry.apiKey.length > 0
+          ? entry.apiKey
+          : entry?.apiKeyEnv
+            ? process.env[entry.apiKeyEnv]
+            : undefined;
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      if (apiKey) env.OPENAI_API_KEY = apiKey;
+      else {
+        delete env.OPENAI_API_KEY;
+        delete env.CODEX_API_KEY;
+      }
+      return new CodexAgent({
+        binary: entry?.binary ?? 'codex',
+        model: mdl,
+        systemPrompt,
+        mcp: readPithMcpSpec(mcpConfigPath),
+        env,
+        cwd: home,
+      });
+    };
+
+    if (config.providerKind === 'claude-code' || config.providerKind === 'codex') {
+      // 委托本机 CLI（headless + pith-mcp），复用订阅额度。
+      const kind = config.providerKind;
+      const entry = config.activeProvider ? config.providers[config.activeProvider] : undefined;
+      const mcpConfigPath = entry?.mcpConfigPath ?? path.join(home, 'pith-mcp.json');
+      console.log(
+        `[pith/route] chat → ${kind} CLI | provider=${config.activeProvider} model=${config.model} ` +
+          `binary=${entry?.binary ?? kind === 'codex' ? 'codex' : 'claude'} mcp=${mcpConfigPath} review=${reviewMode}`,
+      );
+      writer = makeDelegatedAgent(kind, entry, delegateWriterPrompt);
+      makeReviewer = () => makeDelegatedAgent(kind, entry, REVIEWER_SYSTEM_PROMPT);
       model = config.model;
-      provider = config.activeProvider || 'claude-code';
+      provider = config.activeProvider || kind;
     } else {
       const ctx = buildContext(
         config,
@@ -364,10 +438,17 @@ async function initServices(): Promise<Services> {
 
     if (!reviewMode) return { agent: writer, model, provider };
 
-    // reviewer：配了 reviewProvider → 用独立 client 造一个只读 pith Agent（不给写/执行/skill 工具）；
-    // 否则与 writer 同 provider（makeReviewer）。
+    // reviewer 三选一：
+    //   1. reviewProvider 指向委托型 CLI（claude-code/codex）→ 用该 CLI 造 reviewer（每轮 spawn，慢+烧订阅额度，用户已知取舍）；
+    //   2. reviewProvider 指向 openai（reviewClient 已建）→ 独立 client 造只读 pith Agent（不给写/执行/skill 工具）；
+    //   3. 未配 reviewProvider → 与 writer 同 provider（makeReviewer）。
     let reviewer: AgentLike;
-    if (reviewClient) {
+    const reviewEntry = config.reviewProvider ? config.providers[config.reviewProvider] : undefined;
+    const reviewKind = reviewEntry?.kind ?? 'openai';
+    if (reviewEntry && (reviewKind === 'claude-code' || reviewKind === 'codex')) {
+      console.log(`[pith/route] reviewer → ${reviewKind} CLI | provider=${config.reviewProvider}`);
+      reviewer = makeDelegatedAgent(reviewKind, reviewEntry, REVIEWER_SYSTEM_PROMPT);
+    } else if (reviewClient) {
       const rctx = buildContext(
         config,
         reviewClient,
@@ -600,8 +681,8 @@ async function handle(req: EngineRequest): Promise<unknown> {
       }));
       return {
         ready: s.config.apiKey.length > 0,
-        // claude-code provider 没有 apiKey（走订阅），不该被当成"未配置"而弹引导页
-        needsOnboarding: s.config.apiKey.length === 0 && s.config.providerKind !== 'claude-code',
+        // 委托型 CLI（claude-code/codex）没有 apiKey（走订阅），不该被当成"未配置"而弹引导页
+        needsOnboarding: s.config.apiKey.length === 0 && s.config.providerKind === 'openai',
         provider: s.config.activeProvider || 'deepseek',
         model: s.config.model,
         wikiRoot: s.config.wikiRoot,
@@ -798,17 +879,9 @@ async function handle(req: EngineRequest): Promise<unknown> {
       const providers = (file.providers as Record<string, Record<string, unknown>> | undefined) ?? {};
       let nextProviders = providers;
       if (req.name && !providers[req.name]) {
-        // 选了本机检测到的 CLI（如 claude-code）但还没配过 → 现合成一条最小 entry，
-        // binary 回填检测到的绝对路径（GUI 子进程 PATH 可能很瘦）。其余非 CLI 名才报错。
-        if (req.name === 'claude-code') {
-          const bin = resolveBinaryPath('claude');
-          nextProviders = {
-            ...providers,
-            'claude-code': { kind: 'claude-code', model: 'sonnet', ...(bin ? { binary: bin } : {}) },
-          };
-        } else {
-          throw new Error(`provider not found: ${req.name}`);
-        }
+        const synth = synthCliEntry(req.name);
+        if (!synth) throw new Error(`provider not found: ${req.name}`);
+        nextProviders = { ...providers, [req.name]: synth };
       }
       fs.writeFileSync(
         configFilePath(),
@@ -825,7 +898,7 @@ async function handle(req: EngineRequest): Promise<unknown> {
       if (req.name) {
         const p = providers[req.name];
         if (!p) throw new Error(`provider not found: ${req.name}`);
-        if (p.kind === 'claude-code') throw new Error('水合 provider 必须是 API provider，claude-code 不能做批量水合');
+        if (p.kind && p.kind !== 'openai') throw new Error(`水合 provider 必须是 API provider，${p.kind} 不能做批量水合`);
       }
       fs.writeFileSync(
         configFilePath(),
@@ -836,17 +909,20 @@ async function handle(req: EngineRequest): Promise<unknown> {
       return { ok: true };
     }
     case 'settings.setReviewProvider': {
-      // 即时切换审稿 provider（设置「审稿模型」选择器）：空串=同 writer；非空必须是已存在的 API provider。
+      // 即时切换审稿 provider（设置「审稿模型」选择器）：空串=同 writer；非空须是已存在的 provider。
+      // openai → 独立 API client；委托型 CLI（claude-code/codex）→ 每轮 spawn 该 CLI 当 reviewer。
+      // 若选了本机检测到但还没建 entry 的 CLI（如 chat 用 API、review 想用 codex）→ 现合成 entry。
       const file = readConfigFile();
       const providers = (file.providers as Record<string, Record<string, unknown>> | undefined) ?? {};
-      if (req.name) {
-        const p = providers[req.name];
-        if (!p) throw new Error(`provider not found: ${req.name}`);
-        if (p.kind === 'claude-code') throw new Error('审稿 provider 必须是 API provider，claude-code 不适合逐轮评审');
+      let nextProviders = providers;
+      if (req.name && !providers[req.name]) {
+        const synth = synthCliEntry(req.name);
+        if (!synth) throw new Error(`provider not found: ${req.name}`);
+        nextProviders = { ...providers, [req.name]: synth };
       }
       fs.writeFileSync(
         configFilePath(),
-        JSON.stringify({ ...file, reviewProvider: req.name }, null, 2) + '\n',
+        JSON.stringify({ ...file, providers: nextProviders, reviewProvider: req.name }, null, 2) + '\n',
         'utf8',
       );
       await rebuildServices();
@@ -1074,11 +1150,34 @@ function resolveBinaryPath(bin: string): string | undefined {
   return undefined;
 }
 
-/** 本机可作为聊天后端的 CLI 检测（v1 仅 claude-code）。取已配置 binary，否则探测 `claude`。 */
+/**
+ * 为「设置里直接选了本机检测到的 CLI（claude-code/codex）但还没建过 entry」的情况合成一条最小
+ * provider entry：binary 回填检测到的绝对路径（GUI 子进程 PATH 可能很瘦，裸名可能找不到）。
+ * 非 CLI 名 → null（调用方据此报「provider not found」）。setActiveProvider / setReviewProvider 共用。
+ */
+function synthCliEntry(name: string): Record<string, unknown> | null {
+  if (name === 'claude-code') {
+    const bin = resolveBinaryPath('claude');
+    return { kind: 'claude-code', model: 'sonnet', ...(bin ? { binary: bin } : {}) };
+  }
+  if (name === 'codex') {
+    const bin = resolveBinaryPath('codex');
+    // codex 默认模型用当前最新别名；用户可在设置里改。订阅走 ~/.codex/auth.json，无需 key。
+    return { kind: 'codex', model: 'gpt-5.6-sol', ...(bin ? { binary: bin } : {}) };
+  }
+  return null;
+}
+
+/** 本机可作为聊天后端的 CLI 检测（claude-code / codex）。取已配置 binary，否则探测默认名。 */
 function detectClis(providersRaw: Record<string, Record<string, unknown>>): CliDTO[] {
-  const cc = Object.values(providersRaw).find((p) => p.kind === 'claude-code');
-  const bin = typeof cc?.binary === 'string' && cc.binary ? cc.binary : 'claude';
-  return [{ id: 'claude-code', label: 'Claude Code CLI', present: Boolean(resolveBinaryPath(bin)) }];
+  const binOf = (kind: string, fallback: string): string => {
+    const e = Object.values(providersRaw).find((p) => p.kind === kind);
+    return typeof e?.binary === 'string' && e.binary ? (e.binary as string) : fallback;
+  };
+  return [
+    { id: 'claude-code', label: 'Claude Code CLI', present: Boolean(resolveBinaryPath(binOf('claude-code', 'claude'))) },
+    { id: 'codex', label: 'Codex CLI', present: Boolean(resolveBinaryPath(binOf('codex', 'codex'))) },
+  ];
 }
 
 /** 设置界面的读取视图：来自 config.json 原文 + env 解析状态；key 永不回传明文。 */
@@ -1091,8 +1190,10 @@ function settingsGet(): SettingsDTO {
       typeof p.apiKey === 'string' && p.apiKey.length > 0 ? (p.apiKey as string) : null;
     const envVar = typeof p.apiKeyEnv === 'string' ? (p.apiKeyEnv as string) : null;
     const envVal = envVar ? (process.env[envVar] ?? '') : '';
-    const kind = p.kind === 'claude-code' ? 'claude-code' : 'openai';
+    const kind =
+      p.kind === 'claude-code' ? 'claude-code' : p.kind === 'codex' ? 'codex' : 'openai';
     // claude-code 的密钥存在 oauthToken（而非 apiKey）；展示成 literal（掩码）。
+    // codex 的 API-key 模式存在 apiKey（literal 路径已覆盖）；订阅模式无 key（none）。
     const ccToken =
       kind === 'claude-code' && typeof p.oauthToken === 'string' && p.oauthToken.length > 0
         ? (p.oauthToken as string)
@@ -1141,8 +1242,8 @@ async function saveSettings(payload: SettingsSaveDTO): Promise<{ ok: true }> {
     throw new Error('activeProvider must be one of providers');
   for (const p of payload.providers) {
     if (!/^[a-z0-9][a-z0-9-]*$/i.test(p.name)) throw new Error(`invalid provider name: ${p.name}`);
-    // claude-code 委托本机 CLI，不走 HTTP，无需 baseURL；其余必须是合法 URL。
-    if (p.kind !== 'claude-code') {
+    // 委托型 CLI（claude-code/codex）不走 HTTP，无需 baseURL；openai 必须是合法 URL。
+    if (p.kind === 'openai') {
       try {
         new URL(p.baseURL);
       } catch {
@@ -1170,14 +1271,18 @@ async function saveSettings(payload: SettingsSaveDTO): Promise<{ ok: true }> {
     base.model = p.model;
     if (p.supportsJsonMode) delete base.supportsJsonMode;
     else base.supportsJsonMode = false;
-    if (p.kind === 'claude-code') {
-      // 不写空 baseURL（否则下次 load 的 url 校验会失败）；密钥存 oauthToken。
+    if (p.kind === 'claude-code' || p.kind === 'codex') {
+      // 委托型 CLI 不写空 baseURL（否则下次 load 的 url 校验会失败）。
       delete base.baseURL;
-      if (p.newApiKey && p.newApiKey.trim()) base.oauthToken = p.newApiKey.trim();
+      // claude-code 的密钥存 oauthToken；codex 的 API-key 模式存 apiKey（留空=订阅，走 auth.json）。
+      if (p.newApiKey && p.newApiKey.trim()) {
+        if (p.kind === 'claude-code') base.oauthToken = p.newApiKey.trim();
+        else base.apiKey = p.newApiKey.trim();
+      }
       // 在「对话模型」里直接选了本机检测到的 CLI（无 binary）→ 回填检测到的绝对路径，
-      // 这样 GIU 子进程即使 PATH 很瘦也能 spawn（裸名 'claude' 可能找不到）。
+      // 这样 GUI 子进程即使 PATH 很瘦也能 spawn（裸名 'claude'/'codex' 可能找不到）。
       if (!base.binary) {
-        const detected = resolveBinaryPath('claude');
+        const detected = resolveBinaryPath(p.kind === 'codex' ? 'codex' : 'claude');
         if (detected) base.binary = detected;
       }
     } else {
@@ -1238,9 +1343,10 @@ async function saveSettings(payload: SettingsSaveDTO): Promise<{ ok: true }> {
   }
   bridge.emit({ kind: 'engine.ready' });
 
-  // 切到 claude-code 但找不到 pith-mcp 配置 → 能聊天但读不到知识库，给个非阻塞提示。
+  // 切到委托型 CLI（claude-code/codex）但找不到 pith-mcp 配置 → 能聊天但读不到知识库，给个非阻塞提示。
   const activeEntry = nextProviders[payload.activeProvider];
-  if (activeEntry?.kind === 'claude-code') {
+  if (activeEntry?.kind === 'claude-code' || activeEntry?.kind === 'codex') {
+    const label = activeEntry.kind === 'codex' ? 'Codex' : 'Claude Code';
     const mcp =
       typeof activeEntry.mcpConfigPath === 'string'
         ? activeEntry.mcpConfigPath
@@ -1248,7 +1354,7 @@ async function saveSettings(payload: SettingsSaveDTO): Promise<{ ok: true }> {
     if (!fs.existsSync(mcp)) {
       emitNotice(
         'warning',
-        `已切到 Claude Code，但未找到 pith-mcp 配置（${mcp}）—— 现在能聊天但读不到你的知识库。请在该 provider 的 mcpConfigPath 指向一个 pith-mcp 配置文件。`,
+        `已切到 ${label}，但未找到 pith-mcp 配置（${mcp}）—— 现在能聊天但读不到你的知识库。请在该 provider 的 mcpConfigPath 指向一个 pith-mcp 配置文件。`,
       );
     }
   }

@@ -13,6 +13,8 @@ import {
   loadConfig,
   parsePositiveIntEnv,
   parseReadPathsFromEnv,
+  pickHydrationProvider,
+  requireApiKey,
   resolveProviderEntry,
   type Config,
 } from '../src/config.js';
@@ -355,6 +357,54 @@ describe('multi-provider — applyActiveProvider', () => {
       activeProvider: 'openai',
     });
     expect(() => applyActiveProvider(cfg)).toThrow(/not found/);
+  });
+
+  it('codex entry（无 baseURL）→ providerKind=codex + baseURL 占位兜底', () => {
+    const cfg = baseConfig({
+      providers: {
+        codex: { kind: 'codex', model: 'gpt-5.6-sol' },
+      },
+      activeProvider: 'codex',
+    });
+    const result = applyActiveProvider(cfg);
+    expect(result.providerKind).toBe('codex');
+    expect(result.model).toBe('gpt-5.6-sol');
+    // createClient 会 new OpenAI（即便 codex 分支从不调用它），故顶层 baseURL 必须合法
+    expect(() => new URL(result.baseURL)).not.toThrow();
+  });
+});
+
+describe('委托型 CLI provider — codex', () => {
+  it('resolveProviderEntry：codex 无 baseURL → 占位 https://api.openai.com', () => {
+    const r = resolveProviderEntry({ kind: 'codex', model: 'gpt-5.6-sol' });
+    expect(r.baseURL).toBe('https://api.openai.com');
+  });
+
+  it('pickHydrationProvider：codex 永不入选水合（不能做批量 JSON 水合）', () => {
+    const cfg = {
+      providers: {
+        codex: { kind: 'codex', model: 'gpt-5.6-sol' },
+      },
+      hydrationProvider: undefined,
+    } as unknown as Config;
+    expect(pickHydrationProvider(cfg)).toBeUndefined();
+  });
+
+  it('pickHydrationProvider：显式选 codex 也被拒（回退到自动选 openai）', () => {
+    const cfg = {
+      providers: {
+        codex: { kind: 'codex', model: 'gpt-5.6-sol' },
+        api: { kind: 'openai', baseURL: 'https://x.example.com', model: 'm', apiKey: 'k' },
+      },
+      hydrationProvider: 'codex',
+    } as unknown as Config;
+    // 显式选了 codex（非法）→ 跳过，自动落到第一个 openai
+    expect(pickHydrationProvider(cfg)?.model).toBe('m');
+  });
+
+  it('requireApiKey：codex 在 CLI 侧 fail-fast（委托型 provider 仅桌面端可用）', () => {
+    const cfg = { providerKind: 'codex', activeProvider: 'codex', apiKey: '' } as unknown as Config;
+    expect(() => requireApiKey(cfg)).toThrow(/desktop-only|codex/);
   });
 });
 

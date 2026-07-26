@@ -51,9 +51,11 @@ const ProviderSchema = z
      * provider 类型：
      *   - `openai`（默认）：OpenAI 兼容 HTTP endpoint，走 chat.completions（现有全部）。
      *   - `claude-code`：委托本机 `claude` CLI（headless + pith-mcp），复用订阅额度。
-     *     仅供桌面端 chat 使用；hydration/queue 仍需一个 openai provider。
+     *   - `codex`：委托本机 `codex` CLI（`codex exec --json` + pith-mcp 经 `-c` 内联注册），
+     *     复用 ChatGPT/Codex 订阅额度。与 claude-code 同为「委托型 CLI」provider。
+     *     两者仅供桌面端 chat 使用；hydration/queue 仍需一个 openai provider。
      */
-    kind: z.enum(['openai', 'claude-code']).default('openai'),
+    kind: z.enum(['openai', 'claude-code', 'codex']).default('openai'),
     /** OpenAI 兼容端点。openai 类型必填；claude-code 不需要（可省）。 */
     baseURL: z.string().url().optional(),
     model: z.string().min(1),
@@ -72,13 +74,17 @@ const ProviderSchema = z
      * 三级抢救 (直 parse → 剥 markdown fence → 找首{...末}) 兜底解析非严格 JSON 输出。
      */
     supportsJsonMode: z.boolean().optional(),
-    /** claude-code 专属：claude 可执行路径（默认 'claude'，PATH 里能找到就不用填）。 */
+    /** 委托型 CLI（claude-code/codex）共用：可执行路径（默认 'claude'/'codex'，PATH 里能找到就不用填）。 */
     binary: z.string().optional(),
-    /** claude-code 专属：走订阅的 OAuth token（`claude setup-token` 生成；设置页填写）。 */
+    /** claude-code 专属：走订阅的 OAuth token（`claude setup-token` 生成；设置页填写）。codex 走 `codex login` 写的 ~/.codex/auth.json，不用此字段。 */
     oauthToken: z.string().optional(),
     /** claude-code 专属：从该 env 变量读 OAuth token（oauthToken 的替代，避免明文落 config）。 */
     oauthTokenEnv: z.string().optional(),
-    /** claude-code 专属：指向 pith-mcp 的 --mcp-config 文件路径（如 ~/pith-mcp.json）。 */
+    /**
+     * 委托型 CLI（claude-code/codex）共用：指向 pith-mcp 的配置文件路径（如 ~/pith-mcp.json）。
+     * claude-code 作为 `--mcp-config <file>` 直接传入；codex 读它拿 command/args/env，翻成
+     * `-c mcp_servers.pith.*` 内联覆盖（codex 无 --mcp-config 文件标志）。一份配置两个 CLI 共用。
+     */
     mcpConfigPath: z.string().optional(),
   })
   .superRefine((v, ctx) => {
@@ -104,9 +110,9 @@ const ConfigSchema = z.object({
   supportsJsonMode: z.boolean().default(true),
   /**
    * 当前 active provider 的类型（由 applyActiveProvider 从 entry.kind 折下来）。
-   * claude-code → 桌面端该会话走委托 agent（spawn claude CLI），不走 chat.completions。
+   * claude-code/codex → 桌面端该会话走委托 agent（spawn 对应 CLI），不走 chat.completions。
    */
-  providerKind: z.enum(['openai', 'claude-code']).default('openai'),
+  providerKind: z.enum(['openai', 'claude-code', 'codex']).default('openai'),
   /** Multi-provider map（可选）。空 → 走顶层 apiKey/baseURL/model（v0 行为）。 */
   providers: z.record(z.string(), ProviderSchema).default({}),
   /**
@@ -125,7 +131,7 @@ const ConfigSchema = z.object({
   hydrationProvider: z.string().optional(),
   /**
    * 审稿模式（ReviewingAgent）专用 reviewer provider key。空 → reviewer 与 writer 同 provider。
-   * 必须是 API（openai）provider——claude-code 不适合当逐轮评审。
+   * 可指向 openai（独立 API client）或委托型 CLI（claude-code/codex，每轮 spawn 该 CLI 当 reviewer）。
    */
   reviewProvider: z.string().optional(),
   workspaceRoot: z.string().min(1),
@@ -618,10 +624,15 @@ export function resolveProviderEntry(entry: ProviderConfig): {
   const apiKey = entry.apiKey && entry.apiKey.length > 0 ? entry.apiKey : fromEnv;
   // entry 未声明视为支持 —— 主流 chat endpoint 都支持，关掉是例外不是默认
   const supportsJsonMode = entry.supportsJsonMode ?? true;
-  // claude-code 不走 HTTP，但顶层 baseURL 必须是合法 URL（createClient 会 new OpenAI，
-  // 即便该 client 从不被调用）——给官方占位地址兜底。
+  // 委托型 CLI（claude-code/codex）不走 HTTP，但顶层 baseURL 必须是合法 URL（createClient
+  // 会 new OpenAI，即便该 client 从不被调用）——给官方占位地址兜底。
   const baseURL =
-    entry.baseURL ?? (entry.kind === 'claude-code' ? 'https://api.anthropic.com' : '');
+    entry.baseURL ??
+    (entry.kind === 'claude-code'
+      ? 'https://api.anthropic.com'
+      : entry.kind === 'codex'
+        ? 'https://api.openai.com'
+        : '');
   return { apiKey, baseURL, model: entry.model, supportsJsonMode };
 }
 
@@ -656,10 +667,10 @@ export function applyActiveProvider(parsed: Config): Config {
 /**
  * 选水合用的 provider entry：显式 `hydrationProvider` > 第一个 openai 类 provider。
  * 都没有 → undefined（调用方回退到顶层 config，即 v0 单 provider 行为）。
- * claude-code 类永不入选（它不能做批量 JSON 水合）。
+ * 委托型 CLI（claude-code/codex）永不入选（它们不能做批量 JSON 水合）。
  */
 export function pickHydrationProvider(config: Config): ProviderConfig | undefined {
-  const isOpenai = (e: ProviderConfig) => (e.kind ?? 'openai') !== 'claude-code';
+  const isOpenai = (e: ProviderConfig) => (e.kind ?? 'openai') === 'openai';
   if (config.hydrationProvider) {
     const e = config.providers[config.hydrationProvider];
     if (e && isOpenai(e)) return e;
@@ -699,15 +710,15 @@ export function ensureSkillsDir(config: Config): void {
 }
 
 export function requireApiKey(config: Config): void {
-  // claude-code 是委托型 provider，只有桌面端 engine 实现了 spawn claude CLI 的路径；
-  // CLI（REPL / 子命令）的 createClient 只会 new OpenAI 连 anthropic 端点、必然失败。
+  // claude-code / codex 是委托型 provider，只有桌面端 engine 实现了 spawn 对应 CLI 的路径；
+  // CLI（REPL / 子命令）的 createClient 只会 new OpenAI 连占位端点、必然失败。
   // 与其放行后在第一条消息处报一个难懂的鉴权错，不如此处 fail-fast 给出切换指引。
   // dev REPL 默认读 ~/.pith-wiki-dev/config.json——桌面 dev 把 activeProvider 设成
-  // claude-code 时，共用同一个 home 的 CLI 会继承到这个不支持的 provider。
-  if (config.providerKind === 'claude-code') {
-    const name = config.activeProvider ?? 'claude-code';
+  // 委托型 provider 时，共用同一个 home 的 CLI 会继承到这个不支持的 provider。
+  if (config.providerKind !== 'openai') {
+    const name = config.activeProvider ?? config.providerKind;
     throw new Error(
-      `provider "${name}" (kind: claude-code) is desktop-only — the CLI cannot delegate to the claude binary. ` +
+      `provider "${name}" (kind: ${config.providerKind}) is desktop-only — the CLI cannot delegate to the ${config.providerKind} binary. ` +
         `Switch to an OpenAI-compatible provider for the CLI: pass --provider <name>, set PITH_WIKI_PROVIDER=<name>, ` +
         `or change "activeProvider" in the config.json under your pith-wiki home.`,
     );

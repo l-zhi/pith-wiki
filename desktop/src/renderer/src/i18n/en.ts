@@ -264,7 +264,7 @@ export const en: Shape<typeof zh> = {
     provider: 'Provider',
     library: 'Library',
     soulTitle: 'Soul (voice & persona)',
-    soulDesc: 'A markdown snippet injected into the chat system prompt — sets tone, address, answer style and preferences. Applies to both the built-in model and Claude Code. Leave empty to inject nothing.',
+    soulDesc: 'A markdown snippet injected into the chat system prompt — sets tone, address, answer style and preferences. Applies to the built-in model, Claude Code and Codex. Leave empty to inject nothing.',
     soulPresetHint: 'Not sure what to write? Pick one:',
     soulPlaceholder: 'e.g.\n- Answer in a direct tone, skip the pleasantries\n- Lead with the conclusion, then the reasoning\n- When there are trade-offs, give your recommendation',
     soulSave: 'Save soul',

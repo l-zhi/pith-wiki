@@ -264,7 +264,7 @@ export const zh = {
     provider: 'Provider',
     library: '知识库',
     soulTitle: '灵魂（语气与人设）',
-    soulDesc: '一段 markdown，注入对话的 system prompt——设定语气、称呼、回答风格与偏好。对 pith 自带模型和 Claude Code 都生效。留空则不注入。',
+    soulDesc: '一段 markdown，注入对话的 system prompt——设定语气、称呼、回答风格与偏好。对 pith 自带模型、Claude Code 和 Codex 都生效。留空则不注入。',
     soulPresetHint: '不知道填什么？点一个套用：',
     soulPlaceholder: '例如：\n- 用简体中文，语气直接、不寒暄\n- 回答先给结论，再给依据\n- 涉及取舍时给出你的推荐',
     soulSave: '保存灵魂',
