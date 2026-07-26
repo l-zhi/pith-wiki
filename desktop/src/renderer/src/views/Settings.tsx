@@ -14,7 +14,7 @@ import type { SettingsDTO, SettingsSaveDTO, WatchDirDTO } from '../../../shared/
 
 interface ProviderDraft {
   name: string;
-  kind: 'openai' | 'claude-code';
+  kind: 'openai' | 'claude-code' | 'codex';
   baseURL: string;
   model: string;
   supportsJsonMode: boolean;
@@ -296,7 +296,7 @@ export function Settings() {
   // 区域 3（对话模型）选项 = openai providers + 本机检测到的 CLI。
   // 既没检测到、也没配置过的 CLI 选了也用不了 → 直接不列入。
   const cliOptions = (settings.availableClis ?? [])
-    .map((cli) => ({ cli, entry: draft.providers.find((p) => p.kind === 'claude-code') }))
+    .map((cli) => ({ cli, entry: draft.providers.find((p) => p.kind === cli.id) }))
     .filter(({ cli, entry }) => cli.present || entry)
     .map(({ cli, entry }) => ({
       value: entry?.name ?? cli.id,
@@ -509,6 +509,7 @@ export function Settings() {
             options={[
               { value: '', label: t('settings.reviewProviderSame') },
               ...openaiProviders.map((p) => ({ value: p.name, label: p.name })),
+              ...cliOptions,
             ]}
           />
         </Row>
