@@ -4,7 +4,12 @@ import { useTranslation } from 'react-i18next';
 import { Badge, Button, Card, Input, SegmentedControl, Switch } from '../ds';
 import { DocEditor, type DocPreset } from './DocEditor';
 import { useStore, type Theme } from '../store';
-import type { SettingsDTO, SettingsSaveDTO, WatchDirDTO } from '../../../shared/protocol';
+import type {
+  ProviderKindDTO,
+  SettingsDTO,
+  SettingsSaveDTO,
+  WatchDirDTO,
+} from '../../../shared/protocol';
 
 /**
  * Settings —— 设计稿 Settings.jsx 的三段结构：Provider / Library / Appearance。
@@ -14,7 +19,7 @@ import type { SettingsDTO, SettingsSaveDTO, WatchDirDTO } from '../../../shared/
 
 interface ProviderDraft {
   name: string;
-  kind: 'openai' | 'claude-code' | 'codex';
+  kind: ProviderKindDTO;
   baseURL: string;
   model: string;
   supportsJsonMode: boolean;

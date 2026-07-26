@@ -208,6 +208,18 @@ pi：`~/.pi/agent/{settings,models,auth}.json` + 环境变量 + `trust.json`。
 
 ---
 
+## 6.5 实施进度（本分支）
+
+- **C 已实现并本机端到端验证** — 见 `docs/PRD-pi-integration.md`。pi 成为第 3 个委托型 provider，
+  知识库经一段零依赖的 MCP 桥接扩展接入（pi 没有 MCP）。实测：模型调 `wiki_list` → 桥接 →
+  pith-mcp → 真实条目 → 第二轮据此作答；`--session <id>` 多轮续接确认。
+- **spike 2 已答：可行** — MCP 的 JSON Schema 原样喂 pi 的 `registerTool.parameters`，TypeBox 正常校验。
+  → 迁移工具层时 **zod→JSON Schema 适配器路线成立**，L3 的估算从 3–4 人日降到约 1 人日。
+- **新发现的两个坑（已在实现里规避）**：pi 的 print/json 模式会读 stdin 并入 prompt（父进程不关
+  stdin 会挂死）；不能用 `node:readline` 切 JSONL（它在 U+2028/U+2029 也断行，而知识库正文常有）。
+- 待办：spike 3（流式下 mask/block 还原）、4（hydration 结构化输出替代）、5（Electron 打包体积）
+  —— 都属于方案 B 的前置。
+
 ## 7. 参考
 
 - [earendil-works/pi（仓库）](https://github.com/earendil-works/pi)

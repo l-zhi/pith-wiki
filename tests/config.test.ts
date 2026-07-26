@@ -408,6 +408,45 @@ describe('委托型 CLI provider — codex', () => {
   });
 });
 
+describe('委托型 CLI provider — pi', () => {
+  it('resolveProviderEntry：pi 无 baseURL → 占位 https://pi.invalid（合法 URL）', () => {
+    const r = resolveProviderEntry({ kind: 'pi', model: 'default' });
+    // pi 是 provider-agnostic（真实端点由 pi 自己按 --model / auth.json 决定）→ 占位域名，
+    // 但必须是合法 URL，因为 createClient 仍会 new OpenAI（该 client 在 pi 分支从不被调用）。
+    expect(r.baseURL).toBe('https://pi.invalid');
+    expect(() => new URL(r.baseURL)).not.toThrow();
+  });
+
+  it('applyActiveProvider：pi entry → providerKind=pi', () => {
+    const cfg = {
+      apiKey: '',
+      baseURL: 'https://top.example.com',
+      model: 'top',
+      providers: { pi: { kind: 'pi', model: 'default' } },
+      activeProvider: 'pi',
+    } as unknown as Config;
+    const result = applyActiveProvider(cfg);
+    expect(result.providerKind).toBe('pi');
+    expect(result.model).toBe('default');
+  });
+
+  it('pickHydrationProvider：pi 永不入选水合（同 claude-code/codex）', () => {
+    const cfg = {
+      providers: {
+        pi: { kind: 'pi', model: 'default' },
+        api: { kind: 'openai', baseURL: 'https://x.example.com', model: 'm', apiKey: 'k' },
+      },
+      hydrationProvider: 'pi',
+    } as unknown as Config;
+    expect(pickHydrationProvider(cfg)?.model).toBe('m');
+  });
+
+  it('requireApiKey：pi 在 CLI 侧 fail-fast（委托型 provider 仅桌面端可用）', () => {
+    const cfg = { providerKind: 'pi', activeProvider: 'pi', apiKey: '' } as unknown as Config;
+    expect(() => requireApiKey(cfg)).toThrow(/desktop-only|pi/);
+  });
+});
+
 describe('multi-provider — loadConfig 端到端', () => {
   let savedEnv: Record<string, string | undefined>;
 
