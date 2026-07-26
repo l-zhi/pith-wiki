@@ -208,17 +208,38 @@ pi：`~/.pi/agent/{settings,models,auth}.json` + 环境变量 + `trust.json`。
 
 ---
 
-## 6.5 实施进度（本分支）
+## 6.5 实施进度（本分支，C → B → A 已按序执行）
 
-- **C 已实现并本机端到端验证** — 见 `docs/PRD-pi-integration.md`。pi 成为第 3 个委托型 provider，
-  知识库经一段零依赖的 MCP 桥接扩展接入（pi 没有 MCP）。实测：模型调 `wiki_list` → 桥接 →
-  pith-mcp → 真实条目 → 第二轮据此作答；`--session <id>` 多轮续接确认。
-- **spike 2 已答：可行** — MCP 的 JSON Schema 原样喂 pi 的 `registerTool.parameters`，TypeBox 正常校验。
-  → 迁移工具层时 **zod→JSON Schema 适配器路线成立**，L3 的估算从 3–4 人日降到约 1 人日。
-- **新发现的两个坑（已在实现里规避）**：pi 的 print/json 模式会读 stdin 并入 prompt（父进程不关
-  stdin 会挂死）；不能用 `node:readline` 切 JSONL（它在 U+2028/U+2029 也断行，而知识库正文常有）。
-- 待办：spike 3（流式下 mask/block 还原）、4（hydration 结构化输出替代）、5（Electron 打包体积）
-  —— 都属于方案 B 的前置。
+| 步骤 | 状态 | 产物 |
+| --- | --- | --- |
+| **C** pi 作为第 4 个委托型 provider | **已实现 + 本机端到端实测** | `docs/PRD-pi-integration.md` §0–§6；`desktop/src/engine/{piAgent,piBridgeSource}.ts` |
+| **B** pi-ai 作为可选传输层 | **已实现 + faux/真机双验** | `docs/PRD-pi-integration.md` §7；`src/llm/{transport,piAiTransport,piMessageMap}.ts` |
+| **A** pi-agent-core 换 agent loop | **tracer bullet 已跑通，未切默认** | `docs/PRD-pi-core-agent.md`；`desktop/src/engine/piCoreAgent.ts`、`src/security/streamRestore.ts` |
+
+六个 spike 的结论（全部实测，不是推演）：
+
+1. **DeepSeek/GLM 自定义 provider** — 走 openai-completions 自定义 provider 跑通（B 的真机验证）。
+2. **zod→JSON Schema 直喂 pi** — ✅ 可行。TypeBox 接受普通 JSON Schema，工具层**不需要**全量重写
+   → L3 估算 3–4 人日降到约 1 人日。
+3. **流式下的 mask 还原** — ✅ 已实现（`createStreamRestorer`，hold-back 状态机 + 8 例测试，
+   含穷举切点等价性）。原报告点名的「最容易低估的一块」变成 130 行的完成件。
+4. **hydration 结构化输出替代** — ❌ 不行。抓真实 payload：pi-ai 从不发 `response_format`；
+   给工具加 constrainedSampling 后 body 里确实带 `"strict": true`，但**不强制 `tool_choice`**，
+   模型可以不调 → 水合双栈（openai SDK）保留。
+5. **Electron 打包 / 启动** — +70 MB node_modules（pi-ai 18M + agent-core 1.7M + 厂商 SDK ≈52M）；
+   `import pi-ai` 130 ms、加 agent-core 160 ms；electron-vite 把 pi 包 external 化，engine bundle
+   只多 8 KB chunk。**顺手修掉一处回归**：client.ts 原先静态 import 让默认（openai）用户也付
+   这 160 ms，已改惰性 import。
+6. **会话历史兼容** — ✅ `fromPiMessages` 让 A 的历史仍是 OpenAI 形状，既有 JSONL 持久化 /
+   `deriveDisplay` UI 回放 / transcript **一行不改**。
+
+实测新发现（都已在实现里规避）：pi CLI 的 print/json 模式读管道 stdin（不关 stdin 会挂死）；
+不能用 `node:readline` 切 pi 的 JSONL（它在 U+2028/U+2029 也断行，知识库正文常有）；
+pi-ai 会往 body 塞 `store`/`prompt_cache_key`/`prompt_cache_retention`（后两个 compat 关不掉，
+挑剔端点会 400）→ 自定义端点路径用 `onPayload` 剥掉。
+
+**A 的剩余成本修订**：15–22 人日 → **8–12 人日**，缺口清单见 `docs/PRD-pi-core-agent.md` §4。
+建议仍是先不切默认，gate 见该文档 §5。
 
 ## 7. 参考
 
