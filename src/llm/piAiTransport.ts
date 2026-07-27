@@ -1,7 +1,6 @@
 import {
   createModels,
   createProvider,
-  envApiKeyAuth,
   type AssistantMessage,
   type Model as PiModel,
   type Models,
@@ -84,14 +83,39 @@ function customProviderModels(config: Config): {
     id: providerId,
     name: 'pith endpoint',
     baseUrl: config.baseURL,
-    // key 每次请求由 options.apiKey 显式传入（pith 的真源是 config），env 兜底保留。
-    auth: { apiKey: envApiKeyAuth('pith endpoint API key', ['PITH_WIKI_API_KEY']) },
+    // 鉴权直接闭包 config —— pith 的真源就是 config（它自己已经把 apiKeyEnv / secrets
+    // 解析完了）。**不能只靠调用方逐请求传 apiKey**：pi-agent-core 的 loop 由 pi 自己
+    // 驱动 streamSimple，宿主没有统一注入点，只传一半就会出现「Provider is not configured」
+    // （路线 A 接线时真踩到过）。config 没配 key 时回退到 env，保持 keyless 端点可用。
+    auth: {
+      apiKey: {
+        name: 'pith endpoint API key',
+        resolve: async () => {
+          const key = config.apiKey || process.env.PITH_WIKI_API_KEY || '';
+          return { auth: key ? { apiKey: key } : {}, source: config.apiKey ? 'pith config' : 'env' };
+        },
+      },
+    },
     models: [model],
     api: openAICompletionsApi(),
   });
   const models = createModels();
   models.setProvider(provider);
   return { models, model };
+}
+
+/**
+ * 解析出「发请求要用的 models 集合 + model」。传输层（路线 B）与 pi-agent-core 宿主
+ * 装配（路线 A）共用，保证两条路的 provider/鉴权/compat 行为完全一致。
+ */
+export async function resolvePiModels(
+  config: Config,
+): Promise<{ models: Models; model: PiModel<never>; custom: boolean }> {
+  if (config.piProvider) return { ...(await builtinProviderModels(config)), custom: false };
+  return {
+    ...(customProviderModels(config) as unknown as { models: Models; model: PiModel<never> }),
+    custom: true,
+  };
 }
 
 /** 用 pi-ai 内建 provider 全集解析 `piProvider/model`。动态 import：不用就不付体积成本。 */

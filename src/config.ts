@@ -138,6 +138,15 @@ const ConfigSchema = z.object({
    */
   transport: z.enum(['openai', 'pi-ai']).default('openai'),
   /**
+   * **对话** agent loop 的实现（水合/队列/digest 不受影响，永远是 pith 自己的链路）：
+   *   - `pith`（默认）：pith 手写的 tool loop（src/llm/agent.ts）
+   *   - `pi-core`：`@earendil-works/pi-agent-core` 的 loop（desktop only，见
+   *     docs/PRD-pi-core-agent.md）。工具/沙箱/审批/安全过滤全部沿用 pith 的，
+   *     换的只是「谁在驱动这个循环」。
+   * env: PITH_WIKI_AGENT_IMPL。
+   */
+  agentImpl: z.enum(['pith', 'pi-core']).default('pith'),
+  /**
    * transport='pi-ai' 时可选：pi-ai 内建 provider id（如 `anthropic` / `openai` /
    * `google` / `mistral`），此时 model 按该 provider 的模型 id 解析、鉴权走 pi-ai 的
    * 解析链（env var / credential store）。
@@ -615,6 +624,7 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     // 传输实现：env > file > 默认 openai。与 supportsJsonMode 同理，用了 provider map 时
     // 会被 applyActiveProvider 用 entry 的同名字段覆盖（一个 provider 一种传输）。
     transport: process.env.PITH_WIKI_TRANSPORT ?? file.transport,
+    agentImpl: process.env.PITH_WIKI_AGENT_IMPL ?? file.agentImpl,
     piProvider: process.env.PITH_WIKI_PI_PROVIDER ?? file.piProvider,
     // multi-provider：providers 表来自 file（不接受 env，结构复杂），activeProvider
     // 走 CLI > env > file。Zod 校验之后再 overlay 到顶层 apiKey/baseURL/model。

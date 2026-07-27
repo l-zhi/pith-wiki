@@ -6,7 +6,7 @@
  * 脚本化响应 → 真的走 tool 执行 → 真的产出事件流。安全用例用**真实的 Sanitizer +
  * 流式还原器**，因此「脱敏出站 / 还原入站」在这条新链路上是被验证过的，不是承诺。
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createModels,
   fauxAssistantMessage,
@@ -222,5 +222,63 @@ describe('PiCoreAgent — pi-agent-core loop 跑 pith 工具', () => {
     agent.reset();
     expect(agent.exportHistory()).toEqual([]);
     expect(agent.snapshot()).toBe('');
+  });
+});
+
+describe('PiCoreAgent — @-mention scope', () => {
+  it('scope 非空时把预算好的上下文作为前置消息压在问题前', async () => {
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const agent = new PiCoreAgent({
+      models,
+      model: faux.getModel() as unknown as PiModel<Api>,
+      systemPrompt: 'S',
+      tools: [],
+      buildScopePreamble: (question, scope) =>
+        `[Scoped: ${scope.collections?.join(',')}] 关于「${question}」的资料`,
+    });
+
+    const seen: PiContext[] = [];
+    faux.setResponses([
+      (context) => {
+        seen.push(context);
+        return fauxAssistantMessage([fauxText('好的')]);
+      },
+    ]);
+
+    await agent.send('tech 里有什么？', { scope: { collections: ['tech'], folders: [], entryIds: [] } });
+
+    // 模型看到的第一条就是 scope 上下文，随后才是真实问题。
+    // 注意两条消息的 content 形态不同：注入的是纯字符串，pi 自己 prompt() 出来的是
+    // 内容块数组 —— pi-ai 的 UserMessage 两种都合法，断言用统一取文本的方式。
+    const textOf = (m: unknown): string => {
+      const c = (m as { content: unknown }).content;
+      if (typeof c === 'string') return c;
+      return (c as Array<{ type?: string; text?: string }>)
+        .filter((b) => b?.type === 'text')
+        .map((b) => b.text ?? '')
+        .join('');
+    };
+    expect(seen[0].messages.map((m) => m.role)).toEqual(['user', 'user']);
+    expect(textOf(seen[0].messages[0])).toContain('[Scoped: tech]');
+    expect(textOf(seen[0].messages[1])).toBe('tech 里有什么？');
+  });
+
+  it('没有 scope 时不注入任何东西', async () => {
+    const faux = fauxProvider();
+    const models = createModels();
+    models.setProvider(faux.provider);
+    const preamble = vi.fn(() => 'never used');
+    const agent = new PiCoreAgent({
+      models,
+      model: faux.getModel() as unknown as PiModel<Api>,
+      systemPrompt: 'S',
+      tools: [],
+      buildScopePreamble: preamble,
+    });
+    faux.setResponses([fauxAssistantMessage([fauxText('好的')])]);
+    await agent.send('普通问题');
+    expect(preamble).not.toHaveBeenCalled();
   });
 });

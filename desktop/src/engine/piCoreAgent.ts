@@ -69,6 +69,12 @@ export interface PiCoreAgentOptions {
   /** 工具轮数上限（对齐 pith 的 maxSteps）。达到后拒绝新工具调用，逼模型基于已有信息作答。 */
   maxToolTurns?: number;
   security?: PiCoreSecurity;
+  /**
+   * `@`-mention 范围钉死：把本轮 scope 预算成一段上下文，作为前置 user 消息压在问题前
+   * （即使模型这轮不调 wiki_query，@文件/@目录 的内容也已在眼前）。返回空串 → 不注入。
+   * 由宿主提供（需要 ContextAssembler，属于核心层）。
+   */
+  buildScopePreamble?: (question: string, scope: ScopeDTO) => string;
 }
 
 export type StreamEvents = {
@@ -171,7 +177,7 @@ export class PiCoreAgent implements AgentLike {
     text: string,
     opts: {
       signal?: AbortSignal;
-      // scope 暂不参与（pith 的 @-mention 预算上下文属于内置 Agent 的能力）。
+      /** `@`-mention 范围：经 buildScopePreamble 变成前置上下文消息（见下）。 */
       scope?: ScopeDTO;
       events?: StreamEvents;
     } = {},
@@ -179,6 +185,17 @@ export class PiCoreAgent implements AgentLike {
     const events = opts.events ?? {};
     const security = this.opts.security;
     this.turnsThisRun = 0;
+
+    // @-mention：先把范围内的上下文作为一条前置 user 消息压进历史（与 pith 内置 Agent 同语义）。
+    if (opts.scope && this.opts.buildScopePreamble) {
+      const preamble = this.opts.buildScopePreamble(text, opts.scope);
+      if (preamble.trim()) {
+        this.agent.state.messages = [
+          ...this.agent.state.messages,
+          { role: 'user', content: preamble, timestamp: 0 },
+        ] as never;
+      }
+    }
 
     /** 已完成轮次的正文（流式回放时拼前缀） + 当前轮的增量。 */
     const completed: string[] = [];

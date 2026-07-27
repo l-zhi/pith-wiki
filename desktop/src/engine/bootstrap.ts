@@ -30,10 +30,14 @@ import { Agent, defaultSystemPrompt } from '@core/llm/agent.js';
 import { ClaudeCodeAgent } from './claudeCodeAgent.js';
 import { CodexAgent } from './codexAgent.js';
 import { PiAgent } from './piAgent.js';
+import { PiCoreAgent } from './piCoreAgent.js';
+import { buildScopePreamble, toToolSpecs } from './piCoreWiring.js';
+import { resolvePiModels } from '@core/llm/piAiTransport.js';
+import { createSecurityHooks, type SecurityHooks } from '@core/security/index.js';
 import { ensurePiBridge } from './piBridgeSource.js';
 import { ReviewingAgent, type ReviewTrace } from './reviewingAgent.js';
 import { composeSystemPrompt, loadSoul, SOUL_PROMPT_HEADER, type LoadedSoul } from '@core/llm/soul.js';
-import { buildContext } from '@core/tools/index.js';
+import { ALL_TOOLS, buildContext } from '@core/tools/index.js';
 import { makeSkillTool } from '@core/tools/skill.js';
 import { runCommandTool } from '@core/tools/run_command.js';
 import { httpRequestTool } from '@core/tools/http_request.js';
@@ -70,6 +74,7 @@ import {
   type CliDTO,
   type ProviderDTO,
   type QueueDigestDTO,
+  type ScopeDTO,
   type ScheduledTaskDTO,
   type ScheduleSpecDTO,
   type SettingsDTO,
@@ -189,6 +194,7 @@ function readPithMcpSpec(
     return undefined;
   }
 }
+
 
 async function initServices(): Promise<Services> {
   const home = pithWikiHome();
@@ -349,6 +355,34 @@ async function initServices(): Promise<Services> {
   /* —— 定时任务（触发宿主 = 本 engine） —— */
   const scheduleService = new ScheduleService(new ScheduleStore(config.scheduleStatePath));
 
+  /* —— pi-core 的安全钩子。client 层的 monkey-patch 覆盖不到 pi-agent-core
+   * （它不走 chat.completions），所以脱敏/还原要显式接。与 chat client 同生命周期：
+   * 一个 engine 一份占位符映射表，跨会话稳定可还原（与现状语义一致）。 */
+  const securityHooks: SecurityHooks | undefined =
+    config.agentImpl === 'pi-core'
+      ? createSecurityHooks(config, (msg, kind) =>
+          emitNotice(kind === 'warning' ? 'warning' : 'info', `🔒 ${msg}`),
+        )
+      : undefined;
+
+  /* —— pi-core agent loop（可选实现，config.agentImpl='pi-core'）——
+   * 在这里一次性解析 models/model：pi-agent-core 构造时就要 model，而内建 provider 路径
+   * 是异步的（动态 import）。只有开了这个开关才付这笔（~130ms + 依赖加载）。 */
+  let piCoreRuntime: Awaited<ReturnType<typeof resolvePiModels>> | null = null;
+  if (config.agentImpl === 'pi-core') {
+    try {
+      piCoreRuntime = await resolvePiModels(config);
+      console.log(
+        `[pith/route] agent loop → pi-agent-core | model=${config.model} custom=${piCoreRuntime.custom}`,
+      );
+    } catch (err) {
+      emitNotice(
+        'error',
+        `pi-core agent 初始化失败，本次回退到 pith 内置 loop：${(err as Error).message}`,
+      );
+    }
+  }
+
   /* —— SessionManager —— */
   const sessionStore = new SessionStore(path.join(home, 'sessions'));
   const agentFactory: AgentFactory = (sessionId, approvals, origin, reviewMode) => {
@@ -488,11 +522,28 @@ async function initServices(): Promise<Services> {
       if (skillRegistry.allowedHosts().size > 0) extraTools.push(httpRequestTool);
       extraTools.push(...scheduleTools);
       console.log(
-        `[pith/route] chat → openai | provider=${config.activeProvider || '(top-level)'} ` +
+        `[pith/route] chat → ${piCoreRuntime ? 'pi-agent-core' : 'pith'} loop | ` +
+          `transport=${config.transport} provider=${config.activeProvider || '(top-level)'} ` +
           `model=${config.model} baseURL=${config.baseURL} review=${reviewMode}`,
       );
       const mkPith = (systemPrompt: string): AgentLike =>
-        new Agent(client, config.model, ctx, { systemPrompt, extraTools, maxSteps: config.maxSteps });
+        piCoreRuntime
+          ? new PiCoreAgent({
+              models: piCoreRuntime.models,
+              model: piCoreRuntime.model,
+              systemPrompt,
+              // 同一批 pith 工具（含 skill / run_command / http_request / schedule），
+              // 同一个 ToolContext —— 沙箱、审批（run_command）、scope 全都跟着过来。
+              tools: toToolSpecs([...ALL_TOOLS, ...extraTools], ctx),
+              maxToolTurns: config.maxSteps,
+              ...(securityHooks ? { security: securityHooks } : {}),
+              buildScopePreamble: (question, scope) => buildScopePreamble(ctx, question, scope),
+            })
+          : new Agent(client, config.model, ctx, {
+              systemPrompt,
+              extraTools,
+              maxSteps: config.maxSteps,
+            });
       writer = mkPith(composeSystemPrompt(defaultSystemPrompt, soul));
       makeReviewer = () => mkPith(REVIEWER_SYSTEM_PROMPT);
       model = config.model;
