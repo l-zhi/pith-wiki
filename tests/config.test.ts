@@ -644,3 +644,37 @@ describe('requestTimeoutMs — 配置链', () => {
     expect(loadConfig({ requestTimeoutMs: 5000 }).requestTimeoutMs).toBe(5000);
   });
 });
+
+describe('piProvider —— 用 pi-ai 内建 provider（如 Anthropic 原生协议）', () => {
+  it('设了 piProvider 就不强制 baseURL（端点由 pi-ai 的模型目录决定）', () => {
+    const cfg = {
+      apiKey: '',
+      baseURL: 'https://top.example.com',
+      model: 'claude-opus-4-5',
+      providers: {
+        claude: {
+          kind: 'openai',
+          model: 'claude-opus-4-5',
+          transport: 'pi-ai',
+          piProvider: 'anthropic',
+        },
+      },
+      activeProvider: 'claude',
+    } as unknown as Config;
+    const result = applyActiveProvider(cfg);
+    expect(result.providerKind).toBe('openai'); // 非委托 → agentImpl 能生效
+    expect(result.transport).toBe('pi-ai');
+    expect(result.piProvider).toBe('anthropic');
+    // 占位 baseURL 仍是合法 URL（ConfigSchema 的约束），但这条路径不会去连它
+    expect(() => new URL(result.baseURL)).not.toThrow();
+  });
+
+  it('既没 baseURL 也没 piProvider 的 openai provider 仍然报错', () => {
+    expect(() =>
+      loadConfig({
+        providers: { bad: { kind: 'openai', model: 'm' } },
+        activeProvider: 'bad',
+      } as never),
+    ).toThrow();
+  });
+});

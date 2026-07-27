@@ -103,10 +103,13 @@ const ProviderSchema = z
     mcpConfigPath: z.string().optional(),
   })
   .superRefine((v, ctx) => {
-    if (v.kind === 'openai' && !v.baseURL) {
+    // baseURL 只有「自己发 HTTP」的场景才需要。设了 piProvider 时端点由 pi-ai 的模型目录
+    // 决定（如 anthropic → https://api.anthropic.com，走 anthropic-messages 原生协议），
+    // 用户不该被迫填一个用不到的 URL。
+    if (v.kind === 'openai' && !v.baseURL && !v.piProvider) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'baseURL is required for openai providers',
+        message: 'baseURL is required for openai providers (unless piProvider is set)',
         path: ['baseURL'],
       });
     }
@@ -683,7 +686,11 @@ export function resolveProviderEntry(entry: ProviderConfig): {
         ? 'https://api.openai.com'
         : entry.kind === 'pi'
           ? 'https://pi.invalid'
-          : '');
+          : // piProvider：真实端点由 pi-ai 的模型目录决定，顶层 baseURL 只是占位
+            // （ConfigSchema 要求它是合法 URL；这条路径上没人会去连它）。
+            entry.piProvider
+            ? 'https://pi-provider.invalid'
+            : '');
   return {
     apiKey,
     baseURL,
