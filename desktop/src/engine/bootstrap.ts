@@ -32,7 +32,7 @@ import { CodexAgent } from './codexAgent.js';
 import { PiAgent } from './piAgent.js';
 import { PiCoreAgent } from './piCoreAgent.js';
 import { buildScopePreamble, toToolSpecs } from './piCoreWiring.js';
-import { resolvePiModels } from '@core/llm/piAiTransport.js';
+import type { resolvePiModels as ResolvePiModels } from '@core/llm/piAiTransport.js';
 import { createSecurityHooks, type SecurityHooks } from '@core/security/index.js';
 import { ensurePiBridge } from './piBridgeSource.js';
 import { ReviewingAgent, type ReviewTrace } from './reviewingAgent.js';
@@ -368,9 +368,14 @@ async function initServices(): Promise<Services> {
   /* —— pi-core agent loop（可选实现，config.agentImpl='pi-core'）——
    * 在这里一次性解析 models/model：pi-agent-core 构造时就要 model，而内建 provider 路径
    * 是异步的（动态 import）。只有开了这个开关才付这笔（~130ms + 依赖加载）。 */
-  let piCoreRuntime: Awaited<ReturnType<typeof resolvePiModels>> | null = null;
+  let piCoreRuntime: Awaited<ReturnType<typeof ResolvePiModels>> | null = null;
   if (config.agentImpl === 'pi-core') {
     try {
+      // 动态 import：静态引用会把 pi-ai（~130ms 加载 + 一串厂商 SDK）拉进 engine 的启动
+      // 路径，连默认的 agentImpl='pith' 用户都要付。electron-vite 也会因此警告
+      // 「dynamic import will not move module into another chunk」——那条警告说的就是
+      // client.ts 里的惰性 import 被这里的静态 import 抵消了。
+      const { resolvePiModels } = await import('@core/llm/piAiTransport.js');
       piCoreRuntime = await resolvePiModels(config);
       console.log(
         `[pith/route] agent loop → pi-agent-core | model=${config.model} custom=${piCoreRuntime.custom}`,
