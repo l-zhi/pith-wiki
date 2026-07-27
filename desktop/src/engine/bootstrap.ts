@@ -367,9 +367,23 @@ async function initServices(): Promise<Services> {
 
   /* —— pi-core agent loop（可选实现，config.agentImpl='pi-core'）——
    * 在这里一次性解析 models/model：pi-agent-core 构造时就要 model，而内建 provider 路径
-   * 是异步的（动态 import）。只有开了这个开关才付这笔（~130ms + 依赖加载）。 */
+   * 是异步的（动态 import）。只有开了这个开关才付这笔（~130ms + 依赖加载）。
+   *
+   * 仅对 openai 类 provider 有意义：委托型 CLI（claude-code/codex/pi）本身就是**完整的
+   * agent**（自带 loop 和模型），没有「把 pi 的 loop 塞进 claude 里」这回事，agentFactory
+   * 的委托分支也优先于这里。所以 providerKind 非 openai 时直接跳过——否则会拿委托型
+   * provider 的占位 baseURL 去解析一个永远用不上的 model，白付初始化还让日志误导人。 */
   let piCoreRuntime: Awaited<ReturnType<typeof ResolvePiModels>> | null = null;
-  if (config.agentImpl === 'pi-core') {
+  if (config.agentImpl === 'pi-core' && config.providerKind !== 'openai') {
+    emitNotice(
+      'warning',
+      `agentImpl=pi-core 已忽略：当前对话 provider 是 ${config.providerKind}（委托型 CLI 自带 agent loop）。` +
+        `想用 pi-core，请把「对话模型」切到一个 OpenAI 兼容 provider。`,
+    );
+    console.log(
+      `[pith/route] agent loop → pi-core 已忽略（providerKind=${config.providerKind} 是委托型 CLI）`,
+    );
+  } else if (config.agentImpl === 'pi-core') {
     try {
       // 动态 import：静态引用会把 pi-ai（~130ms 加载 + 一串厂商 SDK）拉进 engine 的启动
       // 路径，连默认的 agentImpl='pith' 用户都要付。electron-vite 也会因此警告
