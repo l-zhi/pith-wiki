@@ -92,6 +92,18 @@ const ProviderSchema = z
     binary: z.string().optional(),
     /** claude-code 专属：走订阅的 OAuth token（`claude setup-token` 生成；设置页填写）。codex 走 `codex login` 写的 ~/.codex/auth.json，不用此字段。 */
     oauthToken: z.string().optional(),
+    /**
+     * claude-code 专属：与用户自己的 Claude Code 环境的隔离级别。默认 `standard`。
+     * `claude -p` 起的是完整 CC harness，会自动加载用户的 skills / plugins / hooks /
+     * 其它 MCP / CLAUDE.md —— 那是为编码工作流准备的，与 pith 的知识库助手人设无关
+     * （白烧 token，甚至 hook 触发副作用、记忆指令与人设打架）。
+     *   - standard：屏蔽 MCP/skills/用户级 settings，**订阅照常可用**（实测）
+     *   - bare：连 CLAUDE.md/hooks/plugin 一起屏蔽，但 CC 会强制用 ANTHROPIC_API_KEY，
+     *     **放弃订阅额度**
+     *   - off：完全继承用户环境
+     * 详见 desktop/src/engine/claudeCodeAgent.ts 的 isolation 注释。
+     */
+    isolation: z.enum(['standard', 'bare', 'off']).optional(),
     /** claude-code 专属：从该 env 变量读 OAuth token（oauthToken 的替代，避免明文落 config）。 */
     oauthTokenEnv: z.string().optional(),
     /**

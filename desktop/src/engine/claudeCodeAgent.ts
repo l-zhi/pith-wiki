@@ -40,6 +40,25 @@ export interface ClaudeCodeAgentOptions {
   /** 允许的工具白名单（逗号分隔）；不传用 DEFAULT_ALLOWED_TOOLS（pith MCP + 飞书/weread）。 */
   allowedTools?: string;
   /**
+   * 与用户自己的 Claude Code 环境的隔离级别。**默认 'standard'。**
+   *
+   * 为什么需要：`claude -p` 起的是**完整的 Claude Code harness**，默认会自动发现并加载
+   * 用户的 skills（本机实测 64 个，全都进 system prompt 的 catalog）、已启用 plugins、
+   * hooks、其它 MCP server、以及 CLAUDE.md 记忆。这些是用户为自己的编码工作流准备的，
+   * 与「pith 的知识库助手」这个人设无关：轻则白烧 token、重则 hook 在 pith 的会话里
+   * 触发副作用，或记忆里的指令跟 pith 的人设打架。
+   *
+   *   - `standard`（默认）：`--strict-mcp-config`（只用 pith 的 MCP）+
+   *     `--disable-slash-commands`（不加载 skills）+ `--setting-sources project`
+   *     （不吃用户级 settings，即 plugins/hooks）。**订阅照常可用**（实测 OAuth 不受影响）。
+   *     挡不住的只有 CLAUDE.md 自动发现 —— 那个只有 `--bare` 能关。
+   *   - `bare`：额外加 `--bare`，连 CLAUDE.md/hooks/plugin sync 一并掐掉。**代价：Claude Code
+   *     会强制走 ANTHROPIC_API_KEY / apiKeyHelper，不读 OAuth 与 keychain —— 即放弃订阅额度。**
+   *     配了 API key 且要完全确定性时用它。
+   *   - `off`：什么都不加，完全继承用户环境（想让 pith 会话用上自己那套 skills/hooks 时）。
+   */
+  isolation?: 'standard' | 'bare' | 'off';
+  /**
    * spawn 的工作目录。也是 acceptEdits 的写入沙箱边界（只能写该目录内）——
    * 传 pith home，让模型写得了知识库、出不去。不传则继承父进程 cwd。
    */
@@ -227,17 +246,9 @@ export class ClaudeCodeAgent implements AgentLike {
 
   constructor(private readonly opts: ClaudeCodeAgentOptions) {}
 
-  async send(
-    text: string,
-    opts: {
-      signal?: AbortSignal;
-      // scope 目前不参与 claude-code 检索（它经 MCP 工具自查库），保留以满足 AgentLike。
-      scope?: ScopeDTO;
-      events?: StreamEvents;
-    } = {},
-  ): Promise<string> {
-    this.history.push({ role: 'user', content: text });
-
+  /** 组装本轮 argv。抽出来便于单测（不 spawn 也能断言 flag 组合）。 */
+  buildArgs(text: string): string[] {
+    const isolation = this.opts.isolation ?? 'standard';
     const args = [
       '--output-format',
       'stream-json',
@@ -258,10 +269,30 @@ export class ClaudeCodeAgent implements AgentLike {
       '--append-system-prompt',
       this.opts.systemPrompt,
     ];
+    // 与用户自己的 CC 环境隔离（见 ClaudeCodeAgentOptions.isolation）。
+    if (isolation !== 'off') {
+      args.push('--strict-mcp-config', '--disable-slash-commands', '--setting-sources', 'project');
+      if (isolation === 'bare') args.push('--bare');
+    }
     // --resume 复用 CC 侧会话（只发当前这条 user 消息，历史由 CC 记着）。
     if (this.ccSessionId) args.push('--resume', this.ccSessionId);
     // prompt 作为 -p 的值放最后（与本机验证的命令形态一致）。
     args.push('-p', text);
+    return args;
+  }
+
+  async send(
+    text: string,
+    opts: {
+      signal?: AbortSignal;
+      // scope 目前不参与 claude-code 检索（它经 MCP 工具自查库），保留以满足 AgentLike。
+      scope?: ScopeDTO;
+      events?: StreamEvents;
+    } = {},
+  ): Promise<string> {
+    this.history.push({ role: 'user', content: text });
+
+    const args = this.buildArgs(text);
 
     console.log(
       `[pith/claude-code] spawn ${this.opts.binary} --model ${this.opts.model} ` +

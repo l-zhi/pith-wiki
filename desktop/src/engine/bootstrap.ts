@@ -451,6 +451,8 @@ async function initServices(): Promise<Services> {
           mcpConfigPath,
           env,
           cwd: home,
+          // 默认与用户自己的 CC 环境隔离（skills/plugins/hooks/其它 MCP 不进 pith 会话）。
+          ...(entry?.isolation ? { isolation: entry.isolation } : {}),
         });
       }
       const apiKey =

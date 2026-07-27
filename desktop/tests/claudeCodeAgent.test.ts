@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ClaudeCodeAgent,
   parseClaudeStream,
   DEFAULT_ALLOWED_TOOLS,
   type StreamEvents,
@@ -203,5 +204,49 @@ describe('parseClaudeStream', () => {
       lines(['', 'not json', JSON.stringify({ type: 'result', result: 'ok' }), '']),
     );
     expect(res.finalText).toBe('ok');
+  });
+});
+
+describe('ClaudeCodeAgent.buildArgs — 与用户 CC 环境的隔离', () => {
+  const base = {
+    binary: 'claude',
+    model: 'opus',
+    systemPrompt: 'pith 检索人设',
+    mcpConfigPath: '/home/u/pith-mcp.json',
+    env: {},
+    cwd: '/home/u/.pith-wiki',
+  };
+
+  it('默认 standard：屏蔽其它 MCP / skills / 用户级 settings（订阅仍可用）', () => {
+    const args = new ClaudeCodeAgent(base).buildArgs('hi');
+    expect(args).toContain('--strict-mcp-config'); // 只用 pith 的 MCP
+    expect(args).toContain('--disable-slash-commands'); // 不加载用户的 skills
+    expect(args[args.indexOf('--setting-sources') + 1]).toBe('project'); // 不吃用户级 settings
+    expect(args).not.toContain('--bare'); // 不能加：--bare 会掐掉 OAuth = 放弃订阅
+    // pith 自己的装配照旧
+    expect(args[args.indexOf('--mcp-config') + 1]).toBe(base.mcpConfigPath);
+    expect(args[args.length - 2]).toBe('-p');
+    expect(args[args.length - 1]).toBe('hi');
+  });
+
+  it('bare：额外屏蔽 CLAUDE.md/hooks/plugin（代价是放弃订阅，见注释）', () => {
+    const args = new ClaudeCodeAgent({ ...base, isolation: 'bare' }).buildArgs('hi');
+    expect(args).toContain('--bare');
+    expect(args).toContain('--strict-mcp-config');
+  });
+
+  it('off：完全继承用户环境（想让 pith 会话用上自己那套 skills 时）', () => {
+    const args = new ClaudeCodeAgent({ ...base, isolation: 'off' }).buildArgs('hi');
+    expect(args).not.toContain('--strict-mcp-config');
+    expect(args).not.toContain('--disable-slash-commands');
+    expect(args).not.toContain('--setting-sources');
+  });
+
+  it('resume 轮仍带隔离标志（否则第二轮就把用户环境放进来了）', () => {
+    const agent = new ClaudeCodeAgent(base);
+    (agent as unknown as { ccSessionId: string }).ccSessionId = 'sess-1';
+    const args = agent.buildArgs('next');
+    expect(args).toContain('--resume');
+    expect(args).toContain('--strict-mcp-config');
   });
 });
