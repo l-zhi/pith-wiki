@@ -107,6 +107,20 @@ flush 的结果 == 整段 restore 的结果**（穷举所有单切点 + 双切�
 5. `restoreHistory` 往返等价（会话恢复）。
 6. `reset` 清历史保留 system prompt。
 
+## 3.5 真机端到端（接线后）
+
+跑法：本地假 openai 端点 + 临时 pith home（一条真实条目），用**与 bootstrap 完全相同的
+函数**（`resolvePiModels` / `toToolSpecs` / `createSecurityHooks` / `PiCoreAgent`）装配。
+
+结果：模型请求 `wiki_list` → 适配层调 pith 原 handler（真实 LibraryService，命中
+`total_matched:1`）→ 第二轮据此作答；usage 两轮 120/20 与 300/15；`exportHistory()` 得到
+`user → assistant → tool → assistant` 的 OpenAI 形状历史。
+
+**这一步抓到一个只有真机才会暴露的 bug**：自定义 provider 原本用 `envApiKeyAuth`，key 靠
+调用方逐请求传 —— B 的传输层这么做没问题，但 pi-agent-core 的 loop 由 pi 自己驱动
+`streamSimple`，宿主没有统一注入点，于是报 `Provider is not configured`。已改成
+**provider 的 auth 直接闭包 config**（config.apiKey → 回退 env），两条路统一。
+
 ## 4. 全面落地还缺什么（这才是剩余成本）
 
 | # | 缺口 | 说明 | 估算 |
@@ -123,20 +137,6 @@ flush 的结果 == 整段 restore 的结果**（穷举所有单切点 + 双切�
 **修订后的总估算**：原报告 15–22 人日 → tracer bullet 后 8–12 人日 → **接线完成后剩 4–6 人日**
 （主要是 #4 流式 UI 与 #7 CLI 侧；#5 #6 各半天）。降低的部分来自：spike 全部已答、消息映射与
 流式还原已实现且共用、审批发现根本不用重建、工具层确认不需要 TypeBox 重写。
-
-## 3.5 真机端到端（接线后）
-
-跑法：本地假 openai 端点 + 临时 pith home（一条真实条目），用**与 bootstrap 完全相同的
-函数**（`resolvePiModels` / `toToolSpecs` / `createSecurityHooks` / `PiCoreAgent`）装配。
-
-结果：模型请求 `wiki_list` → 适配层调 pith 原 handler（真实 LibraryService，命中
-`total_matched:1`）→ 第二轮据此作答；usage 两轮 120/20 与 300/15；`exportHistory()` 得到
-`user → assistant → tool → assistant` 的 OpenAI 形状历史。
-
-**这一步抓到一个只有真机才会暴露的 bug**：自定义 provider 原本用 `envApiKeyAuth`，key 靠
-调用方逐请求传 —— B 的传输层这么做没问题，但 pi-agent-core 的 loop 由 pi 自己驱动
-`streamSimple`，宿主没有统一注入点，于是报 `Provider is not configured`。已改成
-**provider 的 auth 直接闭包 config**（config.apiKey → 回退 env），两条路统一。
 
 ## 5. 建议：先不切默认
 
