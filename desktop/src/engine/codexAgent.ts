@@ -5,6 +5,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import type { AgentLike } from './sessionManager.js';
 import type { ScopeDTO } from '../shared/protocol.js';
+import { explainDelegateError } from './delegateErrors.js';
 
 /**
  * CodexAgent —— 把一次问答委托给本机 `codex` CLI（headless，`codex exec --json`），让 Codex
@@ -370,7 +371,7 @@ export class CodexAgent implements AgentLike {
 
     if (parsed.isError || (exitCode !== 0 && !finalText)) {
       const msg = parsed.errorMessage || finalText || stderr.trim() || `codex exited ${exitCode}`;
-      throw new Error(msg);
+      throw new Error(explainDelegateError('codex', msg));
     }
 
     this.history.push({ role: 'assistant', content: finalText });

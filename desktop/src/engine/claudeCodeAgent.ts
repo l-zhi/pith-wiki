@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 import type { AgentLike } from './sessionManager.js';
 import type { ScopeDTO } from '../shared/protocol.js';
+import { explainDelegateError } from './delegateErrors.js';
 
 /**
  * ClaudeCodeAgent —— 把一次问答委托给本机 `claude` CLI（headless），让 Claude Code
@@ -331,7 +332,7 @@ export class ClaudeCodeAgent implements AgentLike {
 
     if (parsed.isError || (exitCode !== 0 && !parsed.finalText)) {
       const msg = parsed.finalText || stderr.trim() || `claude exited ${exitCode}`;
-      throw new Error(msg);
+      throw new Error(explainDelegateError('claude-code', msg));
     }
 
     this.history.push({ role: 'assistant', content: parsed.finalText });

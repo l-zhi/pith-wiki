@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import type { AgentLike } from './sessionManager.js';
 import type { ScopeDTO } from '../shared/protocol.js';
+import { explainDelegateError } from './delegateErrors.js';
 
 /**
  * PiAgent —— 把一次问答委托给本机 `pi` CLI（headless，`pi --mode json`），让 pi 作为 agent
@@ -325,7 +326,10 @@ export class PiAgent implements AgentLike {
 
     if (parsed.isError || (exitCode !== 0 && !parsed.finalText)) {
       throw new Error(
-        parsed.errorMessage || parsed.finalText || stderr.trim() || `pi exited ${exitCode}`,
+        explainDelegateError(
+          'pi',
+          parsed.errorMessage || parsed.finalText || stderr.trim() || `pi exited ${exitCode}`,
+        ),
       );
     }
 
