@@ -173,6 +173,7 @@ interface PithStore {
   }): Promise<void>;
   openInChat(entry: EntryDetail): void;
   dismissNotice(id: string): void;
+  dismissAllNotices(): void;
   handleEvent(evt: EngineEvent): void;
 }
 
@@ -659,6 +660,10 @@ export const useStore = create<PithStore>((set, get) => {
 
     dismissNotice(id) {
       set((s) => ({ notices: s.notices.filter((n) => n.id !== id) }));
+    },
+
+    dismissAllNotices() {
+      set({ notices: [] });
     },
 
     handleEvent(evt) {

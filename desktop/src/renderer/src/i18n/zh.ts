@@ -28,6 +28,14 @@ export const zh = {
     chatRate: '请求过于频繁或额度不足——稍等片刻再试。',
     openSettings: '打开设置',
   },
+  notification: {
+    region: '通知',
+    summary: '{{n}} 条通知',
+    expand: '展开',
+    collapse: '收起',
+    dismissAll: '全部关闭',
+    dismissOne: '点击关闭',
+  },
   time: {
     now: '刚刚',
     minutes: '{{n}}分',
