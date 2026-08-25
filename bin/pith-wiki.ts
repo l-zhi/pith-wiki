@@ -7,7 +7,7 @@ import {
   loadConfigFromEnv,
   ensureWikiRoot,
   ensureHistoryDir,
-  requireApiKey,
+  requireChatProvider,
   type Config,
 } from '../src/config.js';
 import { ZodError } from 'zod';
@@ -33,7 +33,9 @@ function collectPaths(value: string, previous: string[]): string[] {
 const program = new Command();
 program
   .name('pith-wiki')
-  .description('Karpathy-style LLM knowledge base CLI — hydrate docs into dense Markdown entries, retrieve by keyword + link traversal.')
+  .description(
+    'Karpathy-style LLM knowledge base CLI — hydrate docs into dense Markdown entries, retrieve by keyword + link traversal.',
+  )
   .version(readPackageVersion())
   .option('--read-only', 'Disable file writes.')
   .option('--model <name>', 'Override the LLM model.')
@@ -71,18 +73,12 @@ buildSubcommands(program, { configFor });
 program
   .command('chat', { isDefault: true })
   .description('Start the interactive REPL (default).')
-  .option(
-    '--no-auto-queue',
-    'Do not auto-start the queue worker in this REPL session.',
-  )
+  .option('--no-auto-queue', 'Do not auto-start the queue worker in this REPL session.')
   .option(
     '--no-auto-watch',
     'Do not auto-start directory watchers in this REPL session (config.watchDirs).',
   )
-  .option(
-    '--no-transcript',
-    'Do not write a markdown transcript of this session to outputDir.',
-  )
+  .option('--no-transcript', 'Do not write a markdown transcript of this session to outputDir.')
   .action(async (chatOpts) => {
     let config: Config;
     try {
@@ -93,7 +89,7 @@ program
       if (chatOpts.autoWatch === false) overrides.watchAutoStart = false;
       if (chatOpts.transcript === false) overrides.transcriptEnabled = false;
       config = configFor(overrides);
-      requireApiKey(config);
+      requireChatProvider(config);
     } catch (err) {
       reportError(err);
       process.exit(1);

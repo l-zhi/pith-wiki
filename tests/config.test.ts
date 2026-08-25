@@ -15,6 +15,7 @@ import {
   parseReadPathsFromEnv,
   pickHydrationProvider,
   requireApiKey,
+  requireChatProvider,
   resolveProviderEntry,
   type Config,
 } from '../src/config.js';
@@ -94,10 +95,7 @@ describe('parseReadPathsFromEnv — 分隔符语法', () => {
 
   it('分隔符语法里的 ~/ 也展开', () => {
     const input = ['~/notes', '/abs/path'].join(path.delimiter);
-    expect(parseReadPathsFromEnv(input)).toEqual([
-      path.join(os.homedir(), 'notes'),
-      '/abs/path',
-    ]);
+    expect(parseReadPathsFromEnv(input)).toEqual([path.join(os.homedir(), 'notes'), '/abs/path']);
   });
 
   it('分隔符之间的空白被 trim', () => {
@@ -402,9 +400,14 @@ describe('委托型 CLI provider — codex', () => {
     expect(pickHydrationProvider(cfg)?.model).toBe('m');
   });
 
-  it('requireApiKey：codex 在 CLI 侧 fail-fast（委托型 provider 仅桌面端可用）', () => {
+  it('requireApiKey：codex 不能用于需要水合 API 的命令', () => {
     const cfg = { providerKind: 'codex', activeProvider: 'codex', apiKey: '' } as unknown as Config;
-    expect(() => requireApiKey(cfg)).toThrow(/desktop-only|codex/);
+    expect(() => requireApiKey(cfg)).toThrow(/API-backed|codex/);
+  });
+
+  it('requireChatProvider：CLI REPL 放行 codex 委托', () => {
+    const cfg = { providerKind: 'codex', activeProvider: 'codex', apiKey: '' } as unknown as Config;
+    expect(() => requireChatProvider(cfg)).not.toThrow();
   });
 });
 
@@ -443,7 +446,8 @@ describe('委托型 CLI provider — pi', () => {
 
   it('requireApiKey：pi 在 CLI 侧 fail-fast（委托型 provider 仅桌面端可用）', () => {
     const cfg = { providerKind: 'pi', activeProvider: 'pi', apiKey: '' } as unknown as Config;
-    expect(() => requireApiKey(cfg)).toThrow(/desktop-only|pi/);
+    expect(() => requireApiKey(cfg)).toThrow(/API-backed|pi/);
+    expect(() => requireChatProvider(cfg)).toThrow(/API-backed|pi/);
   });
 });
 

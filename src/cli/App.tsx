@@ -3,6 +3,7 @@ import path from 'node:path';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import { Agent, AgentError, defaultSystemPrompt } from '../llm/agent.js';
+import { CodexAgent, readPithMcpSpec, type PithMcpSpec } from '../llm/codexAgent.js';
 import { SecurityBlockError, type SecurityNoticeKind } from '../security/index.js';
 import { createClient } from '../llm/client.js';
 import { composeSystemPrompt, loadSoul, type LoadedSoul } from '../llm/soul.js';
@@ -18,6 +19,8 @@ import {
   ensureOutputDir,
   ensureQueueDirs,
   ensureWikiRoot,
+  applyActiveProvider,
+  pickHydrationProvider,
   resolveProviderEntry,
   type Config,
 } from '../config.js';
@@ -52,6 +55,25 @@ interface Props {
   config: Config;
 }
 
+const CODEX_REPL_SYSTEM_PROMPT =
+  '你是 pith 本地知识库的终端助手。回答知识库问题前，优先调用 pith MCP 工具检索证据：' +
+  'wiki_query（模糊检索）、wiki_grep（精确/正则检索）、wiki_get（按 id 取条目）、' +
+  'wiki_list（浏览集合）、wiki_read_source（读取原文）。基于检索结果作答并标注引用条目；' +
+  '库中没有相关内容时如实说明。修改文件时只在当前 workspace 或 wikiRoot 内操作。';
+
+function findPithMcpSpec(config: Config, preferredPath?: string): PithMcpSpec | undefined {
+  const candidates = [
+    preferredPath,
+    path.join(pithWikiHome(), 'pith-mcp.json'),
+    ...Object.values(config.providers).map((provider) => provider.mcpConfigPath),
+  ];
+  for (const candidate of new Set(candidates.filter((value): value is string => Boolean(value)))) {
+    const spec = readPithMcpSpec(candidate);
+    if (spec) return spec;
+  }
+  return undefined;
+}
+
 export function App({ config: initialConfig }: Props) {
   const { exit } = useApp();
   // 当前生效的 provider 名（来自 initialConfig.activeProvider；undefined = 没用
@@ -64,17 +86,24 @@ export function App({ config: initialConfig }: Props) {
   // /provider 切换时整棵 useMemo 链（client → agent → hydrator）自动重建。
   const config = useMemo<Config>(() => {
     if (!activeProviderName) return initialConfig;
-    const entry = initialConfig.providers[activeProviderName];
-    if (!entry) return initialConfig; // 兜底；slash 命令切换前已经校验过
+    if (!initialConfig.providers[activeProviderName]) return initialConfig;
+    return applyActiveProvider({ ...initialConfig, activeProvider: activeProviderName });
+  }, [initialConfig, activeProviderName]);
+
+  // Delegated chat still needs an OpenAI-compatible provider for queue hydration,
+  // wiki_ingest and /digest. Keep that route separate from the Codex subscription.
+  const hydrationConfig = useMemo<Config>(() => {
+    if (config.providerKind === 'openai') return config;
+    const entry = pickHydrationProvider(config);
+    if (!entry) return config;
     const resolved = resolveProviderEntry(entry);
     return {
-      ...initialConfig,
-      apiKey: resolved.apiKey,
-      baseURL: resolved.baseURL,
-      model: resolved.model,
-      activeProvider: activeProviderName,
+      ...config,
+      ...resolved,
+      providerKind: 'openai',
+      transport: resolved.transport ?? 'openai',
     };
-  }, [initialConfig, activeProviderName]);
+  }, [config]);
 
   // 安全模块提示（脱敏/还原异常）→ UI 系统消息。client 的 useMemo 声明早于
   // append，用 ref 间接转发，避免闭包捕获声明顺序问题。
@@ -94,11 +123,11 @@ export function App({ config: initialConfig }: Props) {
   // transport='openai' 时两者行为一致（只是各持一份 Sanitizer 映射，互不干扰）。
   const hydrationClient = useMemo(
     () =>
-      createClient(config, {
+      createClient(hydrationConfig, {
         purpose: 'hydration',
         onSecurityNotice: (msg, kind) => securityNoticeRef.current(msg, kind),
       }),
-    [config],
+    [hydrationConfig],
   );
 
   // SOUL.md：启动时按 (config.soulFile > env > 默认双层) 解析一次。
@@ -275,9 +304,9 @@ export function App({ config: initialConfig }: Props) {
     const ac = new AbortController();
     const hydrator = new HydrationService(
       hydrationClient,
-      config.model,
+      hydrationConfig.model,
       library,
-      config.supportsJsonMode,
+      hydrationConfig.supportsJsonMode,
     );
 
     const workerPromise = runQueue({
@@ -351,7 +380,7 @@ export function App({ config: initialConfig }: Props) {
       void workerPromise;
       void watcherPromise;
     };
-  }, [config, client, library]);
+  }, [config, hydrationClient, hydrationConfig, library]);
 
   const requestApproval = useMemo(
     () => (path: string, preview: string) =>
@@ -410,23 +439,61 @@ export function App({ config: initialConfig }: Props) {
   }, [config]);
 
   const agent = useMemo(() => {
+    const systemPrompt = composeSystemPrompt(
+      config.providerKind === 'codex' ? CODEX_REPL_SYSTEM_PROMPT : defaultSystemPrompt,
+      soul,
+    );
+    if (config.providerKind === 'codex') {
+      const entry = config.activeProvider ? config.providers[config.activeProvider] : undefined;
+      const apiKey = entry ? resolveProviderEntry(entry).apiKey : config.apiKey;
+      const env: NodeJS.ProcessEnv = { ...process.env };
+      if (apiKey) env.OPENAI_API_KEY = apiKey;
+      else {
+        delete env.OPENAI_API_KEY;
+        delete env.CODEX_API_KEY;
+      }
+      return new CodexAgent({
+        binary: entry?.binary ?? 'codex',
+        model: config.model,
+        systemPrompt,
+        mcp: findPithMcpSpec(config, entry?.mcpConfigPath),
+        env,
+        cwd: config.workspaceRoot,
+        // console.log corrupts Ink's managed terminal region.
+        log: () => {},
+      });
+    }
     // 共用的 library + converter pipeline 透传进 toolCtx；wiki_* 工具和 worker /
     // watcher 看到同一份索引、同一份转换器注册表。
     // buildContext 的 client 只用于造 hydrator（wiki_ingest）→ 传水合专用 client。
-    const ctx = buildContext(config, hydrationClient, requestApproval, library, {
+    const ctx = buildContext(hydrationConfig, hydrationClient, requestApproval, library, {
       converterRegistry: converters.registry,
       converterCache: converters.cache,
       skillRegistry,
       requestCommandApproval,
     });
-    const systemPrompt = composeSystemPrompt(defaultSystemPrompt, soul);
     // skill 走单个 `skill` 工具（仅当存在 skill 时才挂，避免空 catalog 的死工具）。
     const extraTools = skillRegistry.list().length > 0 ? [makeSkillTool(skillRegistry)] : [];
     // run_command / http_request 仅当有 skill 声明过对应能力时才挂（否则是永远失败的死工具）。
     if (skillRegistry.allowedCommands().size > 0) extraTools.push(runCommandTool);
     if (skillRegistry.allowedHosts().size > 0) extraTools.push(httpRequestTool);
-    return new Agent(client, config.model, ctx, { systemPrompt, extraTools, maxSteps: config.maxSteps });
-  }, [config, client, hydrationClient, requestApproval, requestCommandApproval, library, converters, soul, skillRegistry]);
+    return new Agent(client, config.model, ctx, {
+      systemPrompt,
+      extraTools,
+      maxSteps: config.maxSteps,
+    });
+  }, [
+    config,
+    hydrationConfig,
+    client,
+    hydrationClient,
+    requestApproval,
+    requestCommandApproval,
+    library,
+    converters,
+    soul,
+    skillRegistry,
+  ]);
 
   // 统一盖时间戳（HH:MM，design 稿消息头的 time）；显式传了 ts 的不覆盖。
   const append = (msg: Omit<DisplayMessage, 'id'>) =>
@@ -501,10 +568,7 @@ export function App({ config: initialConfig }: Props) {
 
     append({ role: 'user', text: trimmed });
     if (scope) {
-      const parts = [
-        ...scope.collections.map((c) => `${c}/`),
-        ...scope.entryIds,
-      ];
+      const parts = [...scope.collections.map((c) => `${c}/`), ...scope.entryIds];
       append({ role: 'system', text: `↳ scope: ${parts.join(' · ')}` });
     }
     transcript?.recordUser(trimmed);
@@ -720,7 +784,10 @@ export function App({ config: initialConfig }: Props) {
       const force = tokens.includes('--force');
       const source = tokens.filter((t) => t !== '--force').join(' ');
       if (!source) {
-        append({ role: 'error', text: 'Usage: /skill add <path | git-url | owner/repo> [--force]' });
+        append({
+          role: 'error',
+          text: 'Usage: /skill add <path | git-url | owner/repo> [--force]',
+        });
         return;
       }
       await handleSkillAdd(source, force);
@@ -967,8 +1034,11 @@ export function App({ config: initialConfig }: Props) {
         const e = providers[n];
         const r = resolveProviderEntry(e);
         const marker = n === activeProviderName ? '* ' : '  ';
-        const keyNote = r.apiKey ? '' : ' (no key — set apiKey or apiKeyEnv)';
-        return `${marker}${n}  →  model=${e.model}  baseURL=${e.baseURL}${keyNote}`;
+        const kind = e.kind ?? 'openai';
+        const keyNote = kind === 'codex' || r.apiKey ? '' : ' (no key — set apiKey or apiKeyEnv)';
+        const route =
+          kind === 'codex' ? `kind=codex binary=${e.binary ?? 'codex'}` : `baseURL=${e.baseURL}`;
+        return `${marker}${n}  →  model=${e.model}  ${route}${keyNote}`;
       });
       append({
         role: 'system',
@@ -986,8 +1056,17 @@ export function App({ config: initialConfig }: Props) {
       });
       return;
     }
-    const resolved = resolveProviderEntry(providers[arg]);
-    if (!resolved.apiKey) {
+    const selected = providers[arg];
+    const kind = selected.kind ?? 'openai';
+    const resolved = resolveProviderEntry(selected);
+    if (kind !== 'openai' && kind !== 'codex') {
+      append({
+        role: 'error',
+        text: `Cannot switch to "${arg}": provider kind "${kind}" is not supported by the CLI REPL.`,
+      });
+      return;
+    }
+    if (kind === 'openai' && !resolved.apiKey) {
       const envHint = providers[arg].apiKeyEnv
         ? ` (set env ${providers[arg].apiKeyEnv})`
         : ' (set "apiKey" or "apiKeyEnv" in config)';
@@ -1049,9 +1128,9 @@ export function App({ config: initialConfig }: Props) {
       // 也共用同一份 index.json 的写入节流，不会和 worker 互相覆盖。
       const hydrator = new HydrationService(
         hydrationClient,
-        config.model,
+        hydrationConfig.model,
         library,
-        config.supportsJsonMode,
+        hydrationConfig.supportsJsonMode,
       );
       const entry = await hydrator.hydrate({
         rawContent: snapshot,
@@ -1144,4 +1223,3 @@ function shortenHome(p: string): string {
   const home = os.homedir();
   return p.startsWith(home + path.sep) ? '~' + p.slice(home.length) : p;
 }
-

@@ -6,7 +6,8 @@
 
 在桌面端聊天里，除了现有的 `claude-code`（委托本机 `claude` CLI）之外，再支持
 `codex`（委托本机 `codex` CLI），让用户可复用 ChatGPT / Codex 订阅额度、并通过
-pith-mcp 检索知识库作答。CLI（REPL/子命令）继续不支持委托型 provider。
+pith-mcp 检索知识库作答。后续已将同一 Codex 适配器下沉到 core，CLI REPL 也支持
+`codex`；需要 JSON 水合的子命令仍不支持委托型 provider。
 
 非目标：不改动 openai provider 路径；不做 Codex 的批量水合（水合仍走 openai provider）。
 
@@ -156,7 +157,8 @@ home 写一份 `AGENTS.md` 承载静态 QA 人设——但 reviewer 是动态段
   - `applyActiveProvider` / baseURL 兜底：codex 与 claude-code 一样不需要真实 baseURL。
   - `pickHydrationProvider`：把「排除条件」从 `kind==='claude-code'` 改成
     `kind!=='openai'`（引入 helper `isOpenaiProvider`），codex 同样不入选水合。
-  - `requireApiKey` 的 desktop-only guard：`providerKind !== 'openai'` 时 fail-fast（覆盖 codex）。
+  - API-backed 子命令仍由 `requireApiKey` 拒绝委托型 provider；CLI REPL 通过
+    `requireChatProvider` 单独放行 codex。
 
 **engine（`desktop/src/engine/`）**
 - 新增 `codexAgent.ts`：`CodexAgent implements AgentLike` + 纯函数 `parseCodexStream`。
