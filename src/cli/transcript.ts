@@ -51,9 +51,9 @@ export class TranscriptLogger {
 
   /**
    * 思考过程。终端默认只留一行降权标记，完整内容靠这里落盘追溯。
-   * source 标明来自 reasoning 字段还是 content 里的 `<think>` 标签。
+   * source 标明来自 reasoning 字段、`<think>` 标签或委托型 agent。
    */
-  recordThinking(text: string, source: 'field' | 'tag'): void {
+  recordThinking(text: string, source: string): void {
     this.write(
       `\n### 💭 Thinking (${source}) · ${nowIso()}\n\n\`\`\`\n${fencedBody(text)}\n\`\`\`\n`,
     );

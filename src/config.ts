@@ -53,9 +53,13 @@ const ProviderSchema = z
      *   - `claude-code`：委托本机 `claude` CLI（headless + pith-mcp），复用订阅额度。
      *   - `codex`：委托本机 `codex` CLI（`codex exec --json` + pith-mcp 经 `-c` 内联注册），
      *     复用 ChatGPT/Codex 订阅额度。与 claude-code 同为「委托型 CLI」provider。
-     *     两者仅供桌面端 chat 使用；hydration/queue 仍需一个 openai provider。
+     *   - `pi`：委托本机 `pi` CLI（`pi --mode json`）。pi 无内置 MCP，知识库经 pith 自动生成的
+     *     桥接扩展（`-e <home>/pi/pith-mcp-bridge.mjs`）挂上；复用 pi 的 OAuth 订阅
+     *     （Claude Pro/Max、GitHub Copilot、xAI 等，`pi` 里 /login 写 ~/.pi/agent/auth.json）。
+     *     三者同为「委托型 CLI」provider；桌面端支持三者，CLI REPL 目前支持 codex。
+     *     hydration/queue 仍需一个 openai provider。
      */
-    kind: z.enum(['openai', 'claude-code', 'codex']).default('openai'),
+    kind: z.enum(['openai', 'claude-code', 'codex', 'pi']).default('openai'),
     /** OpenAI 兼容端点。openai 类型必填；claude-code 不需要（可省）。 */
     baseURL: z.string().url().optional(),
     model: z.string().min(1),
@@ -74,24 +78,50 @@ const ProviderSchema = z
      * 三级抢救 (直 parse → 剥 markdown fence → 找首{...末}) 兜底解析非严格 JSON 输出。
      */
     supportsJsonMode: z.boolean().optional(),
-    /** 委托型 CLI（claude-code/codex）共用：可执行路径（默认 'claude'/'codex'，PATH 里能找到就不用填）。 */
+    /**
+     * 该 provider 的对话请求走哪个传输实现（见 src/llm/transport.ts）。缺省 `openai`。
+     * `pi-ai` = 经 @earendil-works/pi-ai 出站；仅影响对话，水合永远走 openai SDK。
+     */
+    transport: z.enum(['openai', 'pi-ai']).optional(),
+    /**
+     * transport='pi-ai' 且想用 pi-ai 内建 provider（原生 Anthropic/Google/… API）时填其
+     * provider id；不填则用本 entry 的 baseURL+apiKey 造一个 openai-completions 自定义 provider。
+     */
+    piProvider: z.string().optional(),
+    /** 委托型 CLI（claude-code/codex/pi）共用：可执行路径（默认 'claude'/'codex'/'pi'，PATH 里能找到就不用填）。 */
     binary: z.string().optional(),
     /** claude-code 专属：走订阅的 OAuth token（`claude setup-token` 生成；设置页填写）。codex 走 `codex login` 写的 ~/.codex/auth.json，不用此字段。 */
     oauthToken: z.string().optional(),
+    /**
+     * claude-code 专属：与用户自己的 Claude Code 环境的隔离级别。默认 `standard`。
+     * `claude -p` 起的是完整 CC harness，会自动加载用户的 skills / plugins / hooks /
+     * 其它 MCP / CLAUDE.md —— 那是为编码工作流准备的，与 pith 的知识库助手人设无关
+     * （白烧 token，甚至 hook 触发副作用、记忆指令与人设打架）。
+     *   - standard：屏蔽 MCP/skills/用户级 settings，**订阅照常可用**（实测）
+     *   - bare：连 CLAUDE.md/hooks/plugin 一起屏蔽，但 CC 会强制用 ANTHROPIC_API_KEY，
+     *     **放弃订阅额度**
+     *   - off：完全继承用户环境
+     * 详见 desktop/src/engine/claudeCodeAgent.ts 的 isolation 注释。
+     */
+    isolation: z.enum(['standard', 'bare', 'off']).optional(),
     /** claude-code 专属：从该 env 变量读 OAuth token（oauthToken 的替代，避免明文落 config）。 */
     oauthTokenEnv: z.string().optional(),
     /**
-     * 委托型 CLI（claude-code/codex）共用：指向 pith-mcp 的配置文件路径（如 ~/pith-mcp.json）。
+     * 委托型 CLI（claude-code/codex/pi）共用：指向 pith-mcp 的配置文件路径（如 ~/pith-mcp.json）。
      * claude-code 作为 `--mcp-config <file>` 直接传入；codex 读它拿 command/args/env，翻成
-     * `-c mcp_servers.pith.*` 内联覆盖（codex 无 --mcp-config 文件标志）。一份配置两个 CLI 共用。
+     * `-c mcp_servers.pith.*` 内联覆盖（codex 无 --mcp-config 文件标志）；pi 读它把
+     * command/args/env 经环境变量交给桥接扩展（pi 完全没有 MCP）。一份配置三个 CLI 共用。
      */
     mcpConfigPath: z.string().optional(),
   })
   .superRefine((v, ctx) => {
-    if (v.kind === 'openai' && !v.baseURL) {
+    // baseURL 只有「自己发 HTTP」的场景才需要。设了 piProvider 时端点由 pi-ai 的模型目录
+    // 决定（如 anthropic → https://api.anthropic.com，走 anthropic-messages 原生协议），
+    // 用户不该被迫填一个用不到的 URL。
+    if (v.kind === 'openai' && !v.baseURL && !v.piProvider) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'baseURL is required for openai providers',
+        message: 'baseURL is required for openai providers (unless piProvider is set)',
         path: ['baseURL'],
       });
     }
@@ -110,9 +140,35 @@ const ConfigSchema = z.object({
   supportsJsonMode: z.boolean().default(true),
   /**
    * 当前 active provider 的类型（由 applyActiveProvider 从 entry.kind 折下来）。
-   * claude-code/codex → 桌面端该会话走委托 agent（spawn 对应 CLI），不走 chat.completions。
+   * claude-code/codex/pi → 桌面端该会话走委托 agent（spawn 对应 CLI），不走 chat.completions。
    */
-  providerKind: z.enum(['openai', 'claude-code', 'codex']).default('openai'),
+  providerKind: z.enum(['openai', 'claude-code', 'codex', 'pi']).default('openai'),
+  /**
+   * LLM 出站传输实现（见 src/llm/transport.ts）：
+   *   - `openai`（默认）：OpenAI SDK 直连 OpenAI 兼容端点（现状，行为不变）
+   *   - `pi-ai`：经 @earendil-works/pi-ai 走它的 provider 生态（原生 Anthropic/Google/
+   *     Mistral/Bedrock API、模型目录、成本核算、统一 thinking 等级）
+   * 只影响**对话**链路；水合/队列永远走 openai SDK（pi-ai 没有 JSON 模式）。
+   * env: PITH_WIKI_TRANSPORT。
+   */
+  transport: z.enum(['openai', 'pi-ai']).default('openai'),
+  /**
+   * **对话** agent loop 的实现（水合/队列/digest 不受影响，永远是 pith 自己的链路）：
+   *   - `pith`（默认）：pith 手写的 tool loop（src/llm/agent.ts）
+   *   - `pi-core`：`@earendil-works/pi-agent-core` 的 loop（desktop only，见
+   *     docs/PRD-pi-core-agent.md）。工具/沙箱/审批/安全过滤全部沿用 pith 的，
+   *     换的只是「谁在驱动这个循环」。
+   * env: PITH_WIKI_AGENT_IMPL。
+   */
+  agentImpl: z.enum(['pith', 'pi-core']).default('pith'),
+  /**
+   * transport='pi-ai' 时可选：pi-ai 内建 provider id（如 `anthropic` / `openai` /
+   * `google` / `mistral`），此时 model 按该 provider 的模型 id 解析、鉴权走 pi-ai 的
+   * 解析链（env var / credential store）。
+   * 不设 → 用 baseURL + apiKey 现造一个 openai-completions 自定义 provider（等价于现状）。
+   * env: PITH_WIKI_PI_PROVIDER。
+   */
+  piProvider: z.string().optional(),
   /** Multi-provider map（可选）。空 → 走顶层 apiKey/baseURL/model（v0 行为）。 */
   providers: z.record(z.string(), ProviderSchema).default({}),
   /**
@@ -545,14 +601,12 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
       overrides.queueConcurrency ?? file.queueConcurrency ?? DEFAULTS.queueConcurrency,
     queueMaxAttempts:
       overrides.queueMaxAttempts ?? file.queueMaxAttempts ?? DEFAULTS.queueMaxAttempts,
-    queueAutoStart:
-      overrides.queueAutoStart ?? file.queueAutoStart ?? DEFAULTS.queueAutoStart,
+    queueAutoStart: overrides.queueAutoStart ?? file.queueAutoStart ?? DEFAULTS.queueAutoStart,
     // watchDirs：CLI overrides > 配置文件 > []。环境变量先不引入（结构太复杂，
     // 不像单条路径列表那么自然）；CLI 也只在 `pith-wiki watch` 命令里用 flag 覆盖。
     // 路径里的 ~/ 在 schema parse 之后再展开（loadConfig 末尾统一处理）。
     watchDirs: overrides.watchDirs ?? file.watchDirs ?? [],
-    watchAutoStart:
-      overrides.watchAutoStart ?? file.watchAutoStart ?? DEFAULTS.watchAutoStart,
+    watchAutoStart: overrides.watchAutoStart ?? file.watchAutoStart ?? DEFAULTS.watchAutoStart,
     // 默认放在 <wikiRoot>/output/transcripts/：raw transcripts 和 digest 条目共享 wiki 树根。
     // scanAll 递归扫描，子目录挡不住——这个路径会作为 ignoredDirs 传给 LibraryService 显式跳过。
     outputDir: path.resolve(
@@ -566,20 +620,26 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
       overrides.transcriptEnabled ?? file.transcriptEnabled ?? DEFAULTS.transcriptEnabled,
     digestCollection:
       overrides.digestCollection ?? file.digestCollection ?? DEFAULTS.digestCollection,
-    cacheConverted:
-      overrides.cacheConverted ?? file.cacheConverted ?? DEFAULTS.cacheConverted,
+    cacheConverted: overrides.cacheConverted ?? file.cacheConverted ?? DEFAULTS.cacheConverted,
     // SOUL.md：显式 CLI 覆盖 > env > file（指定 file 也算"explicit"，不再走默认双层）
     // 实际读盘 + ~/展开在 src/llm/soul.ts 内，避免 config schema 持有读盘副作用
-    soulFile:
-      overrides.soulFile ?? process.env.PITH_WIKI_SOUL ?? file.soulFile ?? undefined,
+    soulFile: overrides.soulFile ?? process.env.PITH_WIKI_SOUL ?? file.soulFile ?? undefined,
     skillDirs,
     securityEnabled:
-      overrides.securityEnabled ?? parseBoolEnv(process.env.PITH_WIKI_SECURITY) ?? file.securityEnabled ?? true,
+      overrides.securityEnabled ??
+      parseBoolEnv(process.env.PITH_WIKI_SECURITY) ??
+      file.securityEnabled ??
+      true,
     securityRulesFiles,
     // 顶层 supportsJsonMode 仅在没用 provider map 的 v0 场景下直接生效；
     // 用了 activeProvider 时会被 applyActiveProvider 用 entry 的同名字段覆盖。
     // 这里走 file 字段（无 CLI/env 入口，结构小且改动频率低）。
     supportsJsonMode: file.supportsJsonMode,
+    // 传输实现：env > file > 默认 openai。与 supportsJsonMode 同理，用了 provider map 时
+    // 会被 applyActiveProvider 用 entry 的同名字段覆盖（一个 provider 一种传输）。
+    transport: process.env.PITH_WIKI_TRANSPORT ?? file.transport,
+    agentImpl: process.env.PITH_WIKI_AGENT_IMPL ?? file.agentImpl,
+    piProvider: process.env.PITH_WIKI_PI_PROVIDER ?? file.piProvider,
     // multi-provider：providers 表来自 file（不接受 env，结构复杂），activeProvider
     // 走 CLI > env > file。Zod 校验之后再 overlay 到顶层 apiKey/baseURL/model。
     providers: overrides.providers ?? file.providers ?? {},
@@ -619,21 +679,37 @@ export function resolveProviderEntry(entry: ProviderConfig): {
   baseURL: string;
   model: string;
   supportsJsonMode: boolean;
+  transport?: 'openai' | 'pi-ai';
+  piProvider?: string;
 } {
   const fromEnv = entry.apiKeyEnv ? (process.env[entry.apiKeyEnv] ?? '') : '';
   const apiKey = entry.apiKey && entry.apiKey.length > 0 ? entry.apiKey : fromEnv;
   // entry 未声明视为支持 —— 主流 chat endpoint 都支持，关掉是例外不是默认
   const supportsJsonMode = entry.supportsJsonMode ?? true;
-  // 委托型 CLI（claude-code/codex）不走 HTTP，但顶层 baseURL 必须是合法 URL（createClient
-  // 会 new OpenAI，即便该 client 从不被调用）——给官方占位地址兜底。
+  // 委托型 CLI（claude-code/codex/pi）不走 HTTP，但顶层 baseURL 必须是合法 URL（createClient
+  // 会 new OpenAI，即便该 client 从不被调用）——给占位地址兜底。pi 是 provider-agnostic
+  // （真实端点由 pi 自己按 --model / auth.json 决定），故用一个明显不可达的占位域名。
   const baseURL =
     entry.baseURL ??
     (entry.kind === 'claude-code'
       ? 'https://api.anthropic.com'
       : entry.kind === 'codex'
         ? 'https://api.openai.com'
-        : '');
-  return { apiKey, baseURL, model: entry.model, supportsJsonMode };
+        : entry.kind === 'pi'
+          ? 'https://pi.invalid'
+          : // piProvider：真实端点由 pi-ai 的模型目录决定，顶层 baseURL 只是占位
+            // （ConfigSchema 要求它是合法 URL；这条路径上没人会去连它）。
+            entry.piProvider
+            ? 'https://pi-provider.invalid'
+            : '');
+  return {
+    apiKey,
+    baseURL,
+    model: entry.model,
+    supportsJsonMode,
+    ...(entry.transport ? { transport: entry.transport } : {}),
+    ...(entry.piProvider ? { piProvider: entry.piProvider } : {}),
+  };
 }
 
 /**
@@ -661,13 +737,16 @@ export function applyActiveProvider(parsed: Config): Config {
     model: resolved.model,
     supportsJsonMode: resolved.supportsJsonMode,
     providerKind: entry.kind ?? 'openai',
+    // entry 没声明 transport/piProvider → 保留顶层值（env / file 的全局设定）
+    transport: resolved.transport ?? parsed.transport,
+    ...(resolved.piProvider ? { piProvider: resolved.piProvider } : {}),
   };
 }
 
 /**
  * 选水合用的 provider entry：显式 `hydrationProvider` > 第一个 openai 类 provider。
  * 都没有 → undefined（调用方回退到顶层 config，即 v0 单 provider 行为）。
- * 委托型 CLI（claude-code/codex）永不入选（它们不能做批量 JSON 水合）。
+ * 委托型 CLI（claude-code/codex/pi）永不入选（它们不能做批量 JSON 水合）。
  */
 export function pickHydrationProvider(config: Config): ProviderConfig | undefined {
   const isOpenai = (e: ProviderConfig) => (e.kind ?? 'openai') === 'openai';
@@ -710,16 +789,13 @@ export function ensureSkillsDir(config: Config): void {
 }
 
 export function requireApiKey(config: Config): void {
-  // claude-code / codex 是委托型 provider，只有桌面端 engine 实现了 spawn 对应 CLI 的路径；
-  // CLI（REPL / 子命令）的 createClient 只会 new OpenAI 连占位端点、必然失败。
-  // 与其放行后在第一条消息处报一个难懂的鉴权错，不如此处 fail-fast 给出切换指引。
-  // dev REPL 默认读 ~/.pith-wiki-dev/config.json——桌面 dev 把 activeProvider 设成
-  // 委托型 provider 时，共用同一个 home 的 CLI 会继承到这个不支持的 provider。
+  // API-backed commands (ingest / queue hydration) cannot use delegated CLI providers.
+  // Chat has its own validation below and can delegate to Codex without an API key.
   if (config.providerKind !== 'openai') {
     const name = config.activeProvider ?? config.providerKind;
     throw new Error(
-      `provider "${name}" (kind: ${config.providerKind}) is desktop-only — the CLI cannot delegate to the ${config.providerKind} binary. ` +
-        `Switch to an OpenAI-compatible provider for the CLI: pass --provider <name>, set PITH_WIKI_PROVIDER=<name>, ` +
+      `provider "${name}" (kind: ${config.providerKind}) cannot run this API-backed command. ` +
+        `Switch to an OpenAI-compatible provider: pass --provider <name>, set PITH_WIKI_PROVIDER=<name>, ` +
         `or change "activeProvider" in the config.json under your pith-wiki home.`,
     );
   }
@@ -735,4 +811,10 @@ export function requireApiKey(config: Config): void {
       (entry ? '' : ` (under your pith-wiki home)`) +
       `, or put "${envVar}" in config.json's "secrets" map.`,
   );
+}
+
+/** Validate the interactive REPL's provider route. Codex delegates to the local binary. */
+export function requireChatProvider(config: Config): void {
+  if (config.providerKind === 'codex') return;
+  requireApiKey(config);
 }

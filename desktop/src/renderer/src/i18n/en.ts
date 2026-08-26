@@ -28,6 +28,14 @@ export const en: Shape<typeof zh> = {
     chatRate: 'Rate-limited or out of quota — wait a moment and retry.',
     openSettings: 'Open Settings',
   },
+  notification: {
+    region: 'Notifications',
+    summary: '{{n}} notifications',
+    expand: 'Expand',
+    collapse: 'Collapse',
+    dismissAll: 'Dismiss all',
+    dismissOne: 'Click to dismiss',
+  },
   time: {
     now: 'now',
     minutes: '{{n}}m',

@@ -1,10 +1,38 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { parseCodexStream, type StreamEvents } from '../src/engine/codexAgent.js';
+import { parseCodexStream, readPithMcpSpec, type StreamEvents } from '../src/engine/codexAgent.js';
 
 /** 把字符串行数组变成 async iterable，模拟 codex stdout 的逐行 JSONL 输出。 */
 async function* lines(arr: string[]): AsyncIterable<string> {
   for (const l of arr) yield l;
 }
+
+describe('readPithMcpSpec', () => {
+  it('读取共享 pith MCP 配置并规范化 args/env', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pith-codex-mcp-'));
+    const file = path.join(dir, 'pith-mcp.json');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        mcpServers: {
+          pith: { command: 'node', args: ['server.js', 7], env: { PITH_WIKI_HOME: '/tmp/pith' } },
+        },
+      }),
+    );
+    expect(readPithMcpSpec(file)).toEqual({
+      command: 'node',
+      args: ['server.js', '7'],
+      env: { PITH_WIKI_HOME: '/tmp/pith' },
+    });
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('配置缺失时返回 undefined，Codex 仍可无 MCP 聊天', () => {
+    expect(readPithMcpSpec('/definitely/missing/pith-mcp.json')).toBeUndefined();
+  });
+});
 
 /**
  * 一次「调用 mcp__pith__wiki_list → 基于结果回答」的典型 codex exec --json 序列。
@@ -16,7 +44,11 @@ const TRANSCRIPT = [
   // 模型先发一条「我要调工具」的 agent_message（预告），再发真正答案
   JSON.stringify({
     type: 'item.completed',
-    item: { id: 'item_0', type: 'agent_message', text: '我会调用 wiki_list，限定 tech，最多 2 条。' },
+    item: {
+      id: 'item_0',
+      type: 'agent_message',
+      text: '我会调用 wiki_list，限定 tech，最多 2 条。',
+    },
   }),
   JSON.stringify({
     type: 'item.started',
@@ -40,7 +72,12 @@ const TRANSCRIPT = [
       tool: 'wiki_list',
       arguments: { collection: 'tech', limit: 2 },
       result: {
-        content: [{ type: 'text', text: '{"ok":true,"items":[{"id":"deepseek-v4","title":"DeepSeek-V4 预览版"}]}' }],
+        content: [
+          {
+            type: 'text',
+            text: '{"ok":true,"items":[{"id":"deepseek-v4","title":"DeepSeek-V4 预览版"}]}',
+          },
+        ],
         structured_content: null,
       },
       error: null,
@@ -70,7 +107,8 @@ describe('parseCodexStream', () => {
     let finalEmitted: string | null = null;
     const usages: Array<{ inputTokens: number; outputTokens: number }> = [];
     const events: StreamEvents = {
-      onToolRound: (e) => toolRounds.push({ name: e.name, args: e.args, ok: e.ok, preview: e.preview }),
+      onToolRound: (e) =>
+        toolRounds.push({ name: e.name, args: e.args, ok: e.ok, preview: e.preview }),
       onAssistantText: (e) => {
         if (e.final) finalEmitted = e.text;
         else lastStreamed = e.text;
@@ -107,7 +145,14 @@ describe('parseCodexStream', () => {
         JSON.stringify({ type: 'thread.started', thread_id: 't1' }),
         JSON.stringify({
           type: 'item.started',
-          item: { id: 'i1', type: 'mcp_tool_call', server: 'pith', tool: 'wiki_list', arguments: { collection: 'tech' }, status: 'in_progress' },
+          item: {
+            id: 'i1',
+            type: 'mcp_tool_call',
+            server: 'pith',
+            tool: 'wiki_list',
+            arguments: { collection: 'tech' },
+            status: 'in_progress',
+          },
         }),
         JSON.stringify({
           type: 'item.completed',
@@ -122,7 +167,10 @@ describe('parseCodexStream', () => {
             status: 'failed',
           },
         }),
-        JSON.stringify({ type: 'item.completed', item: { id: 'i2', type: 'agent_message', text: '调用被取消。' } }),
+        JSON.stringify({
+          type: 'item.completed',
+          item: { id: 'i2', type: 'agent_message', text: '调用被取消。' },
+        }),
         JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } }),
       ]),
       { onToolRound: (e) => rounds.push({ name: e.name, ok: e.ok, preview: e.preview }) },
@@ -141,11 +189,21 @@ describe('parseCodexStream', () => {
         JSON.stringify({ type: 'thread.started', thread_id: 't' }),
         JSON.stringify({
           type: 'item.completed',
-          item: { id: 'c1', type: 'command_execution', command: 'ls -la', aggregated_output: 'total 0\n.', exit_code: 0, status: 'completed' },
+          item: {
+            id: 'c1',
+            type: 'command_execution',
+            command: 'ls -la',
+            aggregated_output: 'total 0\n.',
+            exit_code: 0,
+            status: 'completed',
+          },
         }),
         JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } }),
       ]),
-      { onToolRound: (e) => rounds.push({ name: e.name, args: e.args, ok: e.ok, preview: e.preview }) },
+      {
+        onToolRound: (e) =>
+          rounds.push({ name: e.name, args: e.args, ok: e.ok, preview: e.preview }),
+      },
     );
     expect(rounds).toHaveLength(1);
     expect(rounds[0].name).toBe('shell');
@@ -158,7 +216,10 @@ describe('parseCodexStream', () => {
     const thoughts: string[] = [];
     await parseCodexStream(
       lines([
-        JSON.stringify({ type: 'item.completed', item: { id: 'r1', type: 'reasoning', text: '先看有哪些工具' } }),
+        JSON.stringify({
+          type: 'item.completed',
+          item: { id: 'r1', type: 'reasoning', text: '先看有哪些工具' },
+        }),
         JSON.stringify({ type: 'turn.completed', usage: {} }),
       ]),
       { onThinking: (e) => thoughts.push(e.text) },
@@ -184,7 +245,14 @@ describe('parseCodexStream', () => {
         JSON.stringify({ type: 'thread.started', thread_id: 't' }),
         JSON.stringify({
           type: 'item.started',
-          item: { id: 'i9', type: 'mcp_tool_call', server: 'pith', tool: 'wiki_grep', arguments: { patterns: ['x'] }, status: 'in_progress' },
+          item: {
+            id: 'i9',
+            type: 'mcp_tool_call',
+            server: 'pith',
+            tool: 'wiki_grep',
+            arguments: { patterns: ['x'] },
+            status: 'in_progress',
+          },
         }),
         // 没有对应的 item.completed 就直接 turn.completed
         JSON.stringify({ type: 'turn.completed', usage: {} }),

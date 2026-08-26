@@ -15,6 +15,7 @@ import {
   parseReadPathsFromEnv,
   pickHydrationProvider,
   requireApiKey,
+  requireChatProvider,
   resolveProviderEntry,
   type Config,
 } from '../src/config.js';
@@ -94,10 +95,7 @@ describe('parseReadPathsFromEnv — 分隔符语法', () => {
 
   it('分隔符语法里的 ~/ 也展开', () => {
     const input = ['~/notes', '/abs/path'].join(path.delimiter);
-    expect(parseReadPathsFromEnv(input)).toEqual([
-      path.join(os.homedir(), 'notes'),
-      '/abs/path',
-    ]);
+    expect(parseReadPathsFromEnv(input)).toEqual([path.join(os.homedir(), 'notes'), '/abs/path']);
   });
 
   it('分隔符之间的空白被 trim', () => {
@@ -402,9 +400,54 @@ describe('委托型 CLI provider — codex', () => {
     expect(pickHydrationProvider(cfg)?.model).toBe('m');
   });
 
-  it('requireApiKey：codex 在 CLI 侧 fail-fast（委托型 provider 仅桌面端可用）', () => {
+  it('requireApiKey：codex 不能用于需要水合 API 的命令', () => {
     const cfg = { providerKind: 'codex', activeProvider: 'codex', apiKey: '' } as unknown as Config;
-    expect(() => requireApiKey(cfg)).toThrow(/desktop-only|codex/);
+    expect(() => requireApiKey(cfg)).toThrow(/API-backed|codex/);
+  });
+
+  it('requireChatProvider：CLI REPL 放行 codex 委托', () => {
+    const cfg = { providerKind: 'codex', activeProvider: 'codex', apiKey: '' } as unknown as Config;
+    expect(() => requireChatProvider(cfg)).not.toThrow();
+  });
+});
+
+describe('委托型 CLI provider — pi', () => {
+  it('resolveProviderEntry：pi 无 baseURL → 占位 https://pi.invalid（合法 URL）', () => {
+    const r = resolveProviderEntry({ kind: 'pi', model: 'default' });
+    // pi 是 provider-agnostic（真实端点由 pi 自己按 --model / auth.json 决定）→ 占位域名，
+    // 但必须是合法 URL，因为 createClient 仍会 new OpenAI（该 client 在 pi 分支从不被调用）。
+    expect(r.baseURL).toBe('https://pi.invalid');
+    expect(() => new URL(r.baseURL)).not.toThrow();
+  });
+
+  it('applyActiveProvider：pi entry → providerKind=pi', () => {
+    const cfg = {
+      apiKey: '',
+      baseURL: 'https://top.example.com',
+      model: 'top',
+      providers: { pi: { kind: 'pi', model: 'default' } },
+      activeProvider: 'pi',
+    } as unknown as Config;
+    const result = applyActiveProvider(cfg);
+    expect(result.providerKind).toBe('pi');
+    expect(result.model).toBe('default');
+  });
+
+  it('pickHydrationProvider：pi 永不入选水合（同 claude-code/codex）', () => {
+    const cfg = {
+      providers: {
+        pi: { kind: 'pi', model: 'default' },
+        api: { kind: 'openai', baseURL: 'https://x.example.com', model: 'm', apiKey: 'k' },
+      },
+      hydrationProvider: 'pi',
+    } as unknown as Config;
+    expect(pickHydrationProvider(cfg)?.model).toBe('m');
+  });
+
+  it('requireApiKey：pi 在 CLI 侧 fail-fast（委托型 provider 仅桌面端可用）', () => {
+    const cfg = { providerKind: 'pi', activeProvider: 'pi', apiKey: '' } as unknown as Config;
+    expect(() => requireApiKey(cfg)).toThrow(/API-backed|pi/);
+    expect(() => requireChatProvider(cfg)).toThrow(/API-backed|pi/);
   });
 });
 
@@ -603,5 +646,39 @@ describe('requestTimeoutMs — 配置链', () => {
   it('overrides 优先级高于 env', () => {
     process.env.PITH_WIKI_TIMEOUT_MS = '45000';
     expect(loadConfig({ requestTimeoutMs: 5000 }).requestTimeoutMs).toBe(5000);
+  });
+});
+
+describe('piProvider —— 用 pi-ai 内建 provider（如 Anthropic 原生协议）', () => {
+  it('设了 piProvider 就不强制 baseURL（端点由 pi-ai 的模型目录决定）', () => {
+    const cfg = {
+      apiKey: '',
+      baseURL: 'https://top.example.com',
+      model: 'claude-opus-4-5',
+      providers: {
+        claude: {
+          kind: 'openai',
+          model: 'claude-opus-4-5',
+          transport: 'pi-ai',
+          piProvider: 'anthropic',
+        },
+      },
+      activeProvider: 'claude',
+    } as unknown as Config;
+    const result = applyActiveProvider(cfg);
+    expect(result.providerKind).toBe('openai'); // 非委托 → agentImpl 能生效
+    expect(result.transport).toBe('pi-ai');
+    expect(result.piProvider).toBe('anthropic');
+    // 占位 baseURL 仍是合法 URL（ConfigSchema 的约束），但这条路径不会去连它
+    expect(() => new URL(result.baseURL)).not.toThrow();
+  });
+
+  it('既没 baseURL 也没 piProvider 的 openai provider 仍然报错', () => {
+    expect(() =>
+      loadConfig({
+        providers: { bad: { kind: 'openai', model: 'm' } },
+        activeProvider: 'bad',
+      } as never),
+    ).toThrow();
   });
 });

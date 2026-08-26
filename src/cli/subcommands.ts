@@ -118,7 +118,8 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
       }
 
       // 统一走 createClient 工厂：securityEnabled 时自动带上出站过滤/脱敏层
-      const client = createClient(config);
+      // 子命令这条是纯水合路径（ingest/batch）→ 强制 openai SDK（JSON 模式）。
+      const client = createClient(config, { purpose: 'hydration' });
       const library = new LibraryService(config.wikiRoot, { ignoredDirs: [config.outputDir] });
       const hydrator = new HydrationService(client, config.model, library, config.supportsJsonMode);
       // 注意：commander `--no-cache` 会把 opts.cache 解析成 false（默认 true）。

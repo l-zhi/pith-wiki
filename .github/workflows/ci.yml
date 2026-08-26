@@ -26,18 +26,30 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
 
-      - name: Install dependencies
+      - name: Install core dependencies
         run: npm ci
 
-      - name: Typecheck
+      - name: Install desktop dependencies
+        run: npm ci --prefix desktop
+
+      - name: Typecheck core
         run: npm run typecheck
+
+      - name: Typecheck desktop
+        run: npm run typecheck --prefix desktop
 
       - name: Test
         run: npm test
 
-      - name: Build
+      - name: Build core
         run: npm run build
+
+      - name: Build desktop
+        run: npm run build --prefix desktop
 
       - name: Smoke check CLI
         run: node dist/bin/pith-wiki.js --help

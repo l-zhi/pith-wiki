@@ -11,6 +11,7 @@ import { Skills } from './views/Skills';
 import { Schedule } from './views/Schedule';
 import { Onboarding } from './views/Onboarding';
 import { ErrorBoundary } from './ErrorBoundary';
+import { NoticeCenter } from './components/NoticeCenter';
 import { useStore } from './store';
 
 /** pith 桌面壳：三栏布局（设计稿 App.jsx）+ 主题 + 通知 toast。 */
@@ -20,6 +21,7 @@ export function App() {
   const boot = useStore((s) => s.boot);
   const notices = useStore((s) => s.notices);
   const dismissNotice = useStore((s) => s.dismissNotice);
+  const dismissAllNotices = useStore((s) => s.dismissAllNotices);
   const refreshQueue = useStore((s) => s.refreshQueue);
   const refreshCollections = useStore((s) => s.refreshCollections);
 
@@ -71,61 +73,12 @@ export function App() {
 
       {boot?.needsOnboarding && <Onboarding />}
 
-      {/* engine notices → 右下角 toast 堆叠 */}
-      <div
-        style={{
-          position: 'fixed',
-          right: 16,
-          bottom: 16,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 8,
-          zIndex: 60,
-          maxWidth: 420,
-        }}
-      >
-        {notices.slice(-4).map((n) => (
-          <button
-            key={n.id}
-            type="button"
-            onClick={() => dismissNotice(n.id)}
-            className="pith-fade-up"
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '3px 1fr',
-              columnGap: 10,
-              padding: '10px 14px',
-              border: 'none',
-              cursor: 'pointer',
-              textAlign: 'left',
-              borderRadius: 'var(--radius-md)',
-              background: 'var(--surface-raised)',
-              boxShadow: 'var(--shadow-popover), var(--ring-card)',
-            }}
-          >
-            <span
-              style={{
-                borderRadius: 2,
-                background:
-                  n.level === 'error'
-                    ? 'var(--status-dead)'
-                    : n.level === 'warning'
-                      ? 'var(--status-running)'
-                      : 'var(--status-watch)',
-              }}
-            />
-            <span
-              style={{
-                fontSize: 'var(--text-subhead)',
-                color: 'var(--text-primary)',
-                wordBreak: 'break-word',
-              }}
-            >
-              {n.text}
-            </span>
-          </button>
-        ))}
-      </div>
+      {/* engine notices → 右下角 toast；超过三条时默认折叠，可展开或批量关闭。 */}
+      <NoticeCenter
+        notices={notices}
+        onDismiss={dismissNotice}
+        onDismissAll={dismissAllNotices}
+      />
       </div>
     </ErrorBoundary>
   );

@@ -29,9 +29,15 @@ import { createClient } from '@core/llm/client.js';
 import { Agent, defaultSystemPrompt } from '@core/llm/agent.js';
 import { ClaudeCodeAgent } from './claudeCodeAgent.js';
 import { CodexAgent } from './codexAgent.js';
+import { PiAgent } from './piAgent.js';
+import { PiCoreAgent } from './piCoreAgent.js';
+import { buildScopePreamble, toToolSpecs } from './piCoreWiring.js';
+import type { resolvePiModels as ResolvePiModels } from '@core/llm/piAiTransport.js';
+import { createSecurityHooks, type SecurityHooks } from '@core/security/index.js';
+import { ensurePiBridge } from './piBridgeSource.js';
 import { ReviewingAgent, type ReviewTrace } from './reviewingAgent.js';
 import { composeSystemPrompt, loadSoul, SOUL_PROMPT_HEADER, type LoadedSoul } from '@core/llm/soul.js';
-import { buildContext } from '@core/tools/index.js';
+import { ALL_TOOLS, buildContext } from '@core/tools/index.js';
 import { makeSkillTool } from '@core/tools/skill.js';
 import { runCommandTool } from '@core/tools/run_command.js';
 import { httpRequestTool } from '@core/tools/http_request.js';
@@ -68,6 +74,7 @@ import {
   type CliDTO,
   type ProviderDTO,
   type QueueDigestDTO,
+  type ScopeDTO,
   type ScheduledTaskDTO,
   type ScheduleSpecDTO,
   type SettingsDTO,
@@ -143,6 +150,28 @@ const CLAUDE_CODE_SYSTEM_PROMPT =
   '飞书操作用 lark-cli 命令。不要读取 ~/.claude/skills/ 下的技能文档，也不要使用 Claude Code 自带的 weread/lark 技能。';
 
 /**
+ * 委托型 provider（每轮 spawn 一个本机 CLI，不走 chat.completions）。
+ * 三者共用 delegateWriterPrompt / mcpConfigPath / makeDelegatedAgent 装配路径。
+ */
+export type DelegateKind = 'claude-code' | 'codex' | 'pi';
+const DELEGATE_KINDS: readonly string[] = ['claude-code', 'codex', 'pi'];
+export function isDelegateKind(kind: string | undefined): kind is DelegateKind {
+  return kind !== undefined && DELEGATE_KINDS.includes(kind);
+}
+/** 委托型 CLI 的展示名（提示文案用）。 */
+const DELEGATE_LABELS: Record<DelegateKind, string> = {
+  'claude-code': 'Claude Code',
+  codex: 'Codex',
+  pi: 'pi',
+};
+/** 委托型 CLI 的默认可执行名（未配 binary 时探测/回填用）。 */
+const DELEGATE_BINARIES: Record<DelegateKind, string> = {
+  'claude-code': 'claude',
+  codex: 'codex',
+  pi: 'pi',
+};
+
+/**
  * 读 pith-mcp 配置文件（JSON，`mcpServers.pith`）解析出 codex 内联注册用的启动规格。
  * claude-code 把该文件路径直接作为 `--mcp-config <file>` 传入；codex 无此标志，需读出
  * command/args/env 翻成 `-c mcp_servers.pith.*` 覆盖（见 CodexAgent.mcpConfigArgs）。
@@ -170,6 +199,7 @@ function readPithMcpSpec(
   }
 }
 
+
 async function initServices(): Promise<Services> {
   const home = pithWikiHome();
   fs.mkdirSync(home, { recursive: true });
@@ -186,10 +216,18 @@ async function initServices(): Promise<Services> {
     onSecurityNotice: (msg, kind) =>
       emitNotice(kind === 'warning' ? 'warning' : 'info', `🔒 ${msg}`),
   });
-  // 水合专属 client：聊天 provider 是委托型 CLI（claude-code/codex）时，后台水合 / digest
-  // 仍走一个 API provider（委托型 CLI 不能做批量 JSON 水合）。openai 聊天时直接复用主 client。
-  let hydrationClient = client;
+  // 水合专属 client。两条理由必须与聊天 client 分开建：
+  //   1. 聊天 provider 是委托型 CLI（claude-code/codex/pi）时，后台水合 / digest 仍要走一个
+  //      API provider（委托型 CLI 不能做批量 JSON 水合）；
+  //   2. 聊天 transport 可能是 pi-ai，而水合依赖 `response_format: json_object`（pi-ai 没有）
+  //      —— `purpose:'hydration'` 强制回落到 openai SDK。
+  let hydrationClient = createClient(config, {
+    purpose: 'hydration',
+    onSecurityNotice: (msg, kind) =>
+      emitNotice(kind === 'warning' ? 'warning' : 'info', `🔒 ${msg}`),
+  });
   let hydrationModel = config.model;
+  let hydrationBaseURL = config.baseURL;
   let hydrationSupportsJson = config.supportsJsonMode;
   if (config.providerKind !== 'openai') {
     const he = pickHydrationProvider(config);
@@ -198,11 +236,13 @@ async function initServices(): Promise<Services> {
       hydrationClient = createClient(
         { ...config, ...r },
         {
+          purpose: 'hydration',
           onSecurityNotice: (msg, kind) =>
             emitNotice(kind === 'warning' ? 'warning' : 'info', `🔒 ${msg}`),
         },
       );
       hydrationModel = r.model;
+      hydrationBaseURL = r.baseURL;
       hydrationSupportsJson = r.supportsJsonMode;
     } else {
       emitNotice(
@@ -212,7 +252,7 @@ async function initServices(): Promise<Services> {
     }
   }
   console.log(
-    `[pith/route] hydration → model=${hydrationModel} baseURL=${hydrationClient.baseURL} json=${hydrationSupportsJson}`,
+    `[pith/route] hydration → model=${hydrationModel} baseURL=${hydrationBaseURL} json=${hydrationSupportsJson}`,
   );
   // 审稿专用 client：reviewProvider 指向 openai → 建独立 client，reviewer 走它；
   // 指向委托型 CLI（claude-code/codex）→ 保持 null，agentFactory 用该 CLI 造 reviewer（每轮 spawn）；
@@ -231,7 +271,8 @@ async function initServices(): Promise<Services> {
         },
       );
       reviewModel = r.model;
-      console.log(`[pith/route] reviewer → model=${reviewModel} baseURL=${reviewClient.baseURL}`);
+      // baseURL 从 resolve 结果读（ChatClient 是传输抽象，不再暴露端点字段）。
+      console.log(`[pith/route] reviewer → model=${reviewModel} baseURL=${r.baseURL}`);
     } else if (!re) {
       emitNotice(
         'warning',
@@ -318,6 +359,53 @@ async function initServices(): Promise<Services> {
   /* —— 定时任务（触发宿主 = 本 engine） —— */
   const scheduleService = new ScheduleService(new ScheduleStore(config.scheduleStatePath));
 
+  /* —— pi-core 的安全钩子。client 层的 monkey-patch 覆盖不到 pi-agent-core
+   * （它不走 chat.completions），所以脱敏/还原要显式接。与 chat client 同生命周期：
+   * 一个 engine 一份占位符映射表，跨会话稳定可还原（与现状语义一致）。 */
+  const securityHooks: SecurityHooks | undefined =
+    config.agentImpl === 'pi-core'
+      ? createSecurityHooks(config, (msg, kind) =>
+          emitNotice(kind === 'warning' ? 'warning' : 'info', `🔒 ${msg}`),
+        )
+      : undefined;
+
+  /* —— pi-core agent loop（可选实现，config.agentImpl='pi-core'）——
+   * 在这里一次性解析 models/model：pi-agent-core 构造时就要 model，而内建 provider 路径
+   * 是异步的（动态 import）。只有开了这个开关才付这笔（~130ms + 依赖加载）。
+   *
+   * 仅对 openai 类 provider 有意义：委托型 CLI（claude-code/codex/pi）本身就是**完整的
+   * agent**（自带 loop 和模型），没有「把 pi 的 loop 塞进 claude 里」这回事，agentFactory
+   * 的委托分支也优先于这里。所以 providerKind 非 openai 时直接跳过——否则会拿委托型
+   * provider 的占位 baseURL 去解析一个永远用不上的 model，白付初始化还让日志误导人。 */
+  let piCoreRuntime: Awaited<ReturnType<typeof ResolvePiModels>> | null = null;
+  if (config.agentImpl === 'pi-core' && config.providerKind !== 'openai') {
+    emitNotice(
+      'warning',
+      `agentImpl=pi-core 已忽略：当前对话 provider 是 ${config.providerKind}（委托型 CLI 自带 agent loop）。` +
+        `想用 pi-core，请把「对话模型」切到一个 OpenAI 兼容 provider。`,
+    );
+    console.log(
+      `[pith/route] agent loop → pi-core 已忽略（providerKind=${config.providerKind} 是委托型 CLI）`,
+    );
+  } else if (config.agentImpl === 'pi-core') {
+    try {
+      // 动态 import：静态引用会把 pi-ai（~130ms 加载 + 一串厂商 SDK）拉进 engine 的启动
+      // 路径，连默认的 agentImpl='pith' 用户都要付。electron-vite 也会因此警告
+      // 「dynamic import will not move module into another chunk」——那条警告说的就是
+      // client.ts 里的惰性 import 被这里的静态 import 抵消了。
+      const { resolvePiModels } = await import('@core/llm/piAiTransport.js');
+      piCoreRuntime = await resolvePiModels(config);
+      console.log(
+        `[pith/route] agent loop → pi-agent-core | model=${config.model} custom=${piCoreRuntime.custom}`,
+      );
+    } catch (err) {
+      emitNotice(
+        'error',
+        `pi-core agent 初始化失败，本次回退到 pith 内置 loop：${(err as Error).message}`,
+      );
+    }
+  }
+
   /* —— SessionManager —— */
   const sessionStore = new SessionStore(path.join(home, 'sessions'));
   const agentFactory: AgentFactory = (sessionId, approvals, origin, reviewMode) => {
@@ -331,7 +419,7 @@ async function initServices(): Promise<Services> {
     let model: string;
     let provider: string | undefined;
 
-    // 委托型 CLI（claude-code/codex）共用的 writer 人设：检索人设 + 输出落点 + soul。
+    // 委托型 CLI（claude-code/codex/pi）共用的 writer 人设：检索人设 + 输出落点 + soul。
     const soulSuffix = soul.content.trim()
       ? `\n\n${SOUL_PROMPT_HEADER}\n\n${soul.content.trim()}`
       : '';
@@ -342,10 +430,10 @@ async function initServices(): Promise<Services> {
       `这是唯一的输出落点，不要自己拼路径或省略其中任何一层目录。` +
       soulSuffix;
 
-    // 用一个委托型 provider entry 造 CLI agent（claude-code/codex）。writer 与 CLI-reviewer 共用：
+    // 用一个委托型 provider entry 造 CLI agent（claude-code/codex/pi）。writer 与 CLI-reviewer 共用：
     // 审稿模式下可把某个 CLI provider 选作 reviewer（每轮 spawn），复用同一套 env/mcp 装配逻辑。
     const makeDelegatedAgent = (
-      kind: 'claude-code' | 'codex',
+      kind: DelegateKind,
       entry: ProviderConfig | undefined,
       systemPrompt: string,
     ): AgentLike => {
@@ -367,15 +455,49 @@ async function initServices(): Promise<Services> {
           mcpConfigPath,
           env,
           cwd: home,
+          // 默认与用户自己的 CC 环境隔离（skills/plugins/hooks/其它 MCP 不进 pith 会话）。
+          ...(entry?.isolation ? { isolation: entry.isolation } : {}),
         });
       }
-      // codex：订阅优先——配了 API key 才注入 OPENAI_API_KEY，否则删 key 走 ~/.codex/auth.json。
       const apiKey =
         entry?.apiKey && entry.apiKey.length > 0
           ? entry.apiKey
           : entry?.apiKeyEnv
             ? process.env[entry.apiKeyEnv]
             : undefined;
+      if (kind === 'pi') {
+        // pi：订阅优先——不配 key 就让 pi 走 ~/.pi/agent/auth.json 的 OAuth（Claude Pro/Max、
+        // Copilot、xAI…）。剔掉继承来的 provider key，避免 pi 静默切到按量计费。
+        const env: NodeJS.ProcessEnv = { ...process.env };
+        if (!apiKey) {
+          delete env.ANTHROPIC_API_KEY;
+          delete env.OPENAI_API_KEY;
+          delete env.GEMINI_API_KEY;
+          delete env.GOOGLE_API_KEY;
+        }
+        // pi 没有 MCP：把 pith-mcp 桥接成 pi 原生工具的扩展写到 <home>/pi/ 下再 -e 加载。
+        // 写盘失败不该让整个会话起不来——降级成「能聊天但读不到知识库」并给提示。
+        let bridgePath: string | undefined;
+        try {
+          bridgePath = ensurePiBridge(home);
+        } catch (err) {
+          emitNotice('warning', `pi bridge 写入失败，本会话读不到知识库：${(err as Error).message}`);
+        }
+        return new PiAgent({
+          binary: entry?.binary ?? 'pi',
+          // ProviderSchema.model 不允许空串，所以「用 pi 自己的默认模型」用 'default' 表达；
+          // 见 DELEGATE_DEFAULT_MODELS。传空 → PiAgent 不带 --model。
+          model: mdl === 'default' ? '' : mdl,
+          systemPrompt,
+          bridgePath,
+          mcp: readPithMcpSpec(mcpConfigPath),
+          env,
+          cwd: home,
+          sessionDir: path.join(home, 'pi-sessions'),
+          ...(apiKey ? { apiKey } : {}),
+        });
+      }
+      // codex：订阅优先——配了 API key 才注入 OPENAI_API_KEY，否则删 key 走 ~/.codex/auth.json。
       const env: NodeJS.ProcessEnv = { ...process.env };
       if (apiKey) env.OPENAI_API_KEY = apiKey;
       else {
@@ -392,14 +514,14 @@ async function initServices(): Promise<Services> {
       });
     };
 
-    if (config.providerKind === 'claude-code' || config.providerKind === 'codex') {
+    if (isDelegateKind(config.providerKind)) {
       // 委托本机 CLI（headless + pith-mcp），复用订阅额度。
       const kind = config.providerKind;
       const entry = config.activeProvider ? config.providers[config.activeProvider] : undefined;
       const mcpConfigPath = entry?.mcpConfigPath ?? path.join(home, 'pith-mcp.json');
       console.log(
         `[pith/route] chat → ${kind} CLI | provider=${config.activeProvider} model=${config.model} ` +
-          `binary=${entry?.binary ?? kind === 'codex' ? 'codex' : 'claude'} mcp=${mcpConfigPath} review=${reviewMode}`,
+          `binary=${entry?.binary ?? DELEGATE_BINARIES[kind]} mcp=${mcpConfigPath} review=${reviewMode}`,
       );
       writer = makeDelegatedAgent(kind, entry, delegateWriterPrompt);
       makeReviewer = () => makeDelegatedAgent(kind, entry, REVIEWER_SYSTEM_PROMPT);
@@ -425,11 +547,28 @@ async function initServices(): Promise<Services> {
       if (skillRegistry.allowedHosts().size > 0) extraTools.push(httpRequestTool);
       extraTools.push(...scheduleTools);
       console.log(
-        `[pith/route] chat → openai | provider=${config.activeProvider || '(top-level)'} ` +
+        `[pith/route] chat → ${piCoreRuntime ? 'pi-agent-core' : 'pith'} loop | ` +
+          `transport=${config.transport} provider=${config.activeProvider || '(top-level)'} ` +
           `model=${config.model} baseURL=${config.baseURL} review=${reviewMode}`,
       );
       const mkPith = (systemPrompt: string): AgentLike =>
-        new Agent(client, config.model, ctx, { systemPrompt, extraTools, maxSteps: config.maxSteps });
+        piCoreRuntime
+          ? new PiCoreAgent({
+              models: piCoreRuntime.models,
+              model: piCoreRuntime.model,
+              systemPrompt,
+              // 同一批 pith 工具（含 skill / run_command / http_request / schedule），
+              // 同一个 ToolContext —— 沙箱、审批（run_command）、scope 全都跟着过来。
+              tools: toToolSpecs([...ALL_TOOLS, ...extraTools], ctx),
+              maxToolTurns: config.maxSteps,
+              ...(securityHooks ? { security: securityHooks } : {}),
+              buildScopePreamble: (question, scope) => buildScopePreamble(ctx, question, scope),
+            })
+          : new Agent(client, config.model, ctx, {
+              systemPrompt,
+              extraTools,
+              maxSteps: config.maxSteps,
+            });
       writer = mkPith(composeSystemPrompt(defaultSystemPrompt, soul));
       makeReviewer = () => mkPith(REVIEWER_SYSTEM_PROMPT);
       model = config.model;
@@ -439,13 +578,13 @@ async function initServices(): Promise<Services> {
     if (!reviewMode) return { agent: writer, model, provider };
 
     // reviewer 三选一：
-    //   1. reviewProvider 指向委托型 CLI（claude-code/codex）→ 用该 CLI 造 reviewer（每轮 spawn，慢+烧订阅额度，用户已知取舍）；
+    //   1. reviewProvider 指向委托型 CLI（claude-code/codex/pi）→ 用该 CLI 造 reviewer（每轮 spawn，慢+烧订阅额度，用户已知取舍）；
     //   2. reviewProvider 指向 openai（reviewClient 已建）→ 独立 client 造只读 pith Agent（不给写/执行/skill 工具）；
     //   3. 未配 reviewProvider → 与 writer 同 provider（makeReviewer）。
     let reviewer: AgentLike;
     const reviewEntry = config.reviewProvider ? config.providers[config.reviewProvider] : undefined;
     const reviewKind = reviewEntry?.kind ?? 'openai';
-    if (reviewEntry && (reviewKind === 'claude-code' || reviewKind === 'codex')) {
+    if (reviewEntry && isDelegateKind(reviewKind)) {
       console.log(`[pith/route] reviewer → ${reviewKind} CLI | provider=${config.reviewProvider}`);
       reviewer = makeDelegatedAgent(reviewKind, reviewEntry, REVIEWER_SYSTEM_PROMPT);
     } else if (reviewClient) {
@@ -1150,34 +1289,51 @@ function resolveBinaryPath(bin: string): string | undefined {
   return undefined;
 }
 
+/** 委托型 CLI 未配 model 时的默认模型别名（用户可在设置里改）。 */
+const DELEGATE_DEFAULT_MODELS: Record<DelegateKind, string> = {
+  'claude-code': 'sonnet',
+  // codex 默认模型用当前最新别名。订阅走 ~/.codex/auth.json，无需 key。
+  codex: 'gpt-5.6-sol',
+  // pi 空 model = 用 pi settings.json 里的默认模型（它自己有模型目录 + /login 订阅），
+  // 不写死某个模型名，避免与用户实际有额度的 provider 不匹配。
+  pi: '',
+};
+
 /**
- * 为「设置里直接选了本机检测到的 CLI（claude-code/codex）但还没建过 entry」的情况合成一条最小
+ * 为「设置里直接选了本机检测到的 CLI（claude-code/codex/pi）但还没建过 entry」的情况合成一条最小
  * provider entry：binary 回填检测到的绝对路径（GUI 子进程 PATH 可能很瘦，裸名可能找不到）。
  * 非 CLI 名 → null（调用方据此报「provider not found」）。setActiveProvider / setReviewProvider 共用。
  */
 function synthCliEntry(name: string): Record<string, unknown> | null {
-  if (name === 'claude-code') {
-    const bin = resolveBinaryPath('claude');
-    return { kind: 'claude-code', model: 'sonnet', ...(bin ? { binary: bin } : {}) };
-  }
-  if (name === 'codex') {
-    const bin = resolveBinaryPath('codex');
-    // codex 默认模型用当前最新别名；用户可在设置里改。订阅走 ~/.codex/auth.json，无需 key。
-    return { kind: 'codex', model: 'gpt-5.6-sol', ...(bin ? { binary: bin } : {}) };
-  }
-  return null;
+  if (!isDelegateKind(name)) return null;
+  const bin = resolveBinaryPath(DELEGATE_BINARIES[name]);
+  return {
+    kind: name,
+    // ProviderSchema.model 是 min(1)，pi 的「用 pi 默认模型」用 'default' 占位，
+    // PiAgent 见到它就不传 --model（见 normalizeDelegateModel）。
+    model: DELEGATE_DEFAULT_MODELS[name] || 'default',
+    ...(bin ? { binary: bin } : {}),
+  };
 }
 
-/** 本机可作为聊天后端的 CLI 检测（claude-code / codex）。取已配置 binary，否则探测默认名。 */
+/** 本机可作为聊天后端的 CLI 检测（claude-code / codex / pi）。取已配置 binary，否则探测默认名。 */
 function detectClis(providersRaw: Record<string, Record<string, unknown>>): CliDTO[] {
-  const binOf = (kind: string, fallback: string): string => {
+  const binOf = (kind: DelegateKind): string => {
     const e = Object.values(providersRaw).find((p) => p.kind === kind);
-    return typeof e?.binary === 'string' && e.binary ? (e.binary as string) : fallback;
+    return typeof e?.binary === 'string' && e.binary
+      ? (e.binary as string)
+      : DELEGATE_BINARIES[kind];
   };
-  return [
-    { id: 'claude-code', label: 'Claude Code CLI', present: Boolean(resolveBinaryPath(binOf('claude-code', 'claude'))) },
-    { id: 'codex', label: 'Codex CLI', present: Boolean(resolveBinaryPath(binOf('codex', 'codex'))) },
-  ];
+  const labels: Record<DelegateKind, string> = {
+    'claude-code': 'Claude Code CLI',
+    codex: 'Codex CLI',
+    pi: 'pi CLI',
+  };
+  return (['claude-code', 'codex', 'pi'] as DelegateKind[]).map((kind) => ({
+    id: kind,
+    label: labels[kind],
+    present: Boolean(resolveBinaryPath(binOf(kind))),
+  }));
 }
 
 /** 设置界面的读取视图：来自 config.json 原文 + env 解析状态；key 永不回传明文。 */
@@ -1190,8 +1346,9 @@ function settingsGet(): SettingsDTO {
       typeof p.apiKey === 'string' && p.apiKey.length > 0 ? (p.apiKey as string) : null;
     const envVar = typeof p.apiKeyEnv === 'string' ? (p.apiKeyEnv as string) : null;
     const envVal = envVar ? (process.env[envVar] ?? '') : '';
-    const kind =
-      p.kind === 'claude-code' ? 'claude-code' : p.kind === 'codex' ? 'codex' : 'openai';
+    const kind = isDelegateKind(p.kind as string | undefined)
+      ? (p.kind as DelegateKind)
+      : 'openai';
     // claude-code 的密钥存在 oauthToken（而非 apiKey）；展示成 literal（掩码）。
     // codex 的 API-key 模式存在 apiKey（literal 路径已覆盖）；订阅模式无 key（none）。
     const ccToken =
@@ -1271,18 +1428,19 @@ async function saveSettings(payload: SettingsSaveDTO): Promise<{ ok: true }> {
     base.model = p.model;
     if (p.supportsJsonMode) delete base.supportsJsonMode;
     else base.supportsJsonMode = false;
-    if (p.kind === 'claude-code' || p.kind === 'codex') {
+    if (isDelegateKind(p.kind)) {
       // 委托型 CLI 不写空 baseURL（否则下次 load 的 url 校验会失败）。
       delete base.baseURL;
-      // claude-code 的密钥存 oauthToken；codex 的 API-key 模式存 apiKey（留空=订阅，走 auth.json）。
+      // claude-code 的密钥存 oauthToken；codex/pi 的 API-key 模式存 apiKey（留空=订阅，
+      // 分别走 ~/.codex/auth.json 与 ~/.pi/agent/auth.json）。
       if (p.newApiKey && p.newApiKey.trim()) {
         if (p.kind === 'claude-code') base.oauthToken = p.newApiKey.trim();
         else base.apiKey = p.newApiKey.trim();
       }
       // 在「对话模型」里直接选了本机检测到的 CLI（无 binary）→ 回填检测到的绝对路径，
-      // 这样 GUI 子进程即使 PATH 很瘦也能 spawn（裸名 'claude'/'codex' 可能找不到）。
+      // 这样 GUI 子进程即使 PATH 很瘦也能 spawn（裸名 'claude'/'codex'/'pi' 可能找不到）。
       if (!base.binary) {
-        const detected = resolveBinaryPath(p.kind === 'codex' ? 'codex' : 'claude');
+        const detected = resolveBinaryPath(DELEGATE_BINARIES[p.kind]);
         if (detected) base.binary = detected;
       }
     } else {
@@ -1343,10 +1501,10 @@ async function saveSettings(payload: SettingsSaveDTO): Promise<{ ok: true }> {
   }
   bridge.emit({ kind: 'engine.ready' });
 
-  // 切到委托型 CLI（claude-code/codex）但找不到 pith-mcp 配置 → 能聊天但读不到知识库，给个非阻塞提示。
+  // 切到委托型 CLI（claude-code/codex/pi）但找不到 pith-mcp 配置 → 能聊天但读不到知识库，给个非阻塞提示。
   const activeEntry = nextProviders[payload.activeProvider];
-  if (activeEntry?.kind === 'claude-code' || activeEntry?.kind === 'codex') {
-    const label = activeEntry.kind === 'codex' ? 'Codex' : 'Claude Code';
+  if (isDelegateKind(activeEntry?.kind as string | undefined)) {
+    const label = DELEGATE_LABELS[activeEntry.kind as DelegateKind];
     const mcp =
       typeof activeEntry.mcpConfigPath === 'string'
         ? activeEntry.mcpConfigPath

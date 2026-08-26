@@ -140,10 +140,18 @@ export interface DashboardDTO {
 
 /* ───── Settings（设置界面，按设计稿三段） ───── */
 
+/**
+ * 委托型 provider：每轮 spawn 一个本机 CLI 代跑（不走 chat.completions，复用其订阅额度）。
+ * 三者都无需 baseURL；知识库分别经 --mcp-config（claude-code）/ `-c mcp_servers.pith.*`（codex）
+ * / 桥接扩展（pi，它没有 MCP）接入。
+ */
+export type DelegateKindDTO = 'claude-code' | 'codex' | 'pi';
+export type ProviderKindDTO = 'openai' | DelegateKindDTO;
+
 export interface ProviderDTO {
   name: string;
-  /** provider 类型：openai = OpenAI 兼容 HTTP；claude-code/codex = 委托本机对应 CLI（无需 baseURL）。 */
-  kind: 'openai' | 'claude-code' | 'codex';
+  /** provider 类型：openai = OpenAI 兼容 HTTP；其余 = 委托本机对应 CLI（无需 baseURL）。 */
+  kind: ProviderKindDTO;
   baseURL: string;
   model: string;
   supportsJsonMode: boolean;
@@ -163,10 +171,10 @@ export interface WatchDirDTO {
   initialScan: boolean;
 }
 
-/** 本机检测到的可作为聊天后端的 CLI（claude-code / codex）。「对话模型」区据此追加选项。 */
+/** 本机检测到的可作为聊天后端的 CLI（claude-code / codex / pi）。「对话模型」区据此追加选项。 */
 export interface CliDTO {
-  /** provider kind id，如 'claude-code' / 'codex'；未配置时直接作为 activeProvider 取值。 */
-  id: 'claude-code' | 'codex';
+  /** provider kind id，如 'claude-code' / 'codex' / 'pi'；未配置时直接作为 activeProvider 取值。 */
+  id: DelegateKindDTO;
   label: string;
   /** 本机是否找到该 CLI 的可执行文件。 */
   present: boolean;
@@ -201,11 +209,11 @@ export interface SettingsSaveDTO {
   hydrationProvider: string;
   providers: {
     name: string;
-    kind: 'openai' | 'claude-code' | 'codex';
+    kind: ProviderKindDTO;
     baseURL: string;
     model: string;
     supportsJsonMode: boolean;
-    /** 新输入的密钥：openai → apiKey；claude-code → oauthToken；codex → apiKey（API-key 模式；留空=订阅）。 */
+    /** 新输入的密钥：openai → apiKey；claude-code → oauthToken；codex/pi → apiKey（API-key 模式；留空=订阅）。 */
     newApiKey?: string;
   }[];
   watchDirs: WatchDirDTO[];
