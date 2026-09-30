@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { resolveSafePath, SafetyError } from './safety.js';
 import type { ToolDef } from './index.js';
+import { scheduledOutputPath } from '../schedule/output.js';
 
 const params = z.object({
   path: z
@@ -25,7 +26,8 @@ export const writeFileTool: ToolDef<typeof params> = {
       // 写入硬收敛到 <wikiRoot>/output：agent 的产物落在 pith-wiki 自己的输出区，
       // 不污染用户运行 pith-wiki 的当前目录/项目。既然写不出这个受控目录，就不再
       // 逐次审批（审批本是防乱写用户文件；收敛后已无此风险，免审批更顺手）。
-      const writeRoot = path.join(ctx.config.wikiRoot, 'output');
+      const outputRoot = path.join(ctx.config.wikiRoot, 'output');
+      const writeRoot = ctx.scheduledOutput ? path.join(outputRoot, ctx.scheduledOutput.subpath) : outputRoot;
       // 防呆：模型/skill 常给 "output/xxx"（以为相对 wiki 根），而写入已在 output 内，
       // 直接拼会得到 output/output/xxx。剥掉相对路径开头与 output 同名的冗余一层。
       let rel = inputPath;
@@ -33,6 +35,7 @@ export const writeFileTool: ToolDef<typeof params> = {
         const segs = rel.split(/[/\\]+/).filter(Boolean);
         if (segs.length > 1 && segs[0] === 'output') rel = segs.slice(1).join('/');
       }
+      if (ctx.scheduledOutput) rel = scheduledOutputPath(outputRoot, ctx.scheduledOutput, inputPath);
       safe = resolveSafePath(rel, 'write', {
         workspaceRoot: ctx.config.workspaceRoot,
         wikiRoot: ctx.config.wikiRoot,
