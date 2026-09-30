@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { pithWikiHome } from './paths.js';
+import { REASONING_EFFORTS, reasoningEffortsFor } from './llm/modelSettings.js';
 
 /**
  * 把 config.json 的 `secrets` map 灌进 `process.env`。
@@ -45,7 +46,7 @@ function applySecretsToEnv(secrets: Record<string, string> | undefined): void {
  *   - REPL 内：用 `/provider <name>` slash 命令，App.tsx 重建 client + agent
  *     （隐式 reset 对话——不同模型不该共享 history）
  */
-const ProviderSchema = z
+export const ProviderSchema = z
   .object({
     /**
      * provider 类型：
@@ -63,6 +64,9 @@ const ProviderSchema = z
     /** OpenAI 兼容端点。openai 类型必填；claude-code 不需要（可省）。 */
     baseURL: z.string().url().optional(),
     model: z.string().min(1),
+    /** CLI model overrides. Omitted values inherit the CLI's defaults. */
+    reasoningEffort: z.enum(REASONING_EFFORTS).optional(),
+    verbosity: z.enum(['low', 'medium', 'high']).optional(),
     apiKey: z.string().optional(),
     apiKeyEnv: z.string().optional(),
     /**
@@ -115,6 +119,14 @@ const ProviderSchema = z
     mcpConfigPath: z.string().optional(),
   })
   .superRefine((v, ctx) => {
+    if (v.reasoningEffort && !reasoningEffortsFor(v.kind).includes(v.reasoningEffort)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['reasoningEffort'],
+        message: `reasoningEffort is not supported by ${v.kind}` });
+    }
+    if (v.verbosity && v.kind !== 'codex') {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['verbosity'],
+        message: 'verbosity is only supported by codex' });
+    }
     // baseURL 只有「自己发 HTTP」的场景才需要。设了 piProvider 时端点由 pi-ai 的模型目录
     // 决定（如 anthropic → https://api.anthropic.com，走 anthropic-messages 原生协议），
     // 用户不该被迫填一个用不到的 URL。
