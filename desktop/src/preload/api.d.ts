@@ -8,6 +8,7 @@ declare global {
       onMessage(cb: (msg: unknown) => void): void;
       openSource(target: string): Promise<{ ok: boolean; error?: string }>;
       revealSource(target: string): Promise<{ ok: boolean; error?: string }>;
+      showFolderContextMenu(targets: string[], language: string): Promise<{ ok: boolean; error?: string }>;
       copyText(text: string): void;
       pickFolder(): Promise<string | null>;
     };

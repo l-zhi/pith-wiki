@@ -7,6 +7,7 @@ import type {
   SessionMeta,
 } from '../shared/protocol.js';
 import type { RunOrigin } from '@core/tools/index.js';
+import { scheduledOutputPath, type ScheduledOutputContext } from '@core/schedule/output.js';
 import type { SessionStore } from './sessionStore.js';
 
 /**
@@ -60,11 +61,12 @@ export type AgentFactory = (
   approvals: ApprovalBridge,
   origin: RunOrigin,
   reviewMode: boolean,
+  scheduledOutput?: ScheduledOutputContext,
 ) => MadeAgent;
 
 interface Live {
   agent: AgentLike;
-  meta: { id: string; title: string; createdAt: string; model: string; provider?: string; reviewMode?: boolean };
+  meta: { id: string; title: string; createdAt: string; model: string; provider?: string; reviewMode?: boolean; scheduledOutput?: ScheduledOutputContext };
   busy: boolean;
   abort: AbortController | null;
   pendingApproval: {
@@ -136,7 +138,7 @@ export class SessionManager {
 
   create(
     provider?: string,
-    opts: { autoApprove?: boolean; origin?: RunOrigin; reviewMode?: boolean } = {},
+    opts: { autoApprove?: boolean; origin?: RunOrigin; reviewMode?: boolean; scheduledOutput?: ScheduledOutputContext } = {},
   ): SessionMeta {
     const id = this.store.newId();
     const createdAt = new Date().toISOString();
@@ -146,6 +148,7 @@ export class SessionManager {
       this.approvalBridge(id, opts.autoApprove),
       opts.origin ?? 'interactive',
       reviewMode,
+      opts.scheduledOutput,
     );
     const meta = {
       id,
@@ -154,6 +157,7 @@ export class SessionManager {
       model: made.model,
       provider: made.provider ?? provider,
       ...(reviewMode ? { reviewMode: true } : {}),
+      ...(opts.scheduledOutput ? { scheduledOutput: opts.scheduledOutput } : {}),
     };
     this.store.create(meta);
     this.live.set(id, {
@@ -181,6 +185,7 @@ export class SessionManager {
         this.approvalBridge(sessionId),
         'interactive',
         reviewMode,
+        stored!.meta.scheduledOutput,
       );
       made.agent.restoreHistory(stored!.messages);
       this.live.set(sessionId, {
@@ -237,7 +242,7 @@ export class SessionManager {
       return this.metaOf(sessionId, l); // 无变化
     }
     const history = l.agent.exportHistory();
-    const made = this.makeAgent(sessionId, this.approvalBridge(sessionId), 'interactive', on);
+    const made = this.makeAgent(sessionId, this.approvalBridge(sessionId), 'interactive', on, l.meta.scheduledOutput);
     made.agent.restoreHistory(history);
     l.agent = made.agent;
     l.meta.model = made.model;
@@ -312,7 +317,7 @@ export class SessionManager {
             });
             // agent 写出了文件 → 额外发一张可打开的文件卡片
             if (ok) {
-              const abs = artifactPath(name, args, this.outputDir);
+              const abs = artifactPath(name, args, this.outputDir, l.meta.scheduledOutput);
               if (abs && !seenArtifacts.has(abs)) {
                 seenArtifacts.add(abs);
                 this.emit({ kind: 'session.artifact', sessionId, path: abs, name: path.basename(abs) });
@@ -361,7 +366,7 @@ export class SessionManager {
   async runScheduled(
     input: string,
     title: string,
-    opts: { requireApproval?: boolean; review?: boolean } = {},
+    opts: { requireApproval?: boolean; review?: boolean; scheduledOutput?: ScheduledOutputContext } = {},
   ): Promise<{ sessionId: string; status: 'ok' | 'failed'; preview?: string; error?: string }> {
     // 默认自动放行；requireApproval 的任务沿用交互式审批（有人批才过，否则整轮超时记 failed）
     // review=true → 会话以审稿模式跑（writer→reviewer→修订），日报等自动写作先过审再定稿。
@@ -369,6 +374,7 @@ export class SessionManager {
       autoApprove: !opts.requireApproval,
       origin: 'scheduled',
       reviewMode: opts.review,
+      scheduledOutput: opts.scheduledOutput,
     });
     try {
       this.rename(meta.id, title);
@@ -512,13 +518,14 @@ function previewJson(v: unknown, max = 120): string {
  *   - claude-code `Write` / `Edit`：入参 `file_path` 已是绝对路径
  * 非写工具、拿不到路径、或相对路径但 outputDir 未知 → 返回 null（不发卡片）。
  */
-export function artifactPath(name: string, args: unknown, outputDir: string): string | null {
+export function artifactPath(name: string, args: unknown, outputDir: string, scheduledOutput?: ScheduledOutputContext): string | null {
   const a = (args ?? {}) as Record<string, unknown>;
   let raw: string | undefined;
   if (name === 'write_file' && typeof a.path === 'string') raw = a.path;
   else if ((name === 'Write' || name === 'Edit') && typeof a.file_path === 'string')
     raw = a.file_path;
   if (!raw || !raw.trim()) return null;
+  if (name === 'write_file' && scheduledOutput && outputDir) return scheduledOutputPath(outputDir, scheduledOutput, raw);
   if (path.isAbsolute(raw)) return raw;
   return outputDir ? path.join(outputDir, raw) : null;
 }

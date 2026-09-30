@@ -25,9 +25,10 @@ export function Sidebar() {
   const collections = useStore((s) => s.collections);
   const collection = useStore((s) => s.collection);
   const openCollection = useStore((s) => s.openCollection);
+  const showCollectionMenu = useStore((s) => s.showCollectionMenu);
   const queue = useStore((s) => s.queue);
   const boot = useStore((s) => s.boot);
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const inboxCount = queue ? queue.counts.pending + queue.counts.dead : 0;
   // output（生成产物）从普通 collection 列表里抽出，提升为顶部固定导航 tab
@@ -111,6 +112,10 @@ export function Sidebar() {
             count={outputCol.count}
             selected={nav === 'library' && collection === outputCol.id}
             onClick={() => void openCollection(outputCol.id)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              void showCollectionMenu(outputCol.id, i18n.resolvedLanguage ?? i18n.language);
+            }}
           >
             {t('nav.output')}
           </SidebarItem>
@@ -127,6 +132,10 @@ export function Sidebar() {
             dotTone={c.watch ? 'watch' : undefined}
             selected={nav === 'library' && collection === c.id}
             onClick={() => void openCollection(c.id)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              void showCollectionMenu(c.id, i18n.resolvedLanguage ?? i18n.language);
+            }}
           >
             {c.id}
           </SidebarItem>

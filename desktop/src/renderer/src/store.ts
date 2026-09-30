@@ -124,6 +124,7 @@ interface PithStore {
   refreshCollections(): Promise<void>;
   refreshMentionTree(): Promise<void>;
   openCollection(id: string): Promise<void>;
+  showCollectionMenu(id: string, language: string): Promise<void>;
   /** 进入当前集合内的一个子目录（中栏文件夹浏览器）。 */
   enterFolder(seg: string): void;
   /** 跳到面包屑的某一层（depth = 保留的段数，0 = 集合根）。 */
@@ -315,6 +316,16 @@ export const useStore = create<PithStore>((set, get) => {
         set((s) => ({
           notices: [...s.notices, { id: nid(), level: 'warning', text: (err as Error).message }],
         }));
+      }
+    },
+
+    async showCollectionMenu(id, language) {
+      try {
+        const folders = get().collections.find((c) => c.id === id)?.folderPaths ?? [];
+        const result = await window.pith.showFolderContextMenu(folders, language);
+        if (!result.ok) throw new Error(result.error);
+      } catch (err) {
+        set((s) => ({ notices: [...s.notices, { id: nid(), level: 'warning', text: (err as Error).message }] }));
       }
     },
 

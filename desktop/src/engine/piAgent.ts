@@ -35,6 +35,7 @@ export interface PiAgentOptions {
   binary: string;
   /** 模型 pattern（传给 `--model`，支持 `provider/id:thinking`）；空则用 pi 默认模型。 */
   model: string;
+  reasoningEffort?: string;
   /** 追加到 pi 默认 system prompt 之后的 pith 检索人设。 */
   systemPrompt: string;
   /** MCP 桥接扩展的绝对路径（ensurePiBridge 的返回值）。无则不挂知识库。 */
@@ -264,7 +265,8 @@ export class PiAgent implements AgentLike {
     const args = ['--mode', 'json'];
     if (this.opts.sessionDir) args.push('--session-dir', this.opts.sessionDir);
     if (this.piSessionId) args.push('--session', this.piSessionId);
-    if (this.opts.model) args.push('--model', this.opts.model);
+    if (this.opts.model && this.opts.model !== 'default') args.push('--model', this.opts.model);
+    if (this.opts.reasoningEffort) args.push('--thinking', this.opts.reasoningEffort);
     if (this.opts.apiKey) args.push('--api-key', this.opts.apiKey);
     if (this.opts.systemPrompt.trim()) {
       args.push('--append-system-prompt', this.opts.systemPrompt.trim());

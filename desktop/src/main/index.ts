@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { showFolderContextMenu } from './folderContextMenu.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -141,6 +142,7 @@ app.whenReady().then(() => {
     shell.showItemInFolder(target);
     return { ok: true };
   });
+  ipcMain.handle('os.folderContextMenu', showFolderContextMenu);
   // 设置界面「添加 watch 目录」：系统文件夹选择器（dialog 是 main-only API）。
   ipcMain.handle('os.pickFolder', async () => {
     if (!win) return null;

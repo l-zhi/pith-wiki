@@ -235,6 +235,15 @@ describe('ClaudeCodeAgent.buildArgs — 与用户 CC 环境的隔离', () => {
     expect(args).toContain('--strict-mcp-config');
   });
 
+  it('passes model and effort overrides; default leaves them to the CLI', () => {
+    const args = new ClaudeCodeAgent({ ...base, model: 'custom-opus', reasoningEffort: 'high' }).buildArgs('hi');
+    expect(args[args.indexOf('--model') + 1]).toBe('custom-opus');
+    expect(args[args.indexOf('--effort') + 1]).toBe('high');
+    const defaults = new ClaudeCodeAgent({ ...base, model: 'default' }).buildArgs('hi');
+    expect(defaults).not.toContain('--model');
+    expect(defaults).not.toContain('--effort');
+  });
+
   it('off：完全继承用户环境（想让 pith 会话用上自己那套 skills 时）', () => {
     const args = new ClaudeCodeAgent({ ...base, isolation: 'off' }).buildArgs('hi');
     expect(args).not.toContain('--strict-mcp-config');

@@ -30,6 +30,9 @@ import { Agent, defaultSystemPrompt } from '@core/llm/agent.js';
 import { ClaudeCodeAgent } from './claudeCodeAgent.js';
 import { CodexAgent } from './codexAgent.js';
 import { PiAgent } from './piAgent.js';
+import { readCodexModelOptions, applyProviderModelSettings } from './providerModelSettings.js';
+import { collectionFolders } from './collectionFolders.js';
+import { reasoningEffortsFor } from '@core/llm/modelSettings.js';
 import { PiCoreAgent } from './piCoreAgent.js';
 import { buildScopePreamble, toToolSpecs } from './piCoreWiring.js';
 import type { resolvePiModels as ResolvePiModels } from '@core/llm/piAiTransport.js';
@@ -44,6 +47,7 @@ import { httpRequestTool } from '@core/tools/http_request.js';
 import { scheduleTools } from '@core/tools/schedule.js';
 import { ScheduleStore } from '@core/schedule/store.js';
 import { ScheduleService } from '@core/schedule/service.js';
+import { ScheduledOutputAgent } from './scheduledOutputAgent.js';
 import { fireTimesBetween } from '@core/schedule/cron.js';
 import { buildSkillRegistry, SkillRegistry, loadSkill, type Skill } from '@core/skills/index.js';
 import {
@@ -408,9 +412,18 @@ async function initServices(): Promise<Services> {
 
   /* —— SessionManager —— */
   const sessionStore = new SessionStore(path.join(home, 'sessions'));
-  const agentFactory: AgentFactory = (sessionId, approvals, origin, reviewMode) => {
+  const agentFactory: AgentFactory = (sessionId, approvals, origin, reviewMode, scheduledOutput) => {
     // 写文件落点：知识库 output collection 的绝对路径（claude-code 会漏掉 wiki-data 这层）。
-    const outputDir = path.join(config.wikiRoot, config.digestCollection);
+    const outputDir = scheduledOutput
+      ? path.join(config.wikiRoot, 'output', scheduledOutput.subpath)
+      : path.join(config.wikiRoot, config.digestCollection);
+    const outputPrompt = scheduledOutput
+      ? `\n\n本会话属于定时任务「${scheduledOutput.subpath}」。所有产物必须写到 ${outputDir}/，` +
+        `不要写到 output 根目录。write_file 的相对路径以此任务目录为根。日报和报告使用 Markdown，` +
+        `文件名可用日期；系统会自动归档并加入 Wiki 检索。`
+      : '';
+    const withOutput = (agent: AgentLike): AgentLike => scheduledOutput && !config.readOnly
+      ? new ScheduledOutputAgent(agent, library, scheduledOutput) : agent;
 
     // 每个分支产出 writer + 一个"按人设造同类 agent"的 makeReviewer；
     // reviewMode 时把 writer/reviewer 包成 ReviewingAgent（对 SessionManager 透明）。
@@ -428,7 +441,7 @@ async function initServices(): Promise<Services> {
       `如需把结果写成文件（日报/报告等），文件路径必须是绝对路径且写入这个确切目录：` +
       `${outputDir}/（pith 知识库的 output collection），文件名用「主题或日期.md」。` +
       `这是唯一的输出落点，不要自己拼路径或省略其中任何一层目录。` +
-      soulSuffix;
+      soulSuffix + outputPrompt;
 
     // 用一个委托型 provider entry 造 CLI agent（claude-code/codex/pi）。writer 与 CLI-reviewer 共用：
     // 审稿模式下可把某个 CLI provider 选作 reviewer（每轮 spawn），复用同一套 env/mcp 装配逻辑。
@@ -451,6 +464,7 @@ async function initServices(): Promise<Services> {
         return new ClaudeCodeAgent({
           binary: entry?.binary ?? 'claude',
           model: mdl,
+          reasoningEffort: entry?.reasoningEffort,
           systemPrompt,
           mcpConfigPath,
           env,
@@ -488,6 +502,7 @@ async function initServices(): Promise<Services> {
           // ProviderSchema.model 不允许空串，所以「用 pi 自己的默认模型」用 'default' 表达；
           // 见 DELEGATE_DEFAULT_MODELS。传空 → PiAgent 不带 --model。
           model: mdl === 'default' ? '' : mdl,
+          reasoningEffort: entry?.reasoningEffort,
           systemPrompt,
           bridgePath,
           mcp: readPithMcpSpec(mcpConfigPath),
@@ -507,6 +522,8 @@ async function initServices(): Promise<Services> {
       return new CodexAgent({
         binary: entry?.binary ?? 'codex',
         model: mdl,
+        reasoningEffort: entry?.reasoningEffort,
+        verbosity: entry?.verbosity,
         systemPrompt,
         mcp: readPithMcpSpec(mcpConfigPath),
         env,
@@ -540,6 +557,7 @@ async function initServices(): Promise<Services> {
           scheduleService,
           requestCommandApproval: (cmd, argv) => approvals.request('exec', cmd, argv),
           origin,
+          scheduledOutput,
         },
       );
       const extraTools = skillRegistry.list().length > 0 ? [makeSkillTool(skillRegistry)] : [];
@@ -569,13 +587,13 @@ async function initServices(): Promise<Services> {
               extraTools,
               maxSteps: config.maxSteps,
             });
-      writer = mkPith(composeSystemPrompt(defaultSystemPrompt, soul));
+      writer = mkPith(composeSystemPrompt(defaultSystemPrompt, soul) + outputPrompt);
       makeReviewer = () => mkPith(REVIEWER_SYSTEM_PROMPT);
       model = config.model;
       provider = config.activeProvider || undefined;
     }
 
-    if (!reviewMode) return { agent: writer, model, provider };
+    if (!reviewMode) return { agent: withOutput(writer), model, provider };
 
     // reviewer 三选一：
     //   1. reviewProvider 指向委托型 CLI（claude-code/codex/pi）→ 用该 CLI 造 reviewer（每轮 spawn，慢+烧订阅额度，用户已知取舍）；
@@ -619,7 +637,7 @@ async function initServices(): Promise<Services> {
       rubric: getReviewRubric(),
       traceSink: (trace) => writeReviewTrace(config.outputDir, sessionId, trace),
     });
-    return { agent, model, provider };
+    return { agent: withOutput(agent), model, provider };
   };
   const sessions = new SessionManager(
     sessionStore,
@@ -894,7 +912,8 @@ async function handle(req: EngineRequest): Promise<unknown> {
       const byCol = new Map<string, number>();
       for (const e of s.library.list()) byCol.set(e.collection, (byCol.get(e.collection) ?? 0) + 1);
       return [...byCol.entries()]
-        .map(([id, count]) => ({ id, count, watch: watch.has(id), output: id === output }))
+        .map(([id, count]) => ({ id, count, watch: watch.has(id), output: id === output,
+          folderPaths: collectionFolders(s.config, id) }))
         .sort((a, b) => b.count - a.count || a.id.localeCompare(b.id));
     }
     case 'library.entries': {
@@ -1361,6 +1380,12 @@ function settingsGet(): SettingsDTO {
       kind,
       baseURL: String(p.baseURL ?? ''),
       model: String(p.model ?? ''),
+      reasoningEffort: typeof p.reasoningEffort === 'string' ? p.reasoningEffort : undefined,
+      verbosity: typeof p.verbosity === 'string' ? p.verbosity : undefined,
+      reasoningEfforts: [...reasoningEffortsFor(kind)],
+      modelOptions: kind === 'codex'
+        ? readCodexModelOptions(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'))
+        : kind === 'claude-code' ? ['sonnet', 'opus', 'haiku'].map((id) => ({ id })) : [],
       supportsJsonMode: p.supportsJsonMode !== false,
       keySource: effectiveLiteral ? 'literal' : envVar ? 'env' : 'none',
       keyMasked: effectiveLiteral ? maskKey(effectiveLiteral) : undefined,
@@ -1447,7 +1472,7 @@ async function saveSettings(payload: SettingsSaveDTO): Promise<{ ok: true }> {
       base.baseURL = p.baseURL;
       if (p.newApiKey && p.newApiKey.trim()) base.apiKey = p.newApiKey.trim();
     }
-    nextProviders[p.name] = base;
+    nextProviders[p.name] = applyProviderModelSettings(base, p);
   }
 
   // —— watchDirs merge：按 path 保留旧 entry 的高级字段（subdirAlias/ignore…） ——

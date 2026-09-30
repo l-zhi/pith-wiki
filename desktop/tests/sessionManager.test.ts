@@ -73,6 +73,28 @@ const evKinds = (sessionId?: string) =>
     .map((e) => e.kind);
 
 describe('SessionManager', () => {
+  it('scheduled output context reaches the agent and survives resume and review-mode changes', async () => {
+    const seen: unknown[] = [];
+    const scheduledOutput = { taskId: 'daily', subpath: '日报' };
+    const make: AgentFactory = (id, approvals, origin, review, output) => {
+      seen.push({ origin, review, output });
+      return factory(id, approvals, origin, review, output);
+    };
+    const first = new SessionManager(store, make, () => {});
+    const result = await first.runScheduled('生成日报', '日报', { scheduledOutput });
+    expect(store.load(result.sessionId)?.meta.scheduledOutput).toEqual(scheduledOutput);
+    const next = new SessionManager(store, make, () => {});
+    next.resume(result.sessionId);
+    next.setReviewMode(result.sessionId, true);
+    expect(seen).toEqual([
+      { origin: 'scheduled', review: false, output: scheduledOutput },
+      { origin: 'interactive', review: false, output: scheduledOutput },
+      { origin: 'interactive', review: true, output: scheduledOutput },
+    ]);
+    expect(artifactPath('write_file', { path: 'output/2026-09-04.md' }, '/wiki/output', scheduledOutput))
+      .toBe('/wiki/output/日报/2026-09-04.md');
+  });
+
   it('create → send → 历史落盘；首条消息定标题', async () => {
     const meta = mgr.create();
     await mgr.send(meta.id, '把上周的 RAG 剪藏整理成大纲');

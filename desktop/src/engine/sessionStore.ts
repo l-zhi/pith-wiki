@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { ScheduledOutputContextSchema, type ScheduledOutputContext } from '@core/schedule/output.js';
 
 /**
  * SessionStore —— 会话 JSONL 持久化（深模块，纯 fs，无 Electron / LLM 依赖）。
@@ -24,6 +25,7 @@ export interface StoredMeta {
   provider?: string;
   /** 审稿模式:该会话的输出走 writer→reviewer→修订 闭环。 */
   reviewMode?: boolean;
+  scheduledOutput?: ScheduledOutputContext;
 }
 
 export interface StoredSession {
@@ -122,6 +124,7 @@ export class SessionStore {
             model: obj.model,
             provider: typeof obj.provider === 'string' ? obj.provider : undefined,
             reviewMode: obj.reviewMode === true ? true : undefined,
+            scheduledOutput: ScheduledOutputContextSchema.safeParse(obj.scheduledOutput).data,
           };
         } else if (i === 0) {
           // 首行不是合法 meta：整个文件不可信

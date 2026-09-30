@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('pith', {
   /** 在系统文件管理器里定位并高亮该文件（本地路径）。 */
   revealSource: (target: string) =>
     ipcRenderer.invoke('os.revealSource', target) as Promise<{ ok: boolean; error?: string }>,
+  showFolderContextMenu: (targets: string[], language: string) =>
+    ipcRenderer.invoke('os.folderContextMenu', targets, language) as Promise<{ ok: boolean; error?: string }>,
   /** 写系统剪贴板（Electron clipboard，比 web API 在 file:// 下可靠）。 */
   copyText: (text: string) => clipboard.writeText(text),
   /** 系统文件夹选择器（设置 → 添加 watch 目录）。取消返回 null。 */
