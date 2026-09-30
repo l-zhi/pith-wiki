@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ID_RE } from '../wiki/types.js';
+import { ID_RE, SubpathSchema } from '../wiki/types.js';
 import { isValidCron } from './cron.js';
 
 /**
@@ -56,6 +56,8 @@ export const ScheduledTaskSchema = z.object({
   input: z.string().min(1),
   /** 人类可读名（列表/日历展示），缺省取 input 首行截断。 */
   title: z.string().optional(),
+  /** 固定的 output 子目录，首次分配后不随任务改名变化。旧任务在首次运行时补齐。 */
+  outputSubpath: SubpathSchema.optional(),
   schedule: ScheduleSpecSchema,
   /** 暂停而不删除：禁用的不触发、日历不画未来点。 */
   enabled: z.boolean(),

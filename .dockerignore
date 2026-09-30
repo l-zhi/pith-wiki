@@ -1,0 +1,13 @@
+# Only send the CLI build inputs; exclude local config, data and desktop artifacts.
+**
+!Dockerfile
+!.dockerignore
+!package.json
+!package-lock.json
+!tsconfig.json
+!bin/
+!bin/**
+!src/
+!src/**
+!bundled-skills/
+!bundled-skills/**

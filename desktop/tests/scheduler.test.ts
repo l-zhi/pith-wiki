@@ -45,6 +45,9 @@ describe('Scheduler', () => {
     await sched.drain();
 
     expect(runScheduled).toHaveBeenCalledTimes(1);
+    expect(runScheduled).toHaveBeenCalledWith('x', 'x', expect.objectContaining({
+      scheduledOutput: { taskId: task.id, subpath: 'x', firedAt: '2026-06-20T09:00:00.000Z' },
+    }));
     const after = svc.get(task.id)!;
     expect(after.runs).toHaveLength(1);
     expect(after.runs[0]).toMatchObject({ status: 'ok', sessionId: 'sess1', preview: 'done' });

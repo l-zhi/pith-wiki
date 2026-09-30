@@ -224,9 +224,15 @@ export class LibraryService {
     }
   }
 
-  private ensureIndex(): void {
+  /** 外部工具写入/移动后显式重建，包含原地编辑（目录 mtime 可能不变）。 */
+  rebuildIndex(): void {
+    this.invalidate();
+    this.ensureIndex(true);
+  }
+
+  private ensureIndex(forceScan = false): void {
     if (this.indexCache && this.entryCache) return;
-    let entries = this.persistEnabled ? this.readIndexFromDisk() : null;
+    let entries = this.persistEnabled && !forceScan ? this.readIndexFromDisk() : null;
     const fromDisk = entries !== null;
     if (!entries) entries = this.scanAll();
 
@@ -501,6 +507,7 @@ export class LibraryService {
       id,
       collection: (parsed.data.collection as string) ?? collection,
       subpath: fmSubpath ?? subpath,
+      scheduledTaskId: parsed.data.scheduledTaskId,
       title: (parsed.data.title as string) ?? id,
       summary: parsed.data.summary ?? '',
       tags: parsed.data.tags ?? [],

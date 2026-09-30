@@ -61,6 +61,8 @@ export interface CollectionInfo {
   watch: boolean;
   /** 是否为生成产物 collection（= config.digestCollection，默认 output）——侧边栏据此特殊标记。 */
   output: boolean;
+  /** Source directories to reveal in the OS file manager; output uses its wiki directory. */
+  folderPaths?: string[];
 }
 
 export interface EntrySummary {
@@ -148,12 +150,22 @@ export interface DashboardDTO {
 export type DelegateKindDTO = 'claude-code' | 'codex' | 'pi';
 export type ProviderKindDTO = 'openai' | DelegateKindDTO;
 
+export interface ModelOptionDTO {
+  id: string;
+  reasoningEfforts?: string[];
+}
+
 export interface ProviderDTO {
   name: string;
   /** provider 类型：openai = OpenAI 兼容 HTTP；其余 = 委托本机对应 CLI（无需 baseURL）。 */
   kind: ProviderKindDTO;
   baseURL: string;
   model: string;
+  reasoningEffort?: string;
+  verbosity?: string;
+  /** Locally cached CLI model catalog; manual model IDs also work. */
+  modelOptions?: ModelOptionDTO[];
+  reasoningEfforts?: string[];
   supportsJsonMode: boolean;
   /** key 形态：literal=字面值（掩码展示）/ env=引用环境变量 / none=未配置 */
   keySource: 'literal' | 'env' | 'none';
@@ -212,6 +224,9 @@ export interface SettingsSaveDTO {
     kind: ProviderKindDTO;
     baseURL: string;
     model: string;
+    /** null clears the override; absent preserves it for older clients. */
+    reasoningEffort?: string | null;
+    verbosity?: string | null;
     supportsJsonMode: boolean;
     /** 新输入的密钥：openai → apiKey；claude-code → oauthToken；codex/pi → apiKey（API-key 模式；留空=订阅）。 */
     newApiKey?: string;

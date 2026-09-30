@@ -122,6 +122,22 @@ ScheduleState { version, tasks, lastTickAt }   // lastTickAt 用于判定停机�
 - 失败不自动重试（与 ingest 队列不同）；下个触发点照常。
 - 时区：每条 cron 自带 `tz`，**v1 求值按本机本地时区**（tz 暂作元数据，无依赖下不做跨时区/DST 换算）。
 
+## 任务产物归档与检索
+
+- 每个任务首次分配固定的 `outputSubpath`，目录为 `<wikiRoot>/output/<outputSubpath>/`。
+  默认由任务标题生成；同名任务加序号；改标题不会移动历史产物。旧任务首次运行时补齐。
+- 归属上下文经 Scheduler → SessionManager → Agent 传递并写入会话 meta，恢复会话、
+  切换审稿模式后仍写入原任务目录。`write_file` 的相对路径以任务目录为根；
+  `wiki_ingest` 的条目同样落在任务目录。
+- 审稿结束后统一归档，覆盖内置 Agent 和委托 CLI。委托工具误写到 output 根目录时，
+  只搬本轮有改动、且被最终答复或写工具明确引用的文件，避免挪动并发对话的产物。
+- Markdown 正文完整保留，自动补标题、摘要、`scheduled` 标签、`scheduledTaskId`、
+  来源与日期；立即重建并持久化 Wiki 索引，可通过 `wiki_query`、`wiki_grep`、`wiki_get`
+  和任务子目录 Scope 检索。不同任务的同名条目发生全库 ID 冲突时使用任务摘要后缀区分。
+- 没有 Markdown 产物但有最终文字答复时，把答复保存成 Markdown；HTML、图片等附件
+  归档到任务目录，附件正文不会直接作为 Markdown 条目索引。原始 transcripts 继续排除。
+- 归档发生文件改名时，最终答复和持久化答复里的绝对路径会更新到新落点。
+
 ## 已知边界 / 后续
 
 - App 关着不触发（宿主即 engine）。需要「关机也准点跑」要上 OS 级后台（launchd/cron），core 逻辑可复用，加宿主即可。

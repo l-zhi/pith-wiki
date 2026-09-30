@@ -112,6 +112,7 @@ export class Scheduler {
         const result = await this.sessions.runScheduled(input, title, {
           requireApproval: task.requireApproval,
           review: task.review,
+          scheduledOutput: { taskId, subpath: this.service.ensureOutputSubpath(taskId), firedAt: fireTime },
         });
         const run: RunRecord = {
           runId: `run-${++runSeq}`,

@@ -455,6 +455,8 @@ export function App({ config: initialConfig }: Props) {
       return new CodexAgent({
         binary: entry?.binary ?? 'codex',
         model: config.model,
+        reasoningEffort: entry?.reasoningEffort,
+        verbosity: entry?.verbosity,
         systemPrompt,
         mcp: findPithMcpSpec(config, entry?.mcpConfigPath),
         env,

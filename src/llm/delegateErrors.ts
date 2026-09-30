@@ -7,7 +7,7 @@
  * pith 之外（去终端重新登录那个 CLI）。这是委托模式固有的失败模式：**出问题的地方
  * 不在 pith 里，但用户是在 pith 里撞见的**，所以 pith 有义务把话说完整。
  *
- * 只加工「用户能自己修」的那类错误（鉴权/额度），其余原样透传——瞎猜比不猜更糟。
+ * 只加工可识别的版本兼容、鉴权和额度错误，其余原样透传。
  */
 
 export type DelegateKind = 'claude-code' | 'codex' | 'pi';
@@ -40,8 +40,21 @@ const QUOTA_PATTERNS = [/rate limit/i, /quota/i, /usage limit/i, /429/, /insuffi
  * 给 CLI 的原始错误补上可操作的下一步。返回值总是包含原文（便于排查），
  * 只在能确定类别时追加提示。
  */
-export function explainDelegateError(kind: DelegateKind, raw: string): string {
+export function explainDelegateError(
+  kind: DelegateKind,
+  raw: string,
+  context: { binary?: string } = {},
+): string {
   const text = raw.trim() || `${kind} 未返回任何内容`;
+  if (kind === 'codex' && /requires a newer version of Codex/i.test(text)) {
+    const binary = context.binary ? `\n当前调用：${context.binary}` : '';
+    return (
+      '当前 Codex CLI 版本过旧，无法使用所选模型。' +
+      '请更新 pith 实际调用的 CLI，或将配置中的 binary 改为新版程序路径，然后重试。' +
+      'Codex 桌面应用与单独安装的 CLI 可能使用不同版本。' +
+      `${binary}\n\n原始错误：${text}`
+    );
+  }
   if (QUOTA_PATTERNS.some((re) => re.test(text))) {
     return `${text}\n\n（${kind} 的额度或速率受限——不是登录问题。等一会儿再试，或在设置里换一个 provider。）`;
   }

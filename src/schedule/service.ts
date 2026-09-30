@@ -59,6 +59,18 @@ export class ScheduleService {
     return this.store.load().tasks[id];
   }
 
+  /** 目录名独立于可变标题；同名任务分别分配目录，兼容已有任务。 */
+  ensureOutputSubpath(id: string): string {
+    const task = this.get(id);
+    if (!task) throw new ScheduleNotFoundError(id);
+    if (task.outputSubpath) return task.outputSubpath;
+    return this.store.mutate((s) => {
+      const current = s.tasks[id];
+      if (!current) throw new ScheduleNotFoundError(id);
+      if (!current.outputSubpath) current.outputSubpath = outputSubpathFor(current, s.tasks);
+    }).tasks[id].outputSubpath!;
+  }
+
   create(input: CreateTaskInput, now = new Date()): ScheduledTask {
     const ts = now.toISOString();
     let createdId = '';
@@ -77,6 +89,7 @@ export class ScheduleService {
         createdAt: ts,
         updatedAt: ts,
       });
+      s.tasks[createdId].outputSubpath = outputSubpathFor(s.tasks[createdId], s.tasks);
       return s;
     });
     return state.tasks[createdId];
@@ -210,6 +223,15 @@ export class ScheduleService {
     }
     return last;
   }
+}
+
+function outputSubpathFor(task: ScheduledTask, tasks: Record<string, ScheduledTask>): string {
+  const used = Object.fromEntries(Object.values(tasks)
+    .filter((t) => t.id !== task.id && t.outputSubpath)
+    .map((t) => [t.outputSubpath!, true]));
+  // transcripts 是原始会话的保留目录，不作为任务目录。
+  used.transcripts = true;
+  return uniqueId(deriveId(task.title || task.id), used);
 }
 
 function mutateTask(

@@ -5,6 +5,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import type { QueryScope } from '../wiki/assembler.js';
 import { explainDelegateError } from './delegateErrors.js';
+import type { ReasoningEffort, ModelVerbosity } from './modelSettings.js';
 
 export interface PithMcpSpec {
   command: string;
@@ -64,6 +65,8 @@ export interface CodexAgentOptions {
   binary: string;
   /** 模型别名或 id（传给 `-m`）；空则不传，用 codex 默认模型。 */
   model: string;
+  reasoningEffort?: ReasoningEffort;
+  verbosity?: ModelVerbosity;
   /** 追加到首轮 prompt 前的 pith 检索人设（codex 无 --append-system-prompt，故前置拼接）。 */
   systemPrompt: string;
   /**
@@ -321,6 +324,22 @@ export class CodexAgent {
     return args;
   }
 
+  /** Shared by new and resumed turns so saved model settings apply to both. */
+  buildArgs(prompt: string, outFile: string): string[] {
+    const commonFlags = [
+      '--json', '--skip-git-repo-check',
+      '-c', `sandbox_mode=${JSON.stringify(this.opts.sandbox ?? 'danger-full-access')}`,
+      ...(this.opts.model && this.opts.model !== 'default' ? ['-m', this.opts.model] : []),
+      ...(this.opts.reasoningEffort ? ['-c', `model_reasoning_effort=${JSON.stringify(this.opts.reasoningEffort)}`] : []),
+      ...(this.opts.verbosity ? ['-c', `model_verbosity=${JSON.stringify(this.opts.verbosity)}`] : []),
+      '-o', outFile, ...this.mcpConfigArgs(),
+    ];
+    // resume accepts -c but not -s or -C; spawn's cwd still applies.
+    return this.codexSessionId
+      ? ['exec', 'resume', this.codexSessionId, ...commonFlags, prompt]
+      : ['exec', ...commonFlags, ...(this.opts.cwd ? ['-C', this.opts.cwd] : []), prompt];
+  }
+
   async send(
     text: string,
     opts: {
@@ -330,6 +349,11 @@ export class CodexAgent {
       events?: StreamEvents;
     } = {},
   ): Promise<string> {
+    if (opts.signal?.aborted) {
+      const err = new Error('Codex request aborted');
+      err.name = 'AbortError';
+      throw err;
+    }
     this.history.push({ role: 'user', content: text });
 
     const pendingContext = this.pendingContext.splice(0);
@@ -344,23 +368,7 @@ export class CodexAgent {
     const outFile = path.join(os.tmpdir(), `pith-codex-last-${process.pid}-${++outFileSeq}.txt`);
     const sandbox = this.opts.sandbox ?? 'danger-full-access';
 
-    // 公共 flag（`codex exec` 与 `codex exec resume` 都接受）。注意 resume 子命令**不接受**
-    // `-s/--sandbox` 与 `-C/--cd`：所以沙箱统一用 `-c sandbox_mode=...`（两者都认 -c），
-    // 工作目录统一靠 spawn 的 cwd（resume 靠进程 cwd + 显式 SESSION_ID 定位会话，不需 -C）。
-    const commonFlags = [
-      '--json',
-      '--skip-git-repo-check', // pith home 不是 git 仓库，不加 codex exec 会拒跑
-      '-c',
-      `sandbox_mode=${JSON.stringify(sandbox)}`,
-      ...(this.opts.model ? ['-m', this.opts.model] : []),
-      '-o',
-      outFile,
-      ...this.mcpConfigArgs(),
-    ];
-
-    const args = this.codexSessionId
-      ? ['exec', 'resume', this.codexSessionId, ...commonFlags, prompt]
-      : ['exec', ...commonFlags, ...(this.opts.cwd ? ['-C', this.opts.cwd] : []), prompt];
+    const args = this.buildArgs(prompt, outFile);
 
     (this.opts.log ?? console.log)(
       `[pith/codex] spawn ${this.opts.binary} exec ${this.codexSessionId ? `resume ${this.codexSessionId}` : '(new thread)'} ` +
@@ -373,8 +381,17 @@ export class CodexAgent {
       ...(this.opts.cwd ? { cwd: this.opts.cwd } : {}),
     });
 
+    // Attach before reading stdout: spawn failures emit error (not a rejected send),
+    // and close may arrive before the stream parser finishes.
+    let processError: Error | undefined;
+    child.on('error', (err) => { processError = err; });
+    const exited = new Promise<number>((resolve) => {
+      child.once('close', (code) => resolve(code ?? 1));
+    });
+
     const onAbort = () => child.kill('SIGTERM');
     opts.signal?.addEventListener('abort', onAbort);
+    if (opts.signal?.aborted) onAbort();
 
     let stderr = '';
     child.stderr.on('data', (d: Buffer) => {
@@ -383,17 +400,18 @@ export class CodexAgent {
 
     const rl = readline.createInterface({ input: child.stdout });
     let parsed: StreamResult;
+    let exitCode: number;
     try {
-      parsed = await parseCodexStream(rl, opts.events);
+      [parsed, exitCode] = await Promise.all([parseCodexStream(rl, opts.events), exited]);
+    } catch (err) {
+      child.kill('SIGTERM');
+      await exited;
+      try { fs.rmSync(outFile, { force: true }); } catch { /* best effort */ }
+      throw err;
     } finally {
       rl.close();
       opts.signal?.removeEventListener('abort', onAbort);
     }
-
-    const exitCode = await new Promise<number>((resolve) => {
-      if (child.exitCode !== null) return resolve(child.exitCode);
-      child.on('close', (code) => resolve(code ?? 0));
-    });
 
     if (parsed.sessionId) this.codexSessionId = parsed.sessionId;
 
@@ -418,9 +436,18 @@ export class CodexAgent {
       throw err;
     }
 
+    if (processError) {
+      throw new Error(
+        '无法启动 Codex CLI。请检查配置中 providers 的 binary 路径、执行权限及工作目录，修正后重试。' +
+        `\n当前调用：${this.opts.binary}\n工作目录：${this.opts.cwd ?? process.cwd()}` +
+        `\n\n原始错误：${processError.message}`,
+        { cause: processError },
+      );
+    }
+
     if (parsed.isError || (exitCode !== 0 && !finalText)) {
       const msg = parsed.errorMessage || finalText || stderr.trim() || `codex exited ${exitCode}`;
-      throw new Error(explainDelegateError('codex', msg));
+      throw new Error(explainDelegateError('codex', msg, { binary: this.opts.binary }));
     }
 
     this.history.push({ role: 'assistant', content: finalText });

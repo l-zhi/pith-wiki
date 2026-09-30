@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { ToolDef } from './index.js';
+import { createHash } from 'node:crypto';
 
 const params = z.object({
   collection: z.string().describe('Wiki collection (folder name).'),
@@ -21,9 +22,10 @@ export const wikiIngestTool: ToolDef<typeof params> = {
     'Hydrate raw text into a compressed wiki Entry and persist it. Returns the new Entry id and metadata.',
   parameters: params,
   handler: async (args, ctx) => {
+    if (ctx.config.readOnly) return { ok: false, error: 'Writes are disabled (read-only mode).' };
     const entry = await ctx.hydrator.hydrate({
       rawContent: args.raw_content,
-      collectionId: args.collection,
+      collectionId: ctx.scheduledOutput ? 'output' : args.collection,
       autoLink: args.auto_link,
       source: { type: args.source_type, value: args.source_value },
     });
@@ -32,7 +34,14 @@ export const wikiIngestTool: ToolDef<typeof params> = {
     const originTag = ctx.origin === 'scheduled' ? 'scheduled' : 'manual';
     const tags = entry.tags.includes(originTag) ? entry.tags : [...entry.tags, originTag];
     // 显式传入的内容日期优先于水合抽取的（调用方比 LLM 更确定数据源日期）。
-    const saved = ctx.library.put({ ...entry, tags, ...(args.date ? { date: args.date } : {}) });
+    const output = ctx.scheduledOutput;
+    const saved = ctx.library.put({
+      ...entry, tags, ...(args.date ? { date: args.date } : {}),
+      ...(output ? {
+        id: `${entry.id}-${createHash('sha256').update(output.taskId).digest('hex').slice(0, 8)}`,
+        collection: 'output', subpath: output.subpath, scheduledTaskId: output.taskId,
+      } : {}),
+    });
     return {
       ok: true,
       id: saved.id,

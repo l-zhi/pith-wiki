@@ -7,6 +7,27 @@ import { describe, expect, it } from 'vitest';
 import { explainDelegateError } from '../src/engine/delegateErrors.js';
 
 describe('explainDelegateError', () => {
+  it('Codex 模型版本错误显示升级提示、实际路径和原始错误', () => {
+    const raw = JSON.stringify({
+      type: 'error',
+      status: 400,
+      error: {
+        type: 'invalid_request_error',
+        message: "The 'gpt-6-astra' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again.",
+      },
+    });
+    const out = explainDelegateError('codex', raw, { binary: '/old/bin/codex' });
+    expect(out).toMatch(/^当前 Codex CLI 版本过旧/);
+    expect(out).toContain('/old/bin/codex');
+    expect(out).toContain(raw);
+    expect(out).not.toContain('codex login');
+  });
+
+  it('其他 400 错误不会被误判为 CLI 版本问题', () => {
+    const raw = '{"status":400,"message":"Unsupported value: model_verbosity"}';
+    expect(explainDelegateError('codex', raw)).toBe(raw);
+  });
+
   it('claude 的 OAuth 过期 → 指向 /login 与 setup-token', () => {
     const out = explainDelegateError(
       'claude-code',

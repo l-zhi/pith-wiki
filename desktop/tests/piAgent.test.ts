@@ -260,6 +260,13 @@ describe('PiAgent.buildArgs', () => {
     expect(args).toContain('--no-extensions'); // 仍然禁用发现，保持确定性
   });
 
+  it('passes thinking overrides without forcing a model when using the CLI default', () => {
+    const args = new PiAgent({ ...base, model: 'default', reasoningEffort: 'off' }).buildArgs('hi');
+    expect(args[args.indexOf('--thinking') + 1]).toBe('off');
+    expect(args).not.toContain('--model');
+    expect(new PiAgent(base).buildArgs('hi')).not.toContain('--thinking');
+  });
+
   it('配了 apiKey 时传 --api-key（按量计费；不配则走 pi 的 OAuth 订阅）', () => {
     const args = new PiAgent({ ...base, apiKey: 'sk-test' }).buildArgs('hi');
     expect(args).toContain('--api-key');

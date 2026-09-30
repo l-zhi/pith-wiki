@@ -32,6 +32,7 @@ export interface ClaudeCodeAgentOptions {
   binary: string;
   /** 模型别名或 id：sonnet / opus / claude-sonnet-4-6 … */
   model: string;
+  reasoningEffort?: string;
   /** 追加到 Claude Code 默认 system prompt 的 pith 检索人设。 */
   systemPrompt: string;
   /** 指向 pith-mcp 的 --mcp-config 文件路径。 */
@@ -255,8 +256,8 @@ export class ClaudeCodeAgent implements AgentLike {
       'stream-json',
       '--verbose',
       '--include-partial-messages',
-      '--model',
-      this.opts.model,
+      ...(this.opts.model && this.opts.model !== 'default' ? ['--model', this.opts.model] : []),
+      ...(this.opts.reasoningEffort ? ['--effort', this.opts.reasoningEffort] : []),
       '--mcp-config',
       this.opts.mcpConfigPath,
       '--allowedTools',

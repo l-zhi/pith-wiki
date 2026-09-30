@@ -87,6 +87,8 @@ export const EntrySchema = z.object({
    * 落盘路径：`<wikiRoot>/<collection>/<subpath>/<id>.md`。
    */
   subpath: SubpathSchema.optional(),
+  /** 产出此条目的定时任务；源资料与生成内容可据此区分。 */
+  scheduledTaskId: z.string().optional(),
   title: z.string().min(1),
   summary: z.string().default(''),
   tags: z.array(z.string()).default([]),

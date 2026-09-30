@@ -12,6 +12,7 @@ import {
 } from '../wiki/converters/index.js';
 import { SkillRegistry } from '../skills/registry.js';
 import type { ScheduleService } from '../schedule/service.js';
+import type { ScheduledOutputContext } from '../schedule/output.js';
 import { readFileTool } from './read_file.js';
 import { writeFileTool } from './write_file.js';
 import { listDirTool } from './list_dir.js';
@@ -39,6 +40,7 @@ export interface ToolContext {
   hydrator: HydrationService;
   /** 会话触发来源；缺省构造（buildContext 不传）视为 interactive。 */
   origin: RunOrigin;
+  scheduledOutput?: ScheduledOutputContext;
   approvedWritePaths: Set<string>;
   requestApproval: (path: string, preview: string) => Promise<ApprovalAnswer>;
   /**
@@ -103,6 +105,7 @@ export interface BuildContextExtras {
   scheduleService?: ScheduleService;
   /** 会话触发来源；缺省 'interactive'。见 ToolContext.origin。 */
   origin?: RunOrigin;
+  scheduledOutput?: ScheduledOutputContext;
 }
 
 export function buildContext(
@@ -144,6 +147,7 @@ export function buildContext(
     assembler,
     hydrator,
     origin: extras.origin ?? 'interactive',
+    scheduledOutput: extras.scheduledOutput,
     approvedWritePaths: new Set(),
     requestApproval,
     approvedCommands: new Set(),

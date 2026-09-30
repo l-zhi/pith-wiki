@@ -372,6 +372,34 @@ export function Input({
   );
 }
 
+/* ───────── Select（设计稿 forms/Select.jsx） ───────── */
+
+export function Select({ options, value, onChange, style, ...rest }: {
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (value: string) => void;
+} & Omit<React.SelectHTMLAttributes<HTMLSelectElement>, 'value' | 'onChange'>) {
+  const [focus, setFocus] = React.useState(false);
+  return (
+    <div style={{ position: 'relative', display: 'flex', minWidth: 0, width: '100%' }}>
+      <select {...rest} value={value} onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
+        style={{ appearance: 'none', width: '100%', minWidth: 0, height: 'var(--control-h-md)',
+          padding: '0 30px 0 12px', fontFamily: 'var(--font-sans)', fontSize: 'var(--text-callout)',
+          color: 'var(--text-primary)', background: 'var(--surface-card)', border: 'none',
+          borderRadius: 'var(--radius-control)', outline: 'none',
+          boxShadow: focus ? 'var(--ring-control), var(--ring-focus)' : 'var(--ring-control), var(--shadow-card)',
+          cursor: rest.disabled ? 'default' : 'pointer', opacity: rest.disabled ? 0.5 : 1, ...style }}>
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      <svg aria-hidden width="12" height="12" viewBox="0 0 24 24" fill="none"
+        style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-tertiary)' }}>
+        <path d="M7 10l5 5 5-5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}
+
 /* ───────── SegmentedControl ───────── */
 
 export function SegmentedControl({
@@ -518,6 +546,7 @@ export function SidebarItem({
   dotTone,
   iconTone,
   onClick,
+  onContextMenu,
 }: {
   icon?: React.ReactNode;
   children: React.ReactNode;
@@ -527,12 +556,14 @@ export function SidebarItem({
   /** 非选中态下图标的强调色（如 output collection 用 amber 区分于普通 folder）。选中态恒用 on-accent。 */
   iconTone?: string;
   onClick?: () => void;
+  onContextMenu?: React.MouseEventHandler<HTMLButtonElement>;
 }) {
   const [hover, setHover] = React.useState(false);
   return (
     <button
       type="button"
       onClick={onClick}
+      onContextMenu={onContextMenu}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{

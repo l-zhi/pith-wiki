@@ -1,11 +1,13 @@
 import React from 'react';
 import { Check, FolderPlus, KeyRound, Plus, Settings2, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Badge, Button, Card, Input, SegmentedControl, Switch } from '../ds';
+import { Badge, Button, Card, Input, Select, SegmentedControl, Switch } from '../ds';
+import { ProviderModelFields } from './ProviderModelFields';
 import { DocEditor, type DocPreset } from './DocEditor';
 import { useStore, type Theme } from '../store';
 import type {
   ProviderKindDTO,
+  ModelOptionDTO,
   SettingsDTO,
   SettingsSaveDTO,
   WatchDirDTO,
@@ -22,6 +24,10 @@ interface ProviderDraft {
   kind: ProviderKindDTO;
   baseURL: string;
   model: string;
+  reasoningEffort?: string;
+  verbosity?: string;
+  modelOptions?: ModelOptionDTO[];
+  reasoningEfforts?: string[];
   supportsJsonMode: boolean;
   newApiKey: string;
   /** 来自 settings.get 的展示信息（新增的没有） */
@@ -61,6 +67,8 @@ function toPayload(d: Draft): SettingsSaveDTO {
       kind: p.kind,
       baseURL: p.baseURL.trim(),
       model: p.model.trim(),
+      reasoningEffort: p.reasoningEffort ?? null,
+      verbosity: p.verbosity ?? null,
       supportsJsonMode: p.supportsJsonMode,
       ...(p.newApiKey.trim() ? { newApiKey: p.newApiKey.trim() } : {}),
     })),
@@ -232,6 +240,7 @@ export function Settings() {
   const [error, setError] = React.useState<string | null>(null);
   const [saved, setSaved] = React.useState(false);
   const [confirmBusy, setConfirmBusy] = React.useState(false);
+  const [switching, setSwitching] = React.useState(false);
 
   // settings 到位/刷新时重置草稿
   React.useEffect(() => {
@@ -308,19 +317,28 @@ export function Settings() {
       label: `${cli.label}${cli.present ? '' : ` · ${t('settings.cliAbsent')}`}`,
     }));
   const chatOptions = [...openaiProviders.map((p) => ({ value: p.name, label: p.name })), ...cliOptions];
+  const activeIndex = draft.providers.findIndex((p) => p.name === draft.activeProvider);
+  const active = draft.providers[activeIndex];
+  const switchDisabled = dirty || saving || switching;
   // 两个选择器都是「选了即刻生效」（不走 Save）——乐观更新草稿 + 即时持久化 + 重建。
   // 未配置的 CLI（如本机检测到但没建 entry）由 engine 端在 setActiveProvider 里合成。
-  const onChatChange = (value: string) => {
+  const onChatChange = async (value: string) => {
+    if (switchDisabled) return;
+    setSwitching(true);
     patch((d) => ({ ...d, activeProvider: value }));
-    void switchProvider(value);
+    try { await switchProvider(value); } finally { setSwitching(false); }
   };
-  const onReviewProviderChange = (value: string) => {
+  const onReviewProviderChange = async (value: string) => {
+    if (switchDisabled) return;
+    setSwitching(true);
     patch((d) => ({ ...d, reviewProvider: value }));
-    void setReviewProvider(value);
+    try { await setReviewProvider(value); } finally { setSwitching(false); }
   };
-  const onHydrationChange = (value: string) => {
+  const onHydrationChange = async (value: string) => {
+    if (switchDisabled) return;
+    setSwitching(true);
     patch((d) => ({ ...d, hydrationProvider: value }));
-    void setHydrationProvider(value);
+    try { await setHydrationProvider(value); } finally { setSwitching(false); }
   };
 
   return (
@@ -420,9 +438,10 @@ export function Settings() {
 
       {/* ───── 区域 2：知识库水合模型（选择器） ───── */}
       <Section title={t('settings.hydrationTitle')}>
-        <Row title={t('settings.hydrationProvider')} desc={t('settings.hydrationHint')}>
-          <SegmentedControl
-            size="sm"
+        <Row stacked title={t('settings.hydrationProvider')} desc={t('settings.hydrationHint')}>
+          <Select
+            aria-label={t('settings.hydrationProvider')}
+            disabled={switchDisabled}
             value={draft.hydrationProvider}
             onChange={onHydrationChange}
             options={[
@@ -435,9 +454,23 @@ export function Settings() {
 
       {/* ───── 区域 3：默认对话模型（选择器，含本机 CLI） ───── */}
       <Section title={t('settings.chatTitle')}>
-        <Row title={t('nav.chat')} desc={t('settings.chatHint')}>
-          <SegmentedControl size="sm" value={draft.activeProvider} onChange={onChatChange} options={chatOptions} />
+        <Row stacked title={t('settings.chatProvider')} desc={t('settings.chatHint')}>
+          <Select aria-label={t('settings.chatProvider')} disabled={switchDisabled}
+            value={draft.activeProvider} onChange={onChatChange} options={chatOptions} />
         </Row>
+        {active && <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <ProviderModelFields key={active.name} provider={active} disabled={saving || switching}
+            onChange={(fields) => patch((d) => updateP(d, activeIndex, fields))} />
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
+            <Button disabled={!dirty || saving || switching} onClick={onSaveClick}
+              variant={confirmBusy ? 'destructive' : 'primary'}>
+              {saving ? t('settings.saving') : confirmBusy ? t('settings.confirmBusySave') : saved && !dirty ? t('settings.saved') : t('settings.save')}
+            </Button>
+            {dirty && <Button variant="ghost" disabled={saving} onClick={() => patch(() => toDraft(settings))}>{t('settings.reset')}</Button>}
+            <span style={{ fontSize: 'var(--text-caption)', color: 'var(--text-tertiary)' }}>{t('settings.modelSaveHint')}</span>
+          </div>
+          {error && <span role="alert" style={{ color: 'var(--status-dead)', fontSize: 'var(--text-caption)' }}>{error}</span>}
+        </div>}
       </Section>
 
       {/* ───── Library ───── */}
@@ -506,9 +539,10 @@ export function Settings() {
 
       {/* ───── 审稿模型（选择器，选了即生效） ───── */}
       <Section title={t('settings.reviewProviderTitle')}>
-        <Row title={t('settings.reviewProvider')} desc={t('settings.reviewProviderHint')}>
-          <SegmentedControl
-            size="sm"
+        <Row stacked title={t('settings.reviewProvider')} desc={t('settings.reviewProviderHint')}>
+          <Select
+            aria-label={t('settings.reviewProvider')}
+            disabled={switchDisabled}
             value={draft.reviewProvider}
             onChange={onReviewProviderChange}
             options={[
@@ -616,15 +650,15 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Row({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
+function Row({ title, desc, children, stacked = false }: { title: string; desc?: string; children: React.ReactNode; stacked?: boolean }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 20, padding: '14px 20px', borderBottom: '0.5px solid var(--separator)' }}>
+    <div style={{ display: 'flex', flexDirection: stacked ? 'column' : 'row', alignItems: stacked ? 'stretch' : 'center', gap: stacked ? 10 : 20, padding: '14px 20px', borderBottom: '0.5px solid var(--separator)' }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 'var(--text-callout)', fontWeight: 600, color: 'var(--text-primary)' }}>{title}</div>
         {desc && (
           <div
             title={typeof desc === 'string' ? desc : undefined}
-            style={{ fontSize: 'var(--text-caption)', color: 'var(--text-tertiary)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+            style={{ fontSize: 'var(--text-caption)', color: 'var(--text-tertiary)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: stacked ? 'normal' : 'nowrap' }}
           >
             {desc}
           </div>

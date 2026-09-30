@@ -213,6 +213,23 @@ home 写一份 `AGENTS.md` 承载静态 QA 人设——但 reviewer 是动态段
   审稿模式下**每轮 spawn**，比 API reviewer 慢、烧订阅额度——用户已知并接受（记进 ADR）。
 - **P4**：文档（README/config.md/新 ADR 记录「第二个委托 CLI」的设计取舍）。
 
+### 模型与参数设置（2026-09-05）
+
+设置页的「默认对话模型」使用下拉框选择服务，并展示该服务的具体模型与参数。
+Codex 模型候选来自本机 `CODEX_HOME/models_cache.json`（缺省 `~/.codex`），隐藏内部模型，
+按模型目录限制推理强度；目录不可读时仍可手填模型 ID，不发起联网探测。
+
+- `providers.<name>.model`：具体 ID 或别名；CLI provider 的 `default` 表示不传模型覆盖。
+- `reasoningEffort`：Codex → `-c model_reasoning_effort=...`，Claude Code → `--effort`，pi → `--thinking`。
+- `verbosity`：仅 Codex，映射到 `-c model_verbosity=...`。
+
+选择「使用 CLI 默认值」会删除对应参数覆盖；已有 CLI 配置继续生效。模型/参数编辑后点击保存，
+重建引擎后用于聊天、后续定时运行及使用该 provider 的审稿人。首轮与续接轮均传入参数。
+存在未保存修改时暂停即时 provider 切换，防止引擎刷新丢失草稿；保存或还原后即可切换。
+参数按 provider 校验后落盘，保存时保留密钥、binary、MCP 等未编辑字段。
+可用等级仍由 CLI 版本与账号决定，模型缓存不作为实时可用性保证。
+Codex 参数语义参考[官方配置文档](https://learn.chatgpt.com/docs/config-file/config-reference)。
+
 ## 6. 决策（已定 / 待定）
 
 1. ✅ **鉴权模式 = 订阅优先**：默认 `codex login`（写 `~/.codex/auth.json`）复用订阅，
