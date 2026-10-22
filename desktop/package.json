@@ -1,6 +1,6 @@
 {
   "name": "@pith/desktop",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "pith — local-first LLM second brain, desktop app (Electron shell over the pith-wiki core)",
   "private": true,
   "type": "module",
@@ -70,6 +70,10 @@
       {
         "from": "resources/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "../bundled-skills",
+        "to": "bundled-skills"
       }
     ],
     "publish": [
