@@ -70,6 +70,10 @@
       {
         "from": "resources/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "../bundled-skills",
+        "to": "bundled-skills"
       }
     ],
     "publish": [
