@@ -176,7 +176,7 @@ describe('run_command — 执行兜底', () => {
     const { ctx } = makeCtx({ registry: registryWith(['definitely-not-a-real-bin-xyz']) });
     const r = await run({ command: 'definitely-not-a-real-bin-xyz', args: [] }, ctx);
     expect(r.ok).toBe(false);
-    expect(r.error).toMatch(/Failed to (run|spawn)/);
+    expect(r.error).toContain('Command not found or not executable');
   });
 
   it('args 不经 shell —— 注入字符按字面量传递', async () => {

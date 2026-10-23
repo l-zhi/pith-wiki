@@ -14,6 +14,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { resolveExecutable as resolveBinaryPath, withCurrentPath } from '@core/runtime/commandEnvironment.js';
+import { runSkillCommandProbe } from './skillCommandProbe.js';
 
 import {
   loadConfigFromEnv,
@@ -468,6 +470,7 @@ async function initServices(): Promise<Services> {
           systemPrompt,
           mcpConfigPath,
           env,
+          getEnv: () => withCurrentPath(env),
           cwd: home,
           // 默认与用户自己的 CC 环境隔离（skills/plugins/hooks/其它 MCP 不进 pith 会话）。
           ...(entry?.isolation ? { isolation: entry.isolation } : {}),
@@ -507,6 +510,7 @@ async function initServices(): Promise<Services> {
           bridgePath,
           mcp: readPithMcpSpec(mcpConfigPath),
           env,
+          getEnv: () => withCurrentPath(env),
           cwd: home,
           sessionDir: path.join(home, 'pi-sessions'),
           ...(apiKey ? { apiKey } : {}),
@@ -527,6 +531,7 @@ async function initServices(): Promise<Services> {
         systemPrompt,
         mcp: readPithMcpSpec(mcpConfigPath),
         env,
+        getEnv: () => withCurrentPath(env),
         cwd: home,
       });
     };
@@ -1290,24 +1295,6 @@ function maskKey(key: string): string {
   return `${key.slice(0, 3)}…${key.slice(-4)}`;
 }
 
-/**
- * 解析一个 CLI 可执行文件的绝对路径：绝对/相对路径直接验在；裸名在 PATH +
- * ~/.local/bin 里查（GUI 启动的子进程 PATH 往往很瘦，补一条用户常装目录）。
- * 找不到 → undefined。
- */
-function resolveBinaryPath(bin: string): string | undefined {
-  try {
-    if (bin.includes('/')) return fs.existsSync(bin) ? bin : undefined;
-    const dirs = [...(process.env.PATH ?? '').split(path.delimiter), path.join(os.homedir(), '.local', 'bin')];
-    for (const d of dirs) {
-      if (d && fs.existsSync(path.join(d, bin))) return path.join(d, bin);
-    }
-  } catch {
-    /* ignore */
-  }
-  return undefined;
-}
-
 /** 委托型 CLI 未配 model 时的默认模型别名（用户可在设置里改）。 */
 const DELEGATE_DEFAULT_MODELS: Record<DelegateKind, string> = {
   'claude-code': 'sonnet',
@@ -1615,17 +1602,7 @@ async function runSkillProbe(name: string): Promise<SkillTestResultDTO> {
 
   try {
     if (probe.kind === 'command') {
-      const r = (await runCommandTool.handler({ command: probe.command, args: probe.args }, ctx)) as {
-        ok: boolean;
-        exitCode?: number;
-        output?: string;
-        error?: string;
-      };
-      if (r.ok) return { ok: true, detail: (r.output ?? '').trim().slice(0, 400) || 'exit 0' };
-      return {
-        ok: false,
-        detail: r.error ?? ((r.output ?? '').trim().slice(0, 400) || `exit ${r.exitCode ?? '?'}`),
-      };
+      return await runSkillCommandProbe(probe.command, probe.args, ctx);
     }
     const r = (await httpRequestTool.handler(
       { url: probe.url, method: probe.method, body: probe.body },

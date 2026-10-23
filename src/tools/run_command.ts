@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import type { ToolDef } from './index.js';
 import { truncatePayload } from './safety.js';
+import { resolveExecutable } from '../runtime/commandEnvironment.js';
 
 /**
  * run_command:执行已安装 skill 声明过的外部 CLI(weread / lark-cli 之类)。
@@ -75,11 +76,15 @@ export const runCommandTool: ToolDef<typeof params> = {
 
     const timeoutMs = timeout_ms ?? ctx.config.commandTimeoutMs;
     const maxBytes = ctx.config.maxToolPayloadBytes;
+    const env = { ...process.env };
+    const executable = resolveExecutable(command, env, ctx.config.workspaceRoot);
+    if (!executable) return { ok: false, error: `Command not found or not executable: ${command}. Install it or refresh the CLI environment.` };
 
     return new Promise<RunCommandResult>((resolve) => {
       let child;
       try {
-        child = spawn(command, args, {
+        child = spawn(executable, args, {
+          env,
           shell: false,
           cwd: ctx.config.workspaceRoot,
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -122,8 +127,7 @@ export const runCommandTool: ToolDef<typeof params> = {
       };
 
       child.on('error', (err) => {
-        // 最常见:ENOENT(CLI 没装)。给模型一个能转述给用户的信息。
-        finish({ ok: false, error: `Failed to run ${command}: ${err.message}` });
+        finish({ ok: false, error: `Found ${executable}, but could not start it (check its runtime and working directory): ${err.message}` });
       });
 
       child.on('close', (code) => {

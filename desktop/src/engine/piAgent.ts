@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { resolveExecutable } from '@core/runtime/commandEnvironment.js';
 import type { AgentLike } from './sessionManager.js';
 import type { ScopeDTO } from '../shared/protocol.js';
 import { explainDelegateError } from './delegateErrors.js';
@@ -44,6 +45,8 @@ export interface PiAgentOptions {
   mcp?: { command: string; args: string[]; env?: Record<string, string> };
   /** spawn 环境（订阅模式下不含 provider API key）。 */
   env: NodeJS.ProcessEnv;
+  /** Read the refreshed CLI environment on each new/resumed turn. */
+  getEnv?: () => NodeJS.ProcessEnv;
   /** spawn 的工作目录，也是写入落点的软约束根（传 pith home）。 */
   cwd?: string;
   /** pi 会话文件目录（`--session-dir`）。让 pith 拥有这些会话文件，不混进用户的 ~/.pi。 */
@@ -296,8 +299,9 @@ export class PiAgent implements AgentLike {
         `model=${this.opts.model || '(default)'} bridge=${this.opts.bridgePath ? 'on' : 'off'} ` +
         `mcp=${this.opts.mcp ? 'on' : 'off'} apiKey=${this.opts.apiKey ? 'set' : 'unset(subscription)'}`,
     );
-    const child = spawn(this.opts.binary, args, {
-      env: { ...this.opts.env, ...this.bridgeEnv() },
+    const env = { ...(this.opts.getEnv?.() ?? this.opts.env), ...this.bridgeEnv() };
+    const child = spawn(resolveExecutable(this.opts.binary, env, this.opts.cwd) ?? this.opts.binary, args, {
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
       ...(this.opts.cwd ? { cwd: this.opts.cwd } : {}),
     });
