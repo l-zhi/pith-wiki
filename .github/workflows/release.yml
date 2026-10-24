@@ -1,18 +1,45 @@
 name: release
 
-# 推送 v* tag（如 v0.4.0）或手动触发时，分别在原生 macOS / Windows runner 上打包桌面 app，
-# 用 electron-builder 发布到 GitHub Releases。未签名版本：mac 走 ad-hoc、win 不签名。
+# Tags publish only after every platform passes. Manual runs validate by default.
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish verified packages (run on a version tag only)'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write # electron-builder 创建/上传 Release 需要
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a matching version tag for publishing
+        env:
+          SHOULD_PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const { version } = JSON.parse(readFileSync('desktop/package.json', 'utf8'));
+          if (process.env.SHOULD_PUBLISH === 'true' &&
+              (process.env.GITHUB_REF_TYPE !== 'tag' || process.env.GITHUB_REF_NAME !== `v${version}`)) {
+            throw new Error('Publishing requires a v<desktop version> tag. Use publish=false for branch validation.');
+          }
+          NODE
+
   build:
+    needs: prepare
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -25,6 +52,9 @@ jobs:
         with:
           node-version: 20
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            desktop/package-lock.json
 
       # 引擎 import 仓库根 src（@core）；根依赖装上以防构建期解析需要
       - name: Install root deps
@@ -34,11 +64,68 @@ jobs:
         working-directory: desktop
         run: npm ci
 
-      - name: Build + package + publish
+      - name: Build, sign, notarize and verify macOS packages
+        if: runner.os == 'macOS'
         working-directory: desktop
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 不做自动签名发现：未签名发布（避免 CI 上找证书失败）
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'true'
+        run: npm run dist:mac:release
+
+      - name: Build Windows packages
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        # electron-builder 默认按当前 runner 平台打对应目标（mac→dmg/zip，win→nsis）
-        run: npm run dist -- --publish always
+        run: npm run dist -- --publish never
+
+      # Upload only after all platform-specific checks succeed. No keychains,
+      # effective build configurations, credentials or unpacked apps are uploaded.
+      - name: Save verified packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.zip
+            desktop/dist/*.exe
+            desktop/dist/*.blockmap
+            desktop/dist/latest*.yml
+            desktop/dist/macos-SHA256SUMS.txt
+
+  publish:
+    needs: build
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+      - name: Publish verified artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          if gh release view "$tag" --json isDraft > release-state.json 2>/dev/null; then
+            if ! jq -e '.isDraft == true' release-state.json >/dev/null; then
+              echo 'Refusing to overwrite an existing published release. Bump the version and tag.' >&2
+              exit 1
+            fi
+          else
+            gh release create "$tag" --verify-tag --draft --generate-notes --title "pith $tag"
+          fi
+          gh release upload "$tag" release-assets/* --clobber
+          gh release edit "$tag" --draft=false
