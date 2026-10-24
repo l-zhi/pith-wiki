@@ -11,16 +11,49 @@ on:
         description: 'Publish verified packages (run on a version tag only)'
         type: boolean
         default: false
+      notary_status:
+        description: 'Only check Apple credentials and recent notarization status (no build or upload)'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.ref }}${{ inputs.notary_status && '-notary-status' || '' }}
   cancel-in-progress: false
 
 jobs:
+  notary-status:
+    if: github.event_name == 'workflow_dispatch' && inputs.notary_status
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read notarization history from Apple
+        timeout-minutes: 3
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing secret: $name" >&2
+              exit 1
+            fi
+          done
+          xcrun notarytool history \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --output-format json > "$RUNNER_TEMP/notary-history.json"
+          echo 'Apple authentication succeeded. Recent submissions (a successful query does not mean notarization passed):'
+          jq '{history: [.history[:10][] | {id, name, createdDate, status}]}' "$RUNNER_TEMP/notary-history.json"
+
   prepare:
+    if: ${{ !inputs.notary_status }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

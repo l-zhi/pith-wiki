@@ -35,6 +35,14 @@ gh workflow run release.yml --ref <待验证分支> -f publish=false
 
 首次公证可能较慢。单个 DMG 的等待上限为 30 分钟，整个构建上限为 120 分钟。超时或被拒绝时不会发布；可从日志中的 submission ID 在苹果公证服务查询详情。仅配置了 Secret 名称并不代表凭据已验证。
 
+如果构建长时间没有新日志，可单独运行只读诊断，不必取消构建或重新上传安装包：
+
+```bash
+gh workflow run release.yml --ref <待验证分支> -f notary_status=true
+```
+
+也可在 Run workflow 中勾选 **notary_status**。此模式跳过构建和发布，只用三项 `APPLE_*` 凭据查询最近 10 次公证提交；不读取签名私钥，且与正在运行的打包任务互不阻塞。查询成功说明苹果认证通过；`In Progress` 表示苹果尚未给出最终结果，`Accepted` 才表示该次公证通过。认证失败时按错误信息核对邮箱、App 专用密码和 Team ID，不要重复提交相同安装包来尝试修复凭据。
+
 ## 正式发布
 
 合并后更新 `desktop/package.json` 与对应锁文件的版本，推送匹配的 `v<版本>` tag。也可以在该版本 tag 上手动运行并设置 **publish=true**；分支不能用于正式发布。已有公开 Release 不会被覆盖。
