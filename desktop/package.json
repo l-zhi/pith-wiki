@@ -45,7 +45,7 @@
     "@types/turndown": "^5.0.6",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "26.16.1",
     "electron-vite": "^3.0.0",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",

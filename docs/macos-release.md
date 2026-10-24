@@ -47,6 +47,8 @@ gh workflow run release.yml --ref <待验证分支> -f publish=false
 
 `npm run pack` / `npm run dist` 保留原来的未签名开发构建行为。`npm run dist:mac:release` 使用独立发布配置，要求在装有 Xcode 工具的 Mac 上提供上述环境变量；该命令仅构建和验证，不会上传 GitHub Release。
 
+打包器固定为 electron-builder 26.16.1。旧版 25.1.8 将 `.p12` 密码误用为临时钥匙串密码，在新的 macOS runner 上会报 `SecKeychainUnlock`；26.16.1 包含[上游修复](https://github.com/electron-userland/electron-builder/pull/10172)。不要仅因此错误就重置用户的证书或密码。
+
 ## 参考
 
 - [Electron 公证与 entitlement 要求](https://github.com/electron/notarize#prerequisites)
