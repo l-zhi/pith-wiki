@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "pack": "electron-vite build && electron-builder --dir",
-    "dist": "electron-vite build && electron-builder"
+    "dist": "electron-vite build && electron-builder",
+    "dist:mac:release": "node scripts/macos-release.mjs check && electron-vite build && electron-builder --mac --config electron-builder.mac-release.cjs --publish never && node scripts/macos-release.mjs finalize"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.82.1",
@@ -44,7 +45,7 @@
     "@types/turndown": "^5.0.6",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "26.16.1",
     "electron-vite": "^3.0.0",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
