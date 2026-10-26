@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { resolveExecutable } from '@core/runtime/commandEnvironment.js';
 import readline from 'node:readline';
 import type { AgentLike } from './sessionManager.js';
 import type { ScopeDTO } from '../shared/protocol.js';
@@ -39,6 +40,8 @@ export interface ClaudeCodeAgentOptions {
   mcpConfigPath: string;
   /** spawn 环境（含 CLAUDE_CODE_OAUTH_TOKEN，且应剔除 ANTHROPIC_API_KEY）。 */
   env: NodeJS.ProcessEnv;
+  /** Read the refreshed CLI environment on each new/resumed turn. */
+  getEnv?: () => NodeJS.ProcessEnv;
   /** 允许的工具白名单（逗号分隔）；不传用 DEFAULT_ALLOWED_TOOLS（pith MCP + 飞书/weread）。 */
   allowedTools?: string;
   /**
@@ -301,8 +304,9 @@ export class ClaudeCodeAgent implements AgentLike {
         `${this.ccSessionId ? `--resume ${this.ccSessionId}` : '(new CC session)'} ` +
         `mcp=${this.opts.mcpConfigPath} token=${this.opts.env.CLAUDE_CODE_OAUTH_TOKEN ? 'set' : 'unset'}`,
     );
-    const child = spawn(this.opts.binary, args, {
-      env: this.opts.env,
+    const env = this.opts.getEnv?.() ?? this.opts.env;
+    const child = spawn(resolveExecutable(this.opts.binary, env, this.opts.cwd) ?? this.opts.binary, args, {
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
       ...(this.opts.cwd ? { cwd: this.opts.cwd } : {}),
     });

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { resolveExecutable } from '../runtime/commandEnvironment.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -76,6 +77,8 @@ export interface CodexAgentOptions {
   mcp?: PithMcpSpec;
   /** spawn 环境（订阅模式下应剔除 OPENAI_API_KEY，让 codex 走 ~/.codex/auth.json）。 */
   env: NodeJS.ProcessEnv;
+  /** Desktop supplies current PATH per turn while retaining provider credential isolation. */
+  getEnv?: () => NodeJS.ProcessEnv;
   /** 沙箱模式，默认 danger-full-access（见类注释的取舍说明）。 */
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   /**
@@ -375,8 +378,9 @@ export class CodexAgent {
         `model=${this.opts.model || '(default)'} sandbox=${sandbox} mcp=${this.opts.mcp ? 'on' : 'off'} ` +
         `apiKey=${this.opts.env.OPENAI_API_KEY ? 'set' : 'unset(subscription)'}`,
     );
-    const child = spawn(this.opts.binary, args, {
-      env: this.opts.env,
+    const env = this.opts.getEnv?.() ?? this.opts.env;
+    const child = spawn(resolveExecutable(this.opts.binary, env, this.opts.cwd) ?? this.opts.binary, args, {
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
       ...(this.opts.cwd ? { cwd: this.opts.cwd } : {}),
     });

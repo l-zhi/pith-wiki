@@ -651,8 +651,12 @@ export const useStore = create<PithStore>((set, get) => {
     },
 
     async testSkill(name) {
-      // 跑 skill 声明的自测探针；结果由卡片本地展示，不入全局 state。
-      return bridge.request<SkillTestResultDTO>({ kind: 'skills.test', name });
+      // The probe refreshes Engine PATH; refresh dependency badges even on failure.
+      try {
+        return await bridge.request<SkillTestResultDTO>({ kind: 'skills.test', name });
+      } finally {
+        await get().loadSkills();
+      }
     },
 
     async setSkillEnv(key, value) {

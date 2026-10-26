@@ -6,6 +6,7 @@ import { ensureSkillsDir, type Config } from '../config.js';
 import { loadSkill } from './index.js';
 import { resolveBundledSkill } from './bundled.js';
 import type { Skill, SkillRequirement } from './types.js';
+import { resolveExecutable } from '../runtime/commandEnvironment.js';
 
 /**
  * Skill 安装/卸载的核心逻辑 —— 纯逻辑,返回结构化结果或抛错,不碰 console /
@@ -47,13 +48,10 @@ function cloneToTemp(url: string): string {
 
 /**
  * 检测 skill 声明的 requires,返回 PATH 上找不到的那些(不代装)。
- * 用 shell 内建 `command -v` 探测(比 spawn 目标 bin --version 稳健)。
+ * 与实际执行共用查找规则；只检查可执行文件，不运行目标命令。
  */
 export function checkRequirements(skill: Skill): SkillRequirement[] {
-  return skill.requires.filter((r) => {
-    const res = spawnSync('command', ['-v', r.bin], { shell: true, stdio: 'ignore' });
-    return res.status !== 0;
-  });
+  return skill.requires.filter((r) => !resolveExecutable(r.bin));
 }
 
 export interface InstallResult {

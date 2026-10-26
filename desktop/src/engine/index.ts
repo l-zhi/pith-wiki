@@ -8,5 +8,7 @@
  * 外部依赖才开始加载。
  */
 import './polyfills.js';
+import { cliEnvironment } from './cliEnvironment.js';
 
-void import('./bootstrap.js');
+// Resolve the GUI launch environment before business modules capture any PATH.
+void cliEnvironment.refresh().then(() => import('./bootstrap.js'));
