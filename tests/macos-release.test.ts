@@ -62,6 +62,27 @@ describe('macOS release gates', () => {
     expect(() => checkCredentials(env)).not.toThrow();
   });
 
+  it('blocks publication without release notes while allowing validation builds', () => {
+    const require = createRequire(new URL('../desktop/package.json', import.meta.url));
+    const workflow = require('js-yaml').load(readFileSync('.github/workflows/release.yml', 'utf8'));
+    const guard = workflow.jobs.prepare.steps.find(step => step.run).run;
+    const dir = makeFixture();
+    mkdirSync(join(dir, 'desktop'));
+    writeFileSync(join(dir, 'desktop/package.json'), JSON.stringify({ version: '1.2.3' }));
+    const runGuard = (publish: boolean) => spawnSync('bash', ['-e', '-o', 'pipefail', '-c', guard], {
+      cwd: dir,
+      env: { ...process.env, SHOULD_PUBLISH: String(publish), GITHUB_REF_TYPE: 'tag', GITHUB_REF_NAME: 'v1.2.3' },
+      encoding: 'utf8',
+    }).status;
+    expect(runGuard(false)).toBe(0);
+    expect(runGuard(true)).not.toBe(0);
+    mkdirSync(join(dir, 'docs'));
+    writeFileSync(join(dir, 'docs/release-v1.2.3.md'), '  \n');
+    expect(runGuard(true)).not.toBe(0);
+    writeFileSync(join(dir, 'docs/release-v1.2.3.md'), 'Release notes');
+    expect(runGuard(true)).toBe(0);
+  });
+
   it('requires the correct Developer ID, Hardened Runtime and timestamp', () => {
     expect(() => checkSignature('Signature=adhoc', env.APPLE_TEAM_ID)).toThrow('Developer ID');
     expect(() => checkSignature(signature, 'Z9Z9Z9Z9Z9')).toThrow('Team ID');

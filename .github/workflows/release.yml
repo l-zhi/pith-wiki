@@ -68,6 +68,9 @@ jobs:
               (process.env.GITHUB_REF_TYPE !== 'tag' || process.env.GITHUB_REF_NAME !== `v${version}`)) {
             throw new Error('Publishing requires a v<desktop version> tag. Use publish=false for branch validation.');
           }
+          if (process.env.SHOULD_PUBLISH === 'true' && !readFileSync(`docs/release-v${version}.md`, 'utf8').trim()) {
+            throw new Error('Publishing requires non-empty, versioned release notes.');
+          }
           NODE
 
   build:
@@ -139,6 +142,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: desktop-*
@@ -152,13 +156,15 @@ jobs:
         run: |
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
+          notes="docs/release-$tag.md"
+          test -s "$notes"
           if gh release view "$tag" --json isDraft > release-state.json 2>/dev/null; then
             if ! jq -e '.isDraft == true' release-state.json >/dev/null; then
               echo 'Refusing to overwrite an existing published release. Bump the version and tag.' >&2
               exit 1
             fi
           else
-            gh release create "$tag" --verify-tag --draft --generate-notes --title "pith $tag"
+            gh release create "$tag" --verify-tag --draft --notes-file "$notes" --title "pith $tag"
           fi
           gh release upload "$tag" release-assets/* --clobber
-          gh release edit "$tag" --draft=false
+          gh release edit "$tag" --title "pith $tag" --notes-file "$notes" --draft=false --latest
