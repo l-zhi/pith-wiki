@@ -45,9 +45,11 @@ gh workflow run release.yml --ref <待验证分支> -f notary_status=true
 
 ## 正式发布
 
-合并后更新 `desktop/package.json` 与对应锁文件的版本，推送匹配的 `v<版本>` tag。也可以在该版本 tag 上手动运行并设置 **publish=true**；分支不能用于正式发布。已有公开 Release 不会被覆盖。
+合并后更新 `desktop/package.json` 与对应锁文件的版本，编写 `docs/release-v<版本>.md`，推送匹配的 `v<版本>` tag。发布日志缺失或为空会阻止正式构建。也可以在该版本 tag 上手动运行并设置 **publish=true**；分支不能用于正式发布。已有公开 Release 不会被覆盖。
 
-所有平台构建成功后，独立发布任务才创建草稿 Release、上传验证过的同一批文件并公开。任何签名、公证、校验或上传失败都会阻止发布；上传失败可能留下草稿，重跑时可补传。
+所有平台构建成功后，独立发布任务才创建草稿 Release、上传验证过的同一批文件并公开，设为 Latest。标题统一为 `pith v<版本>`，正文使用对应的版本日志，不再自动拼接提交标题。任何签名、公证、校验或上传失败都会阻止发布；上传失败可能留下草稿，重跑时可补传。本流程用于稳定版发布；预发布版本应单独配置 prerelease 与 Latest 策略。
+
+历史版本的标题和正文可按对应 `docs/release-v*.md` 同步，保留标签、安装包及预发布标记。不要重命名历史安装包或用新包覆盖旧版本；签名、公证或应用代码发生变化时发布新的版本号。
 
 发布前应从 Actions artifacts 或浏览器下载的新包在另一台 Mac 上安装，确认未执行 `xattr` 也能打开；分别验证 Apple Silicon 和 Intel Mac 的界面及 Engine 启动。命令行校验通过不能代替实机启动测试。
 

@@ -1,6 +1,6 @@
 {
   "name": "@pith/desktop",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "pith — local-first LLM second brain, desktop app (Electron shell over the pith-wiki core)",
   "private": true,
   "type": "module",
@@ -107,6 +107,7 @@
       ]
     },
     "win": {
+      "artifactName": "${productName}-Setup-${version}.${ext}",
       "icon": "resources/icon.png",
       "target": [
         {

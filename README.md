@@ -30,11 +30,17 @@ Input formats: `.docx` `.eml` `.htm` `.html` `.md` `.pdf` `.txt`. The product is
 
 **Desktop app (recommended)** — the full experience: chat, inbox, dashboard, link
 graph, skills, and a scheduled-tasks calendar, all over the same engine and
-on-disk library. No packaged installer yet, so run it from source:
+on-disk library. Download the installer from [the latest release](https://github.com/l-zhi/pith-wiki/releases/latest):
+
+- **macOS:** choose the `arm64.dmg` for Apple Silicon or `x64.dmg` for Intel, then drag pith into Applications. Starting with v0.6.1, official macOS packages are Developer ID signed and Apple notarized; no quarantine-removal command is required.
+- **Windows x64:** run the `pith-Setup-<version>.exe` installer. Windows packages are not yet code-signed and may show a SmartScreen prompt.
+
+For development, run from source:
 
 ```bash
 git clone https://github.com/l-zhi/pith-wiki.git
 cd pith-wiki/desktop
+npm --prefix .. install
 npm install
 npm run dev      # electron-vite dev (HMR)
 ```
