@@ -28,12 +28,19 @@ OpenAI 协议的 LLM 端点——以**原生桌面应用**的方式运行。
 首次从源码安装请看 [pith-brain 基础安装方案](docs/install.zh-CN.md)，包含环境要求、依赖安装、基础配置、桌面端 / CLI 启动和验证步骤。
 
 桌面应用（Electron）就是 pith 的使用方式——聊天、收件箱、仪表盘、关系图谱、技能，
-以及带日历的**定时任务**视图，全部跑在同一套引擎和本地知识库之上。目前还没有打包好的
-安装器，从源码跑：
+以及带日历的**定时任务**视图，全部跑在同一套引擎和本地知识库之上。
+
+从 [最新 Release](https://github.com/l-zhi/pith-wiki/releases/latest) 下载安装包：
+
+- **macOS：** M 系列选择 `arm64.dmg`，Intel 选择 `x64.dmg`，打开后将 pith 拖入“应用程序”。从 v0.6.1 起，正式 macOS 包均经过 Developer ID 签名和苹果公证，无需执行删除 quarantine 的命令。
+- **Windows x64：** 运行 `pith-Setup-<版本>.exe`。Windows 安装包暂未配置代码签名，可能出现 SmartScreen 提示。
+
+开发调试也可以从源码运行：
 
 ```bash
 git clone https://github.com/l-zhi/pith-wiki.git
 cd pith-wiki/desktop
+npm --prefix .. install
 npm install
 npm run dev      # electron-vite dev（HMR）
 ```
