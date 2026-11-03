@@ -42,7 +42,7 @@ export type ChatItem =
       id: string;
       kind: 'approval';
       approvalId: string;
-      approvalKind: 'write' | 'exec';
+      approvalKind: 'exec';
       path: string;
       preview: string;
       decided: 'yes' | 'no' | 'always' | null;

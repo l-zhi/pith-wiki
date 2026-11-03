@@ -36,8 +36,6 @@ function buildCtx() {
     library: { listEntries: () => [] } as never,
     assembler: { query: () => ({ context: '', references: [] }) } as never,
     hydrator: {} as never,
-    approvedWritePaths: new Set<string>(),
-    requestApproval: async () => 'no' as const,
     converterRegistry: {} as never,
     converterCache: {} as never,
   };

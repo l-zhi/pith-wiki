@@ -77,8 +77,6 @@ function buildAgent(assembler: ContextAssembler) {
     library: lib,
     assembler,
     hydrator: {} as never,
-    approvedWritePaths: new Set<string>(),
-    requestApproval: async () => 'no' as const,
     converterRegistry: {} as never,
     converterCache: {} as never,
   };

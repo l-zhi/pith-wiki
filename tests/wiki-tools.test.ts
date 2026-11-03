@@ -47,8 +47,6 @@ beforeEach(() => {
     assembler: new ContextAssembler(library),
     // 这两块不被本测试涉及；用最小占位让 ToolContext 类型契约满足
     hydrator: {} as never,
-    approvedWritePaths: new Set(),
-    requestApproval: async () => 'no',
   };
 });
 

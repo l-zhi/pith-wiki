@@ -553,7 +553,6 @@ async function initServices(): Promise<Services> {
       const ctx = buildContext(
         config,
         client,
-        (p, preview) => approvals.request('write', p, preview),
         library,
         {
           converterRegistry: converters.registry,
@@ -614,7 +613,6 @@ async function initServices(): Promise<Services> {
       const rctx = buildContext(
         config,
         reviewClient,
-        () => Promise.resolve('no' as const), // reviewer 不写文件
         library,
         {
           converterRegistry: converters.registry,
@@ -1592,7 +1590,7 @@ async function runSkillProbe(name: string): Promise<SkillTestResultDTO> {
   const probe = skill.test;
   if (!probe) return { ok: false, detail: '该 skill 未声明自测探针' };
 
-  const ctx = buildContext(s.config, s.client, async () => 'no', s.library, {
+  const ctx = buildContext(s.config, s.client, s.library, {
     converterRegistry: s.converters.registry,
     converterCache: s.converters.cache,
     skillRegistry: s.skillRegistry,

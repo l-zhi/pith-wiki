@@ -167,7 +167,7 @@ describe('SessionManager', () => {
     const agent = agents.get(a.id)!;
     let answer: string | null = null;
     agent.script = async () => {
-      answer = await agent.approvals!.request('write', 'wiki-data/tech/x.md', '+ new entry');
+      answer = await agent.approvals!.request('exec', 'weread', 'weread sync');
       return `approval=${answer}`;
     };
     const p = mgr.send(a.id, '写入');
@@ -178,7 +178,7 @@ describe('SessionManager', () => {
       { kind: 'session.approvalRequest' }
     >;
     expect(req.sessionId).toBe(a.id);
-    expect(req.approvalKind).toBe('write');
+    expect(req.approvalKind).toBe('exec');
     mgr.answerApproval(req.approvalId, 'always');
     await p;
     expect(answer).toBe('always');
@@ -225,7 +225,7 @@ describe('SessionManager', () => {
     const a = mgr.create();
     const agent = agents.get(a.id)!;
     agent.script = async () => {
-      void agent.approvals!.request('write', 'x', 'y');
+      void agent.approvals!.request('exec', 'x', 'y');
       await new Promise(() => {}); // 永挂，保持 busy
       return '';
     };
