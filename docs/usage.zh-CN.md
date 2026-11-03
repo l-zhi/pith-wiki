@@ -19,8 +19,8 @@
 
 ## 初始化 init
 
-一次性建好 `~/.pith-wiki/`：建目录、写最小化 `.env`、可选写 `config.json`、`chmod 600`。
-**装完跑一遍**。
+一次性建好 `~/.pith-wiki/`：建目录、写 `config.json`（mode 600）。API key 写成所选
+provider entry 的 `apiKey`。**装完跑一遍**。
 
 交互式（默认；stdin 是 TTY 时）：
 
@@ -43,20 +43,18 @@ flag 列表：
 
 | Flag | 作用 |
 |---|---|
-| `--force` | 覆盖已存在的 `.env` / `config.json`（各自备份到 `*.pre-init.bak`） |
+| `--force` | 覆盖已存在的 `config.json`（备份到 `config.json.pre-init.bak`） |
 | `--provider <id>` | 跳过 provider 选单。可选：`deepseek`、`openai`、`openrouter`、`qwen`、`kimi` |
-| `--api-key <key>` | 把 API key 直接写进 `.env` 的 `<PROVIDER>_API_KEY=` 那行 |
+| `--api-key <key>` | 把 API key 写进 provider entry 的 `apiKey` |
 | `--watch-dir <path>` | 设自动监听目录（同时加进 `additionalReadPaths`）。`~/` 自动展开 |
 | `--no-initial-scan` | 配 `--watch-dir` 时：首次启动 REPL 不扫描存量文件 |
 | `--no-prompt` | 即使在 TTY 上也跳过交互问答，用默认 + 你传的 flag |
 
 行为：
 
-- **幂等**：`.env` / `config.json` 已存在时默认拒绝（exit 1）。
-- **`--force`**：先备份到 `*.pre-init.bak` 再覆盖。
-- **最小化 `.env`**：只一行 `<PROVIDER>_API_KEY=<value>` + 一行注释。
-- **按需写 `config.json`**：只在选了非默认 provider 或设了 watch 目录时写。默认场景
-  （`deepseek`、无 watch）→ 完全不写 `config.json`，全靠代码默认。
+- **幂等**：`config.json` 已存在时默认拒绝（exit 1）。
+- **`--force`**：先把 `config.json` 备份到 `config.json.pre-init.bak` 再覆盖。
+- **`config.json`**：总会写（所选 provider + `activeProvider`）。给了 API key 就写成该 entry 的 `apiKey`。watch 目录只在设置了才写入。
 
 5 家支持的 provider 详见下方 [多 provider 切换](#多-provider-切换)。
 

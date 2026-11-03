@@ -7,22 +7,12 @@ Zero to your first hydrated entry. For the full picture see
 
 ## 1. Install
 
-Not on npm yet (planned for `v0.3.0`). For now, install from a local build:
-
 ```bash
-git clone https://github.com/l-zhi/pith-wiki.git
-cd pith-wiki
-npm install && npm run build
-npm pack                          # produces pith-wiki-x.y.z.tgz
-npm install -g ./pith-wiki-*.tgz
+npm install -g pith-wiki
+pith-wiki        # launch the REPL
 ```
 
 Requires **Node ≥ 20**.
-
-> Want to hack on source? See the
-> [README "Developers" section](../README.md#developers-build-from-source) for
-> the `npm run dev` flow. The rest of this page assumes you have a working
-> `pith-wiki` command on your PATH.
 
 ## 2. Get an API key
 
@@ -30,8 +20,8 @@ pith-wiki speaks OpenAI-compatible HTTP — any service on that protocol works.
 Cheapest option is [DeepSeek](https://platform.deepseek.com/api_keys) (about
 $0.27 / 1M input tokens for `deepseek-chat`). Sign up, grab a key.
 
-Then run interactive `init` — it picks the provider, writes a minimal `.env`,
-and (if you set a watch dir) a minimal `config.json`:
+Then run interactive `init` — it picks the provider and writes `config.json`
+(API key on the provider entry, mode 600):
 
 ```bash
 pith-wiki init
@@ -114,7 +104,7 @@ In the REPL, just talk naturally. For example: "based on the notes in my
 
 | Symptom | Usually means |
 |---|---|
-| `Error: API key required` | `~/.pith-wiki/.env` is missing or the key var name is wrong (DeepSeek uses `DEEPSEEK_API_KEY`). Rerun `pith-wiki init`. |
+| `Error: API key required` | `~/.pith-wiki/config.json` has no API key. Rerun `pith-wiki init`. |
 | `command not found: pith-wiki` | Not globally installed. Either `npm install -g ./pith-wiki-*.tgz`, or use `node dist/bin/pith-wiki.js` from the cloned repo, or `npm link`. |
 | `tsc` complaints / weird ESM errors | Node version too old; need ≥ 20. Run `node --version`. |
 | `Failed to parse ~/.pith-wiki/config.json` | Invalid JSON in your config. Delete the file to fall back to defaults, then rerun `init`. |

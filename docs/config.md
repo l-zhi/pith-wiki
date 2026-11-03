@@ -64,7 +64,7 @@ configure additional read paths:
 # CLI flag (repeatable)
 pith-wiki --read-path ~/notes --read-path ~/research/papers
 
-# Environment variable / .env — JSON array recommended, `~` auto-expands
+# Environment variable — JSON array recommended, `~` auto-expands
 PITH_WIKI_READ_PATHS=["~/notes", "~/research/papers"]
 
 # Env var also supports a separator-joined string (POSIX `:` / Windows `;`)
@@ -77,7 +77,7 @@ PITH_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers
 **Two effects**:
 
 1. **Read expansion**: `read_file` / `list_dir` tools can reach these
-   directories. `write_file` is still locked to `workspaceRoot ∪ wikiRoot`.
+   directories. `write_file` is confined to `<wikiRoot>/output`.
 2. **Ingest gate**: `pith-wiki ingest --file <p>` and the `--batch` / `--dir`
    modes require source files to fall within
    `workspaceRoot ∪ wikiRoot ∪ additionalReadPaths`. Ingesting from a path
@@ -97,11 +97,16 @@ workspace**:
 
 ```
 ~/.pith-wiki/
-├── .env                                 # default .env location (mode 600)
 ├── config.json                          # optional user config
+├── security.json                        # outbound filter rules
 ├── history                              # REPL up-arrow command history (last N entries)
 ├── SOUL.md                              # optional; persona overlay (see SOUL.md.example)
+├── skills/                              # installed skills
+├── sessions/                            # desktop session JSONL
+├── schedule/
+│   └── state.json                       # scheduled tasks
 ├── wiki-data/                           # default wikiRoot — your whole wiki
+│   ├── index.json                       # LibraryService persistent entry index (cold-start speedup)
 │   ├── tech/                            # collection (indexed by LibraryService)
 │   │   └── agent-loop.md                # entry: YAML frontmatter + Markdown body
 │   ├── reading/                         # collection
@@ -109,12 +114,11 @@ workspace**:
 │       ├── agent-retry-policy.md        # /digest output (indexed)
 │       └── transcripts/                 # raw transcript subdir (not indexed)
 │           └── 2026-04-30T08-15-32-100Z.md   # one per REPL session
-├── queue/
-│   ├── state.json                       # persistent queue state (jobs + ring-buffer events)
-│   ├── state.json.lock                  # exists while a worker holds the lock; contains pid/ts
-│   └── logs/
-│       └── <jobId>.log                  # per-job append-only log
-└── index.json                           # LibraryService persistent entry index (cold-start speedup)
+└── queue/
+    ├── state.json                       # persistent queue state (jobs + ring-buffer events)
+    ├── state.json.lock                  # exists while a worker holds the lock; contains pid/ts
+    └── logs/
+        └── <jobId>.log                  # per-job append-only log
 ```
 
 > **Want the wiki bundled with your workspace?** Set

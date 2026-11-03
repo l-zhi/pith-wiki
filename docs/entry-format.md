@@ -52,9 +52,9 @@ annotations.
 
 - **Format = standard Markdown + YAML**: edit in Obsidian / VS Code, version
   with Git, no pith-wiki-specific tooling required.
-- **Back-links are not persisted**: `LibraryService` scans once at startup,
-  caches a `Map<id, {forward, backward}>` in memory, invalidates wholesale on
-  any write. Avoids double-write consistency problems.
+- **Back-links are not persisted**: `LibraryService` caches a
+  `Map<id, {forward, backward}>` in memory, invalidated wholesale on any write.
+  Avoids double-write consistency problems.
 - **`updated` is not locked**: if you hand-edit, this field doesn't auto-bump.
   To force re-indexing, drop the file into the watcher and let it re-enqueue.
 

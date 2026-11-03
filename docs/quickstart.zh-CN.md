@@ -17,7 +17,7 @@ npm install -g pith-wiki
 pith-wiki 走 OpenAI-compatible 协议，任何同协议的服务都能用。最便宜的选择是
 [DeepSeek](https://platform.deepseek.com/api_keys)（`deepseek-chat` 输入约
 $0.27 / 1M tokens）。注册拿 key，然后跑交互式 `init`——它会让你选 provider、
-写最小化 `.env`、可选写 `config.json`：
+写 `config.json`（API key 落在 provider entry 上，mode 600）：
 
 ```bash
 pith-wiki init
@@ -96,7 +96,7 @@ REPL 里直接用自然语言聊。例如："基于我 reading collection 里的
 
 | 现象 | 多半是 |
 |---|---|
-| `Error: API key required` | `~/.pith-wiki/.env` 没建好，或 key 名字写错（DeepSeek 用 `DEEPSEEK_API_KEY`）。重跑 `pith-wiki init`。 |
+| `Error: API key required` | `~/.pith-wiki/config.json` 里没有 API key。重跑 `pith-wiki init`。 |
 | `command not found: pith-wiki` | 没全局装。要么 `npm install -g ./pith-wiki-*.tgz`，要么从源码用 `node dist/bin/pith-wiki.js`，要么 `npm link`。 |
 | `tsc` 报一堆类型错 / 诡异 ESM 报错 | Node 版本太低，需要 ≥ 20。`node --version` 看一下。 |
 | `Failed to parse ~/.pith-wiki/config.json` | `config.json` 写错了。删掉这个文件让默认值兜底，再 `pith-wiki init` 重写。 |

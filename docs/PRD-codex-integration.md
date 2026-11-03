@@ -1,7 +1,5 @@
 # 技术方案：接入 Codex 作为第二个 CLI 委托 provider
 
-状态：草案（待拍板）· 分支：`feat/codex-integration` · 日期：2026-07-24
-
 ## 0. 目标
 
 在桌面端聊天里，除了现有的 `claude-code`（委托本机 `claude` CLI）之外，再支持

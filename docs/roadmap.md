@@ -67,7 +67,7 @@ mixed Chinese/English retrieval issues.
 ### Embedding hybrid retrieval (deliberate restraint)
 
 Vector retrieval + keyword + link traversal, merged three ways. But the project
-philosophy (PRD §1.2) is explicitly "after hydration to Markdown, keywords are
+philosophy is explicitly "after hydration to Markdown, keywords are
 enough" — adding embeddings contradicts that.
 
 **Trigger**: someone shows on a real library (not a toy demo) that "no keyword
@@ -104,8 +104,6 @@ PRs in these directions won't be accepted, to avoid wasting contributors' time:
   would deform the architecture.
 - ❌ **Generic RAG framework** — the project philosophy runs opposite to
   "general RAG". For general RAG use LangChain / LlamaIndex.
-- ❌ **GUI client** — Electron / Tauri clients. Cross-platform maintenance
-  cost too high for the benefit.
 - ❌ **Multi-language SDKs** — Python / Go / Rust clients. The CLI + the
   persistent file format already work as a cross-language protocol; fork
   for language bindings.

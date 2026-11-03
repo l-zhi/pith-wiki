@@ -33,7 +33,7 @@ npm i -g ./pith-wiki-*.tgz
 
 # 3. 走完真实新用户路径
 pith-wiki --version                            # 等于 package.json
-pith-wiki init --api-key $DEEPSEEK_API_KEY     # 生成 .env，chmod 600
+pith-wiki init --api-key $DEEPSEEK_API_KEY     # 写入 config.json，chmod 600
 echo "# release smoke test" | pith-wiki ingest --collection test
 pith-wiki list                                  # 应能看到刚 ingest 的条目
 pith-wiki query "smoke"                         # 关键词检索

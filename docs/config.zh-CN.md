@@ -62,7 +62,7 @@
 # CLI flag（可重复）
 pith-wiki --read-path ~/notes --read-path ~/research/papers
 
-# 环境变量 / .env —— 推荐 JSON 数组写法，~ 自动展开
+# 环境变量 —— 推荐 JSON 数组写法，~ 自动展开
 PITH_WIKI_READ_PATHS=["~/notes", "~/research/papers"]
 
 # 环境变量也支持分隔符串（POSIX `:` / Windows `;`）
@@ -74,8 +74,8 @@ PITH_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers
 
 **两层效果**：
 
-1. **读扩展**：`read_file` / `list_dir` 工具能读到这些目录；`write_file` 仍只锁在
-   `workspaceRoot ∪ wikiRoot`。
+1. **读扩展**：`read_file` / `list_dir` 工具能读到这些目录；`write_file` 只写
+   `<wikiRoot>/output`。
 2. **入库门槛**：`pith-wiki ingest --file <p>` 与 `--batch` / `--dir` 模式都强制要求源文件落在
    `workspaceRoot ∪ wikiRoot ∪ additionalReadPaths` 之内。从沙箱外的路径 ingest 会立即报错并拒绝。
    这避免了"`pith-wiki ingest --file /etc/passwd`"这种意外把任意系统文件 wiki 化的可能。
@@ -91,11 +91,16 @@ PITH_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers
 
 ```
 ~/.pith-wiki/
-├── .env                                 # 默认 .env 加载位置（mode 600）
 ├── config.json                          # 可选用户配置
+├── security.json                        # 出站过滤规则
 ├── history                              # REPL 上下键的命令历史（最近 N 条）
 ├── SOUL.md                              # 可选；persona overlay（见 SOUL.md.example）
+├── skills/                              # 已安装的 skills
+├── sessions/                            # 桌面端会话 JSONL
+├── schedule/
+│   └── state.json                       # 定时任务
 ├── wiki-data/                           # 默认 wikiRoot —— 你的整套 wiki
+│   ├── index.json                       # LibraryService 持久化 entry 索引（冷启动加速）
 │   ├── tech/                            # collection（被 LibraryService 索引）
 │   │   └── agent-loop.md                # entry：YAML frontmatter + Markdown body
 │   ├── reading/                         # collection
@@ -103,12 +108,11 @@ PITH_WIKI_READ_PATHS=/Users/me/notes:/Users/me/research/papers
 │       ├── agent-retry-policy.md        # /digest 产出的 wiki entry（被索引）
 │       └── transcripts/                 # raw transcripts 子目录（不被索引）
 │           └── 2026-04-30T08-15-32-100Z.md   # 每次 REPL session 一份
-├── queue/
-│   ├── state.json                       # 持久化队列状态（jobs + 事件环形缓冲）
-│   ├── state.json.lock                  # worker 持锁时存在；含 pid/ts
-│   └── logs/
-│       └── <jobId>.log                  # 每个 job 的独立 append-only 日志
-└── index.json                           # LibraryService 持久化 entry 索引（冷启动加速）
+└── queue/
+    ├── state.json                       # 持久化队列状态（jobs + 事件环形缓冲）
+    ├── state.json.lock                  # worker 持锁时存在；含 pid/ts
+    └── logs/
+        └── <jobId>.log                  # 每个 job 的独立 append-only 日志
 ```
 
 > **想把 wiki 跟 workspace 绑在一起？** 在 `~/.pith-wiki/config.json` 里写

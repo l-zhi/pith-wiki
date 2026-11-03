@@ -1,7 +1,6 @@
 # 技术方案：接入 pi 作为第三个 CLI 委托 provider（迁移路线的第一步 C）
 
 状态：已实现（本机端到端实测通过）· 分支：`research/pi-harness-migration` · 日期：2026-07-27
-上游依据：`docs/research-pi-harness-migration.md` §6 推荐路径 **C → B →（A 观望）**
 
 ## 0. 目标
 
@@ -9,8 +8,7 @@
 pi 的 OAuth 订阅额度（Claude Pro/Max、GitHub Copilot、xAI、OpenRouter…）并通过 pith 的
 知识库作答。CLI（REPL/子命令）继续不支持委托型 provider。
 
-非目标：不动 openai provider 路径；不做 pi 的批量水合（水合仍走 openai provider）；不引入
-`pi-ai` / `pi-agent-core` 依赖（那是路线里的 B / A 步骤）。
+非目标：不动 openai provider 路径；不做 pi 的批量水合（水合仍走 openai provider）。
 
 ## 1. pi 与 claude-code / codex 的关键差异
 

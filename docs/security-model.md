@@ -5,9 +5,8 @@
 
 pith-wiki gives an LLM real filesystem access through the `read_file` /
 `write_file` / `list_dir` tools. The promise to users is "the agent can't
-escape the workspace + wiki sandbox, and can't write anywhere without
-explicit approval." Every refactor under `src/tools/` has to preserve those
-two invariants, even when the change looks unrelated to safety.
+escape the workspace + wiki sandbox." Every refactor under `src/tools/` has
+to preserve that invariant, even when the change looks unrelated to safety.
 
 This file documents the invariants. If your PR breaks one, please flag it
 in the PR body so the review knows what to verify.
@@ -20,7 +19,7 @@ Two operations, two root sets:
   ∪ additionalReadPaths`. The third one lets users grant the agent read
   access to reference folders (their `~/notes/`, paper archives, etc.) without
   also letting it write there.
-- **Write** (`write_file`) — allowed only under `workspaceRoot ∪ wikiRoot`.
+- **Write** (`write_file`) — confined to `<wikiRoot>/output`.
   **`additionalReadPaths` is never writable**, no matter what config a user
   sets. The "extra read paths" are explicitly user-visible reference data;
   letting the LLM mutate them would violate the user's mental model.
@@ -51,25 +50,6 @@ exist, realpaths that, then re-attaches the missing tail. The escape check
 still applies to the resolved root — you can't bypass the sandbox by writing
 into a sibling that doesn't exist yet.
 
-## Approval Flow (REPL only)
-
-When the REPL agent calls `write_file` with a path it hasn't seen this
-session, the UI shows a `[y/N/a]` prompt:
-
-- `y` — allow this write only
-- `a` — allow this **path** for the rest of the session (added to
-  `approvedWritePaths`)
-- `n` (default) — refuse; tool returns an error to the agent
-
-**The approval list is path-keyed, not directory-keyed.** `a` for
-`./foo.md` doesn't allow `./bar.md`. This is deliberate: a prompt-injected
-"approval cascade" against one file shouldn't extend to others.
-
-Subcommands (`ingest`, `query`, etc.) **bypass the approval prompt** —
-they're scripted entry points where the user has already decided what to
-write by typing the command. Programmatic embedding contexts can pass a
-custom `requestApproval` callback through `ToolContext`.
-
 ## Payload Truncation
 
 `truncatePayload(content, max)` caps `read_file` output at
@@ -82,19 +62,13 @@ with the residue.
 
 ## Threat Model — In Scope
 
-These are real threats the sandbox + approval flow are designed to stop:
+These are real threats the sandbox is designed to stop:
 
 1. **Sandbox escape** via path-relative tricks (`../`), symlinks, or
    case-only differences on case-insensitive filesystems.
-2. **Prompt-injection-driven file writes** — adversarial source content
-   that tries to coerce the agent into `write_file` calls; the user-facing
-   approval prompt is the last line of defense.
-3. **Cross-collection write confusion** — `write_file` to a path that
+2. **Cross-collection write confusion** — `write_file` to a path that
    resolves into the wiki tree but in a different collection than the user
    thinks.
-4. **API key leakage into transcripts / history / queue logs**. The
-   redaction in `src/cli/transcript.ts` is best-effort, not exhaustive.
-   Don't paste keys verbatim into the REPL chat box.
 
 ## Threat Model — Out of Scope
 
@@ -121,9 +95,6 @@ If your change touches any of these files, double-check the invariants:
   `resolveSafePath` before any fs operation.
 - [src/wiki/library.ts](../src/wiki/library.ts) — `LibraryService.put`
   enforces atomic `.tmp + rename` writes and stays within wikiRoot.
-- [src/cli/ToolApproval.tsx](../src/cli/ToolApproval.tsx) — the
-  `[y/N/a]` prompt UI. Don't add an "approve all writes for this session"
-  shortcut; that defeats the path-keyed safety.
 
 Tests to keep green:
 
