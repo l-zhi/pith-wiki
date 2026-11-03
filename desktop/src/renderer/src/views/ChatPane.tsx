@@ -19,6 +19,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useTranslation } from 'react-i18next';
+import { LocalLink, openTarget } from '../components/LocalLink';
 import { Button, IconButton, Spinner, TokenMeter, ToolApprovalCard } from '../ds';
 import { parseScopeFromText, useStore, type ChatItem } from '../store';
 import {
@@ -309,42 +310,12 @@ function linkifyLocalPaths(md: string): string {
     .join('');
 }
 
-/** 统一交给系统打开：http(s) → 浏览器，本地路径 / file:// → 默认应用。会把 file:// 转成文件系统路径并解码。 */
-function openTarget(raw: string) {
-  let target = raw.trim();
-  if (target.startsWith('file://')) target = target.replace(/^file:\/\//, '');
-  if (!/^https?:\/\//i.test(target)) {
-    try {
-      target = decodeURIComponent(target);
-    } catch {
-      /* 非法转义序列则用原值 */
-    }
-  }
-  void window.pith.openSource(target);
-}
-
 /** 单段文本是否"像"一个可打开的本地目标：file:// URL，或以扩展名结尾的绝对路径。 */
 function looksLikeLocalPath(s: string): boolean {
   const t = s.trim();
   if (t.includes('\n')) return false;
   if (/^file:\/\//i.test(t)) return true;
   return t.startsWith('/') && /\.[A-Za-z0-9]{1,8}$/.test(t);
-}
-
-/** 聊天正文里的链接统一交给系统打开，绝不让 webview 跳走。 */
-function LocalLink({ href, children }: { href?: string; children?: React.ReactNode }) {
-  return (
-    <a
-      href={href ?? '#'}
-      onClick={(e) => {
-        e.preventDefault();
-        if (href) openTarget(href);
-      }}
-      style={{ cursor: 'pointer' }}
-    >
-      {children}
-    </a>
-  );
 }
 
 /**

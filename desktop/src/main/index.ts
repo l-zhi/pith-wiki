@@ -46,6 +46,24 @@ function resolveIconPath(): string | null {
 
 let iconPath: string | null = null;
 
+/** 以 URI scheme 开头（`file:`、`javascript:`、`mailto:`…）。Windows 盘符 `C:\` / `C:/` 不是 scheme。 */
+const HAS_URI_SCHEME = /^(?![a-z]:[\\/])[a-z][a-z0-9+.-]*:/i;
+
+/** 只允许留在应用自己的页面：dev 为 renderer dev server 同源，打包后为 renderer/index.html。 */
+function isAppNavigation(url: string): boolean {
+  try {
+    const next = new URL(url);
+    const dev = process.env.ELECTRON_RENDERER_URL;
+    if (dev) return next.origin === new URL(dev).origin;
+    return (
+      next.protocol === 'file:' &&
+      path.resolve(fileURLToPath(url)) === path.resolve(__dirname, '../renderer/index.html')
+    );
+  } catch {
+    return false;
+  }
+}
+
 function spawnEngine(): void {
   // dev/prod 数据隔离：`electron-vite dev`（仅它会设 ELECTRON_RENDERER_URL）走
   // ~/.pith-wiki-dev，与 CLI 的 tsx dev 入口同语义（见根 src/paths.ts）。Engine 是
@@ -68,12 +86,18 @@ function spawnEngine(): void {
   engine.on('exit', (code) => {
     // 退出流程里 Engine 被 kill 属正常收尾——别通知、更别重启（否则退出时又拉起一个 Engine）。
     if (isQuitting) return;
-    // Engine 崩溃 = 所有会话中断（恢复靠 JSONL）。通知 UI 并自动拉起一次。
+    // Engine 崩溃 = 所有会话中断（恢复靠 JSONL）。打包版正常退出（code 0）不再拉起；
+    // 文案只在真的会重启时才说 restarting。
+    const restarting = !app.isPackaged || code !== 0;
     sendToRenderer({
       t: 'evt',
-      evt: { kind: 'engine.notice', level: 'error', text: `engine exited (code=${code}), restarting…` },
+      evt: {
+        kind: 'engine.notice',
+        level: 'error',
+        text: restarting ? `engine exited (code=${code}), restarting…` : `engine exited (code=${code})`,
+      },
     });
-    if (!app.isPackaged || code !== 0) spawnEngine();
+    if (restarting) spawnEngine();
   });
 }
 
@@ -96,8 +120,19 @@ function createWindow(): void {
     },
   });
 
+  // 窗口内跳转只留在应用页面（markdown / location 不能把壳带走）。
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!isAppNavigation(url)) event.preventDefault();
+  });
+
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url); // 外链交给系统浏览器
+    // 新窗口一律拒绝；只有 http(s) 交给系统浏览器。
+    try {
+      const protocol = new URL(url).protocol;
+      if (protocol === 'http:' || protocol === 'https:') void shell.openExternal(url);
+    } catch {
+      /* 非法 URL：拒绝，不交给系统 */
+    }
     return { action: 'deny' };
   });
 
@@ -133,12 +168,14 @@ app.whenReady().then(() => {
       await shell.openExternal(target);
       return { ok: true };
     }
+    if (HAS_URI_SCHEME.test(target)) return { ok: false, error: 'unsupported scheme' };
     const err = await shell.openPath(target);
     return err ? { ok: false, error: err } : { ok: true };
   });
   // 「在 Finder 显示」：把文件在系统文件管理器里定位高亮（区别于 openSource 的直接打开）。
   ipcMain.handle('os.revealSource', (_event, target: unknown) => {
     if (typeof target !== 'string' || !target.trim()) return { ok: false, error: 'empty target' };
+    if (HAS_URI_SCHEME.test(target)) return { ok: false, error: 'unsupported scheme' };
     shell.showItemInFolder(target);
     return { ok: true };
   });
