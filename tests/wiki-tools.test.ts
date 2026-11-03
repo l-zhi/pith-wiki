@@ -1,10 +1,4 @@
-/**
- * 新增 wiki 工具的单测：wiki_list、wiki_read_source。
- * 同时验证 wiki_query 结果里 references 字段（rich source info）的形状。
- *
- * 目标：把"模型可以浏览索引、可以读原文"这条新增的检索链路焊死，
- * 防止重构 assembler / library 时悄悄把工具回包破坏。
- */
+/** wiki_list、wiki_grep、wiki_read_source，以及 wiki_query 的 references 形状。 */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

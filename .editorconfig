@@ -14,7 +14,3 @@ indent_size = 2
 # Markdown：保留尾随空格（双空格是硬换行的常见语义）
 [*.md]
 trim_trailing_whitespace = false
-
-# Makefile（虽然项目里没用，但兜底）：必须 tab
-[Makefile]
-indent_style = tab
