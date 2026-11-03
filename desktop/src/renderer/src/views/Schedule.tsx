@@ -96,7 +96,7 @@ export function Schedule() {
         >
           {t('schedule.title')}
         </span>
-        <div style={{ marginLeft: 'auto' }} className="titlebar-no-drag">
+        <div style={{ marginLeft: 'auto' }}>
           <Button
             variant="primary"
             size="sm"

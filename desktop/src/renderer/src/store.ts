@@ -86,7 +86,6 @@ const emptyChat = (): SessionChat => ({
 
 interface PithStore {
   boot: BootstrapDTO | null;
-  engineReady: boolean;
   nav: Nav;
   theme: Theme;
   lang: LangPref;
@@ -188,7 +187,6 @@ export const useStore = create<PithStore>((set, get) => {
 
   return {
     boot: null,
-    engineReady: false,
     nav: 'chat',
     theme: (localStorage.getItem('pith-theme') as Theme) || 'auto',
     lang: storedLangPref(),
@@ -243,7 +241,7 @@ export const useStore = create<PithStore>((set, get) => {
       bootstrapInFlight = (async () => {
         try {
           const boot = await bridge.request<BootstrapDTO>({ kind: 'app.bootstrap' });
-          set({ boot, engineReady: true });
+          set({ boot });
           await Promise.all([
             get().refreshCollections(),
             get().refreshSessions(),

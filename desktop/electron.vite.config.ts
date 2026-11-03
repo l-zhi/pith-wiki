@@ -10,7 +10,7 @@ import { resolve } from 'node:path';
  *             desktop/node_modules。
  *   preload — contextBridge。sandbox=false（需要 Node 的 EventEmitter），但仍走
  *             contextIsolation，renderer 只见 window.pith。
- *   renderer— React 三栏应用。设计 token CSS 从 design system 复制（src/renderer/src/theme.css）。
+ *   renderer— React 三栏应用。设计 token CSS 从 design system 复制（src/renderer/src/theme/）。
  */
 export default defineConfig({
   main: {

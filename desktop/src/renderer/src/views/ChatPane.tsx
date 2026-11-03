@@ -41,7 +41,6 @@ export function ChatPane() {
   const activeSession = useStore((s) => s.activeSession);
   const chat = useStore((s) => (activeSession ? s.chat[activeSession] : undefined));
   const newSession = useStore((s) => s.newSession);
-  const boot = useStore((s) => s.boot);
   const reviewOn = useStore(
     (s) => s.sessions.find((x) => x.id === s.activeSession)?.reviewMode ?? false,
   );
@@ -149,7 +148,6 @@ export function ChatPane() {
       </div>
 
       <Composer />
-      <span style={{ display: 'none' }}>{boot?.model}</span>
     </div>
   );
 }
@@ -531,11 +529,6 @@ function ErrorItem({ text }: { text: string }) {
 }
 
 /**
- * assistant 消息底部操作行：复制原始 markdown / 总结入库。
- * 「总结」= 把当前对话快照水合成新 Entry 落进 output 集合（/digest 同链路），
- * 进度与结果以 note 形式出现在消息流末尾。
- */
-/**
  * 助手回答末尾的可收起区：列出本回合的来源条目，点击打开 Reader。
  * kind='cited'：真正取用的引用；kind='browsed'：仅 wiki_list 翻菜单浏览过的候选（默认折叠、更弱）。
  */
@@ -606,6 +599,11 @@ function ReferencesBlock({ refs, kind }: { refs: EntryRefDTO[]; kind: 'cited' | 
   );
 }
 
+/**
+ * assistant 消息底部操作行：复制原始 markdown / 总结入库。
+ * 「总结」= 把当前对话快照水合成新 Entry 落进 output 集合（/digest 同链路），
+ * 进度与结果以 note 形式出现在消息流末尾。
+ */
 function MessageActions({ text }: { text: string }) {
   const { t } = useTranslation();
   const digestSession = useStore((s) => s.digestSession);

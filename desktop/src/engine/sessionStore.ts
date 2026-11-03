@@ -13,7 +13,7 @@ import { ScheduledOutputContextSchema, type ScheduledOutputContext } from '@core
  *   - 消息是 agent 历史的逐字持久化（含 tool_calls / tool 结果），存**原始值**——
  *     安全过滤器只作用于出站链路，恢复重放时由 Sanitizer 重新确定性掩码（见 PRD）。
  *   - append 用 appendFileSync：进程崩溃最多丢最后一行，已落盘的行不会损坏。
- *   - load 对坏行容错（跳过并计数），坏 meta 整个会话视为不可用。
+ *   - load 对坏行容错（跳过），坏 meta 整个会话视为不可用。
  *   - meta 更新（标题）通过重写首行实现——频率极低（标题只定一次）。
  */
 
@@ -32,8 +32,6 @@ export interface StoredSession {
   meta: StoredMeta;
   /** agent 的 ChatCompletionMessageParam[]，此层视为不透明 JSON。 */
   messages: unknown[];
-  /** load 时跳过的损坏行数（0 = 完好）。 */
-  corruptLines: number;
 }
 
 export interface SessionListItem extends StoredMeta {
@@ -99,13 +97,11 @@ export class SessionStore {
     if (lines.length === 0) return null;
     let meta: StoredMeta | null = null;
     const messages: unknown[] = [];
-    let corruptLines = 0;
     for (const [i, line] of lines.entries()) {
       let parsed: unknown;
       try {
         parsed = JSON.parse(line);
       } catch {
-        corruptLines += 1;
         continue;
       }
       const obj = parsed as Record<string, unknown>;
@@ -133,10 +129,9 @@ export class SessionStore {
         continue;
       }
       if (obj.type === 'msg' && 'm' in obj) messages.push(obj.m);
-      else corruptLines += 1;
     }
     if (!meta) return null;
-    return { meta, messages, corruptLines };
+    return { meta, messages };
   }
 
   list(): SessionListItem[] {
