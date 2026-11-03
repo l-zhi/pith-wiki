@@ -74,9 +74,9 @@ or wiki_queue_add (bulk / async).`;
 export interface AgentOptions {
   /** 完整替换默认 system prompt。默认 `defaultSystemPrompt`。 */
   systemPrompt?: string;
-  /** tool loop 最大轮数。默认 12。 */
+  /** tool loop 最大轮数。默认 25。 */
   maxSteps?: number;
-  /** 宿主追加的工具——会被并入内置 10 个工具一起喂给 OpenAI 和 dispatch 表。 */
+  /** 宿主追加的工具——并入内置工具一起喂给 OpenAI 和 dispatch 表。 */
   extraTools?: AnyToolDef[];
 }
 
@@ -163,7 +163,7 @@ export class Agent {
     options: AgentOptions = {},
   ) {
     this.systemPrompt = options.systemPrompt ?? defaultSystemPrompt;
-    this.maxSteps = options.maxSteps ?? 12;
+    this.maxSteps = options.maxSteps ?? 25;
     this.messages = [{ role: 'system', content: this.systemPrompt }];
 
     const tools: AnyToolDef[] = [...ALL_TOOLS, ...(options.extraTools ?? [])];
@@ -560,7 +560,6 @@ export type AgentErrorKind =
   | 'rate_limit'
   | 'network'
   | 'model_error'
-  | 'tool_error'
   | 'unknown';
 
 export class AgentError extends Error {

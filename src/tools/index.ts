@@ -95,7 +95,7 @@ export interface BuildContextExtras {
   converterRegistry?: ConverterRegistry;
   converterCache?: ConverterCache;
   /**
-   * 已建好的 skill 注册表。REPL 在 mount 时 await buildSkillRegistry 后传入；
+   * 已建好的 skill 注册表。REPL 在 mount 时 buildSkillRegistry 后传入；
    * 不传则 buildContext 用一个空 registry 兜底。
    */
   skillRegistry?: SkillRegistry;
@@ -229,5 +229,3 @@ export function toolsForOpenAI(tools: AnyToolDef[] = ALL_TOOLS) {
     },
   }));
 }
-
-export const TOOL_REGISTRY: Map<string, AnyToolDef> = new Map(ALL_TOOLS.map((t) => [t.name, t]));

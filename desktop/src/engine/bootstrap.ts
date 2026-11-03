@@ -297,7 +297,7 @@ async function initServices(): Promise<Services> {
     cacheConverted: config.cacheConverted,
   });
   const soul = loadSoul({ soulFile: config.soulFile, workspaceRoot: config.workspaceRoot });
-  const skillRegistry = await buildSkillRegistry({
+  const skillRegistry = buildSkillRegistry({
     skillDirs: config.skillDirs,
     onWarn: (m) => emitNotice('warning', `skill: ${m}`),
   });

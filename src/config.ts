@@ -38,7 +38,7 @@ function applySecretsToEnv(secrets: Record<string, string> | undefined): void {
  *
  * 字段：
  *   - apiKey:    字面 key（不推荐写在 config.json 里，会被签入 git）
- *   - apiKeyEnv: env 变量名，loadConfig 时取 process.env[apiKeyEnv]
+ *   - apiKeyEnv: env 变量名，loadConfigFromEnv 时取 process.env[apiKeyEnv]
  *   - baseURL / model：照常
  *
  * 切换 provider 时机：
@@ -184,7 +184,7 @@ const ConfigSchema = z.object({
   /** Multi-provider map（可选）。空 → 走顶层 apiKey/baseURL/model（v0 行为）。 */
   providers: z.record(z.string(), ProviderSchema).default({}),
   /**
-   * 密钥 map（KEY → 明文值）：唯一持久化源，取代 `.env`。load 时灌进 process.env，
+   * 密钥 map（KEY → 明文值）。load 时灌进 process.env，
    * 供 provider 的 apiKeyEnv / skill 的 http_request auth_env 在运行时读取。
    * 桌面端 setSkillEnv 与 UI 写入都落到这里。
    */
@@ -449,7 +449,7 @@ function expandHome(p: string): string {
  *
  * 两种语法都自动做 `~/` 展开，便于 `.env` 里跨机器复用配置。
  *
- * 导出供 tests/config.test.ts 直接单元测试，loadConfig 内部只用环境变量值喂它。
+ * 导出供 tests/config.test.ts 直接单元测试，loadConfigFromEnv 内部只用环境变量值喂它。
  */
 export function parseReadPathsFromEnv(raw: string | undefined): string[] | undefined {
   if (!raw) return undefined;
@@ -500,12 +500,11 @@ export function parsePositiveIntEnv(raw: string | undefined): number | undefined
 /**
  * CLI 入口的配置加载：读 `~/.pith-wiki/config.json`（或 `PITH_WIKI_CONFIG_PATH` 指向的文件）、
  * env 变量，再叠加显式 overrides，zod 校验后返回。config.json 的 `secrets` map
- * 会先灌进 process.env（密钥唯一源，取代旧 `.env`）。
+ * 会先灌进 process.env。
  */
 export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
   const file = loadFileConfig();
-  // 密钥唯一源：把 config.json 的 secrets 灌进 process.env，必须在下面读
-  // process.env.DEEPSEEK_API_KEY / applyActiveProvider(→entry.apiKeyEnv) 之前。
+  // secrets 灌进 process.env，必须在读 DEEPSEEK_API_KEY / applyActiveProvider 之前。
   applySecretsToEnv(file.secrets);
   const cwd = process.cwd();
   const workspaceRoot =
@@ -616,7 +615,7 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     queueAutoStart: overrides.queueAutoStart ?? file.queueAutoStart ?? DEFAULTS.queueAutoStart,
     // watchDirs：CLI overrides > 配置文件 > []。环境变量先不引入（结构太复杂，
     // 不像单条路径列表那么自然）；CLI 也只在 `pith-wiki watch` 命令里用 flag 覆盖。
-    // 路径里的 ~/ 在 schema parse 之后再展开（loadConfig 末尾统一处理）。
+    // 路径里的 ~/ 在 schema parse 之后再展开（loadConfigFromEnv 末尾统一处理）。
     watchDirs: overrides.watchDirs ?? file.watchDirs ?? [],
     watchAutoStart: overrides.watchAutoStart ?? file.watchAutoStart ?? DEFAULTS.watchAutoStart,
     // 默认放在 <wikiRoot>/output/transcripts/：raw transcripts 和 digest 条目共享 wiki 树根。
@@ -657,8 +656,6 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
     providers: overrides.providers ?? file.providers ?? {},
     activeProvider:
       overrides.activeProvider ?? process.env.PITH_WIKI_PROVIDER ?? file.activeProvider,
-    // hydrationProvider 之前漏进 merged，导致 config.hydrationProvider 恒为 undefined、
-    // pickHydrationProvider 永远回退到第一个 openai（水合选择器形同虚设）。一并补上。
     hydrationProvider: file.hydrationProvider,
     reviewProvider: file.reviewProvider,
     secrets: file.secrets ?? {},
@@ -675,12 +672,6 @@ export function loadConfigFromEnv(overrides: ConfigOverrides = {}): Config {
   // 让现有调用方（agent / hydrator）继续读 config.apiKey 等字段不需要改。
   return applyActiveProvider(parsed);
 }
-
-/**
- * @deprecated 改用 `loadConfigFromEnv`。本别名只为旧调用方兼容保留，将在
- * v0.3 移除。语义没变。
- */
-export const loadConfig = loadConfigFromEnv;
 
 /**
  * 把 entry.apiKey / apiKeyEnv 折成最终的 apiKey 字符串。

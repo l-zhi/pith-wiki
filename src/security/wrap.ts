@@ -38,7 +38,7 @@ const MASK_NOTE =
  * 通知分级：UI 按级别决定是否打扰用户。
  *   - masked:  常规脱敏计数。设计上对用户透明（对话里看到的始终是原文），
  *              REPL 默认不显示，verbose 模式才出现；CLI 仍打 stderr 留痕。
- *   - warning: 需要注意的异常（占位符还原失败残留、流式跳过还原）。
+ *   - warning: 需要注意的异常（占位符还原失败残留）。
  *   - info:    一次性信息（如首次生成规则文件）。
  */
 export type SecurityNoticeKind = 'masked' | 'warning' | 'info';
@@ -64,17 +64,10 @@ export function wrapClientWithSecurity(
     if (blocked.length > 0) throw new SecurityBlockError(blocked);
     if (newLabels.length > 0) onNotice(formatMaskNotice(newLabels), 'masked');
 
-    // eslint 风格的窄化没必要：SDK 的 create 是重载签名，这里按运行时实际用法直传
     const completion = (await original(
       clean as never,
       requestOpts as never,
     )) as unknown as AnyRecord;
-
-    if (params.stream) {
-      // 现有调用全部 stream:false。真出现流式调用时只保证出站安全，不做增量还原。
-      onNotice('security: streaming response — placeholder restore skipped', 'warning');
-      return completion;
-    }
 
     const jsonMode = (params.response_format as AnyRecord | undefined)?.type === 'json_object';
     const leftover = restoreCompletion(completion, sanitizer, jsonMode);
@@ -117,13 +110,6 @@ function sanitizeParams(params: AnyRecord, sanitizer: Sanitizer): SanitizedParam
     const copy: AnyRecord = { ...msg };
     if (typeof copy.content === 'string') {
       copy.content = scrub(copy.content);
-    } else if (Array.isArray(copy.content)) {
-      // multimodal parts（当前代码库未用到，防御性覆盖）
-      copy.content = copy.content.map((part) =>
-        part && typeof (part as AnyRecord).text === 'string'
-          ? { ...(part as AnyRecord), text: scrub((part as AnyRecord).text as string) }
-          : part,
-      );
     }
     for (const key of ['reasoning_content', 'thinking'] as const) {
       if (typeof copy[key] === 'string') copy[key] = scrub(copy[key] as string);

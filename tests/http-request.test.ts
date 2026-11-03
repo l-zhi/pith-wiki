@@ -193,7 +193,7 @@ body`,
     const root = path.join(tmp, 'skills');
     mkSkill(root, 'a', `---\nname: a\ndescription: d\nhttp_allow:\n  - host: a.com\n    auth_env: A\n---\nb`);
     mkSkill(root, 'b', `---\nname: b\ndescription: d\nhttp_allow:\n  - host: b.com\n---\nb`);
-    const reg = await buildSkillRegistry({ skillDirs: [root] });
+    const reg = buildSkillRegistry({ skillDirs: [root] });
     const hosts = reg.allowedHosts();
     expect([...hosts.keys()].sort()).toEqual(['a.com', 'b.com']);
     expect(hosts.get('a.com')?.auth_env).toBe('A');
@@ -203,7 +203,7 @@ body`,
     const root = path.join(tmp, 'skills');
     mkSkill(root, 'bad', `---\nname: bad\ndescription: d\nhttp_allow:\n  - host: "https://x.com"\n---\nb`);
     const warnings: string[] = [];
-    const reg = await buildSkillRegistry({ skillDirs: [root], onWarn: (m) => warnings.push(m) });
+    const reg = buildSkillRegistry({ skillDirs: [root], onWarn: (m) => warnings.push(m) });
     expect(reg.has('bad')).toBe(false);
     expect(warnings.length).toBeGreaterThan(0);
   });

@@ -86,13 +86,13 @@ function customProviderModels(config: Config): {
     // 鉴权直接闭包 config —— pith 的真源就是 config（它自己已经把 apiKeyEnv / secrets
     // 解析完了）。**不能只靠调用方逐请求传 apiKey**：pi-agent-core 的 loop 由 pi 自己
     // 驱动 streamSimple，宿主没有统一注入点，只传一半就会出现「Provider is not configured」
-    // （路线 A 接线时真踩到过）。config 没配 key 时回退到 env，保持 keyless 端点可用。
+    // （路线 A 接线时真踩到过）。
     auth: {
       apiKey: {
         name: 'pith endpoint API key',
         resolve: async () => {
-          const key = config.apiKey || process.env.PITH_WIKI_API_KEY || '';
-          return { auth: key ? { apiKey: key } : {}, source: config.apiKey ? 'pith config' : 'env' };
+          const key = config.apiKey || '';
+          return { auth: key ? { apiKey: key } : {}, source: 'pith config' };
         },
       },
     },

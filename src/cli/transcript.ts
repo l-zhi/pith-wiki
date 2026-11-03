@@ -55,7 +55,7 @@ export class TranscriptLogger {
    */
   recordThinking(text: string, source: string): void {
     this.write(
-      `\n### 💭 Thinking (${source}) · ${nowIso()}\n\n\`\`\`\n${fencedBody(text)}\n\`\`\`\n`,
+      `\n### 💭 Thinking (${source}) · ${nowIso()}\n\n\`\`\`\n${escapeBody(text)}\n\`\`\`\n`,
     );
   }
 
@@ -114,11 +114,6 @@ function safeStringify(v: unknown): string {
  *   - 文本本身不强制 fenced code，user / assistant 段就让它当普通 markdown 渲染
  */
 function escapeBody(text: string): string {
-  return text.replace(/```/g, '\\`\\`\\`');
-}
-
-/** 放进 ``` fenced code 块的内容：把内部的 ``` 转义，避免提前关闭代码块。 */
-function fencedBody(text: string): string {
   return text.replace(/```/g, '\\`\\`\\`');
 }
 

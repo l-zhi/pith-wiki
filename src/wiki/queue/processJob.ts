@@ -5,7 +5,7 @@ import type { LibraryService } from '../library.js';
 import type { Entry } from '../types.js';
 import { ConverterRegistry } from '../converters/registry.js';
 import type { ConverterCache, CacheKey } from '../converters/cache.js';
-import { cacheKey, cacheKeyString, NullConverterCache } from '../converters/cache.js';
+import { cacheKey, NullConverterCache } from '../converters/cache.js';
 import { EmptyConversionError, type ConvertProgress } from '../converters/types.js';
 import { defaultConverters } from '../converters/index.js';
 import { writeCacheSidecar } from '../converters/sidecar.js';
@@ -361,9 +361,4 @@ export function formatResultLine(n: number, total: number, r: FileResult): strin
       return `${counter} ${file} ✗ failed: ${r.reason ?? 'unknown'}${permTag}${retryNote}`;
     }
   }
-}
-
-/** 用记忆 cacheKey 字符串便于日志/调试。 */
-export function describeCacheKey(bytes: Buffer, converterName: string, version?: string): string {
-  return cacheKeyString(cacheKey(bytes, converterName, version));
 }

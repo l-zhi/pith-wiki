@@ -199,34 +199,24 @@ export function App({ config: initialConfig }: Props) {
     [config.wikiRoot, config.cacheConverted],
   );
 
-  // Skill 注册表：启动时异步扫一次 skillDirs。
-  // 与 soul 同生命周期——加载后整个 session 不变；新增 skill 需重启 REPL 才生效
-  // （catalog 在 Agent 构造时 baked）。初始为空 registry，加载完 setState 触发 agent 重建一次。
   const [skillRegistry, setSkillRegistry] = useState<SkillRegistry>(() => new SkillRegistry());
   useEffect(() => {
-    let alive = true;
     const warnings: string[] = [];
-    buildSkillRegistry({
-      skillDirs: config.skillDirs,
-      onWarn: (m) => warnings.push(m),
-    })
-      .then((reg) => {
-        if (!alive) return;
-        setSkillRegistry(reg);
-        const n = reg.list().length;
-        if (n > 0 || warnings.length > 0) {
-          const parts = [`skills: ${n} discovered`];
-          if (warnings.length) parts.push(...warnings.map((w) => `  ⚠ ${w}`));
-          append({ role: 'system', text: parts.join('\n') });
-        }
-      })
-      .catch((err: Error) => {
-        if (!alive) return;
-        append({ role: 'error', text: `skill discovery failed: ${err.message}` });
+    try {
+      const reg = buildSkillRegistry({
+        skillDirs: config.skillDirs,
+        onWarn: (m) => warnings.push(m),
       });
-    return () => {
-      alive = false;
-    };
+      setSkillRegistry(reg);
+      const n = reg.list().length;
+      if (n > 0 || warnings.length > 0) {
+        const parts = [`skills: ${n} discovered`];
+        if (warnings.length) parts.push(...warnings.map((w) => `  ⚠ ${w}`));
+        append({ role: 'system', text: parts.join('\n') });
+      }
+    } catch (err) {
+      append({ role: 'error', text: `skill discovery failed: ${(err as Error).message}` });
+    }
     // 只在挂载时跑一次（skillDirs 启动后不变）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -676,8 +666,7 @@ export function App({ config: initialConfig }: Props) {
           'Slash commands:\n' +
           lines.join('\n') +
           `\n\nType "/" to see live suggestions; press Tab to complete.\n` +
-          `Up/Down arrows browse the last ${HISTORY_LIMIT} commands.\n` +
-          'Tools: read_file, write_file, list_dir, wiki_ingest, wiki_get, wiki_query, wiki_queue_add, wiki_queue_status',
+          `Up/Down arrows browse the last ${HISTORY_LIMIT} commands.`,
       });
     } else if (cmd === '/clear') {
       setMessages([{ id: nextId(), role: 'system', text: 'screen cleared' }]);
@@ -864,7 +853,7 @@ export function App({ config: initialConfig }: Props) {
   const handleSkillAdd = async (source: string, force = false): Promise<void> => {
     try {
       const result = installSkillFromSource(source, config, { force });
-      const reg = await buildSkillRegistry({ skillDirs: config.skillDirs });
+      const reg = buildSkillRegistry({ skillDirs: config.skillDirs });
       setSkillRegistry(reg); // 触发 agent 重建（热加载 + 对话重置）
       const parts = [`✓ installed skill "${result.skill.name}" → ${shortenHome(result.dest)}`];
       if (result.skill.commands.length > 0) {
@@ -912,12 +901,11 @@ export function App({ config: initialConfig }: Props) {
       append({ role: 'error', text: `Skill not found: ${name}` });
       return;
     }
-    void buildSkillRegistry({ skillDirs: config.skillDirs }).then((reg) => {
-      setSkillRegistry(reg);
-      append({
-        role: 'system',
-        text: `✓ removed skill "${name}"（已重新加载；对话上下文已重置）`,
-      });
+    const reg = buildSkillRegistry({ skillDirs: config.skillDirs });
+    setSkillRegistry(reg);
+    append({
+      role: 'system',
+      text: `✓ removed skill "${name}"（已重新加载；对话上下文已重置）`,
     });
   };
 

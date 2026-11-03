@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Text } from 'ink';
 import { loadQueueDigest } from './dashboardData.js';
+import { C } from './theme.js';
 
 /**
  * 底部常驻的 1 行 live status bar。
@@ -23,13 +24,6 @@ export interface QueueWorkerStatus {
   error?: string;
   externalPid?: number;
 }
-
-const C = {
-  green: '#34d399',
-  cyan: '#67e8f9',
-  amber: '#fbbf24',
-  pink: '#f472b6',
-} as const;
 
 interface Props {
   statePath: string;

@@ -39,7 +39,7 @@ describe('buildSkillRegistry', () => {
     const root = path.join(tmp, 'skills');
     mkSkill(root, 'changelog', skillMd('changelog', 'Draft a release changelog.', 'Step 1: gather commits.'));
 
-    const reg = await buildSkillRegistry({ skillDirs: [root] });
+    const reg = buildSkillRegistry({ skillDirs: [root] });
     const s = reg.get('changelog');
     expect(s?.description).toBe('Draft a release changelog.');
     expect(s?.body).toBe('Step 1: gather commits.');
@@ -52,7 +52,7 @@ describe('buildSkillRegistry', () => {
       'lark',
       `---\nname: lark\ndescription: a lark skill\ntype: tool\nversion: 1.0.0\nmetadata:\n  requires:\n    bins: ["lark-cli"]\n---\n指令正文。\n`,
     );
-    const reg = await buildSkillRegistry({ skillDirs: [root] });
+    const reg = buildSkillRegistry({ skillDirs: [root] });
     expect(reg.get('lark')?.body).toBe('指令正文。');
   });
 
@@ -60,7 +60,7 @@ describe('buildSkillRegistry', () => {
     const root = path.join(tmp, 'skills');
     mkSkill(root, 'empty', skillMd('empty', 'desc', ''));
     const warnings: string[] = [];
-    const reg = await buildSkillRegistry({ skillDirs: [root], onWarn: (m) => warnings.push(m) });
+    const reg = buildSkillRegistry({ skillDirs: [root], onWarn: (m) => warnings.push(m) });
     expect(reg.has('empty')).toBe(false);
     expect(warnings.join('\n')).toMatch(/empty/i);
   });
@@ -69,7 +69,7 @@ describe('buildSkillRegistry', () => {
     const root = path.join(tmp, 'skills');
     mkSkill(root, 'bad', `---\nname: bad\n---\nbody\n`);
     mkSkill(root, 'good', skillMd('good', 'fine', 'body'));
-    const reg = await buildSkillRegistry({ skillDirs: [root] });
+    const reg = buildSkillRegistry({ skillDirs: [root] });
     expect(reg.has('bad')).toBe(false);
     expect(reg.has('good')).toBe(true);
   });
@@ -79,7 +79,7 @@ describe('buildSkillRegistry', () => {
     mkSkill(root, '.hidden', skillMd('hidden', 'd', 'b'));
     fs.mkdirSync(path.join(root, 'not-a-skill'), { recursive: true });
     mkSkill(root, 'real', skillMd('real', 'd', 'b'));
-    const reg = await buildSkillRegistry({ skillDirs: [root] });
+    const reg = buildSkillRegistry({ skillDirs: [root] });
     expect(reg.names()).toEqual(['real']);
   });
 
@@ -88,13 +88,13 @@ describe('buildSkillRegistry', () => {
     const projDir = path.join(tmp, 'proj');
     mkSkill(userDir, 'dup', skillMd('dup', 'user version', 'USER BODY'));
     mkSkill(projDir, 'dup', skillMd('dup', 'proj version', 'PROJ BODY'));
-    const reg = await buildSkillRegistry({ skillDirs: [userDir, projDir] });
+    const reg = buildSkillRegistry({ skillDirs: [userDir, projDir] });
     expect(reg.get('dup')?.body).toBe('PROJ BODY');
     expect(reg.get('dup')?.description).toBe('proj version');
   });
 
   it('不存在的 skillDir 被静默忽略', async () => {
-    const reg = await buildSkillRegistry({ skillDirs: [path.join(tmp, 'nope')] });
+    const reg = buildSkillRegistry({ skillDirs: [path.join(tmp, 'nope')] });
     expect(reg.list()).toEqual([]);
   });
 });
@@ -105,10 +105,10 @@ describe('SkillRegistry.catalog', () => {
   it('列出 skills 为 "- name: desc",无则空串', async () => {
     const root = path.join(tmp, 'skills');
     mkSkill(root, 'a', skillMd('a', 'does A', 'b'));
-    const reg = await buildSkillRegistry({ skillDirs: [root] });
+    const reg = buildSkillRegistry({ skillDirs: [root] });
     expect(reg.catalog()).toBe('- a: does A');
 
-    const empty = await buildSkillRegistry({ skillDirs: [path.join(tmp, 'none')] });
+    const empty = buildSkillRegistry({ skillDirs: [path.join(tmp, 'none')] });
     expect(empty.catalog()).toBe('');
   });
 });
@@ -119,7 +119,7 @@ describe('skill tool', () => {
   it('handler 返回正文', async () => {
     const root = path.join(tmp, 'skills');
     mkSkill(root, 'writer', skillMd('writer', 'd', 'INSTRUCTIONS HERE'));
-    const reg = await buildSkillRegistry({ skillDirs: [root] });
+    const reg = buildSkillRegistry({ skillDirs: [root] });
     const tool = makeSkillTool(reg);
     const ctx = { skillRegistry: reg } as unknown as ToolContext;
     const r = (await tool.handler({ name: 'writer' }, ctx)) as { ok: boolean; instructions: string };
@@ -128,7 +128,7 @@ describe('skill tool', () => {
   });
 
   it('未知 skill → ok:false', async () => {
-    const reg = await buildSkillRegistry({ skillDirs: [] });
+    const reg = buildSkillRegistry({ skillDirs: [] });
     const tool = makeSkillTool(reg);
     const ctx = { skillRegistry: reg } as unknown as ToolContext;
     const r = (await tool.handler({ name: 'ghost' }, ctx)) as { ok: boolean; error?: string };
@@ -139,7 +139,7 @@ describe('skill tool', () => {
   it('description baked 进 catalog', async () => {
     const root = path.join(tmp, 'skills');
     mkSkill(root, 'alpha', skillMd('alpha', 'the alpha skill', 'b'));
-    const reg = await buildSkillRegistry({ skillDirs: [root] });
+    const reg = buildSkillRegistry({ skillDirs: [root] });
     const tool = makeSkillTool(reg);
     expect(tool.description).toContain('alpha: the alpha skill');
   });

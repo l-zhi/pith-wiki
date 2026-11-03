@@ -33,12 +33,8 @@ export interface BuildSkillRegistryOptions {
  * - 每个目录扫一层子目录,含 SKILL.md 的即一个 skill;跳过 dotdir(与 library.scanAll 一致)。
  * - frontmatter 解析 / 校验失败 → 跳过 + warn,绝不致命(与 library 容错策略一致)。
  * - 同名后扫到的覆盖先扫到的(skillDirs 顺序即优先级,project-local 在后 → 胜出)。
- *
- * 保持 async 签名,与转换器流水线同构(REPL / 子命令在 buildContext 前 await 它)。
  */
-export async function buildSkillRegistry(
-  opts: BuildSkillRegistryOptions,
-): Promise<SkillRegistry> {
+export function buildSkillRegistry(opts: BuildSkillRegistryOptions): SkillRegistry {
   const registry = new SkillRegistry();
   const warn = opts.onWarn ?? (() => {});
 

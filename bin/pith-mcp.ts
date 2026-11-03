@@ -20,6 +20,7 @@ import OpenAI from 'openai';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfigFromEnv } from '../src/config.js';
+import { readPackageVersion } from '../src/version.js';
 import { LibraryService } from '../src/wiki/library.js';
 import { buildContext, type AnyToolDef } from '../src/tools/index.js';
 import { wikiQueryTool } from '../src/tools/wiki_query.js';
@@ -46,7 +47,7 @@ async function main(): Promise<void> {
   const dummyClient = new OpenAI({ apiKey: 'unused-mcp-readonly', baseURL: 'http://127.0.0.1:1' });
   const ctx = buildContext(config, dummyClient, async () => 'no', library, {});
 
-  const server = new McpServer({ name: 'pith', version: '0.2.0' });
+  const server = new McpServer({ name: 'pith', version: readPackageVersion() });
   for (const tool of RETRIEVAL_TOOLS) {
     const shape = (tool.parameters as z.ZodObject<z.ZodRawShape>).shape;
     server.tool(tool.name, tool.description, shape, async (args: Record<string, unknown>) => {

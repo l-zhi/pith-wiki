@@ -16,13 +16,6 @@ import { readState, writeStateAtomic, type QueueState } from './state.js';
  * 锁文件格式：JSON `{ pid, ts }`。第二个 worker 起来时若 lock 存在，先做
  * `process.kill(pid, 0)` 探测进程存活——挂了 → 视为陈旧 lock 接管，活着 → 报错。
  */
-export class StaleLockError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'StaleLockError';
-  }
-}
-
 export class QueueLockedError extends Error {
   constructor(public readonly lockingPid: number) {
     super(`queue is already running (pid=${lockingPid})`);
