@@ -20,7 +20,8 @@ import {
 } from '../wiki/doctor.js';
 import { formatConvertersTable } from './converterFormat.js';
 import { collectDashboardData, formatDashboard } from './dashboardData.js';
-import { resolveSafePath, SafetyError } from '../tools/safety.js';
+import { resolveSafePath, SafetyError, type SafetyOptions } from '../tools/safety.js';
+import { extensionsToGlob } from '../wiki/queue/watcher.js';
 import { Source } from '../wiki/types.js';
 import { buildQueueCommands, buildWatchCommand } from './queueCommands.js';
 import { buildSkillCommands } from './skillCommands.js';
@@ -90,7 +91,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
     .requiredOption('--collection <name>', 'Wiki collection (folder).')
     .option('--file <path>', 'Read raw input from a single file.')
     .option('--batch <glob>', 'Glob pattern to match many files (e.g. "papers/*.md").')
-    .option('--dir <folder>', 'Recursively ingest all .md files under a folder.')
+    .option('--dir <folder>', 'Recursively ingest files with a registered converter extension.')
     .option('--url <url>', 'Tag the source as this URL (does not fetch; pipe content via --file or stdin).')
     .option('--no-auto-link', 'Disable auto-linking against existing entries.')
     .option(
@@ -142,7 +143,10 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
 
       // 批量分支：--batch <glob> 或 --dir <folder>
       if (opts.batch || opts.dir) {
-        const allFiles = await enumerateBatchFiles(opts);
+        const allFiles = await enumerateBatchFiles({
+          ...opts,
+          extensions: convRegistry.extensions(),
+        });
         if (allFiles.length === 0) {
           console.error(chalk.yellow('No files matched.'));
           process.exitCode = 1;
@@ -150,18 +154,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
         }
 
         // 严格校验：批内任一文件越界都立即 abort，让用户先把读沙箱配置改对。
-        const outOfSandbox: string[] = [];
-        for (const f of allFiles) {
-          try {
-            resolveSafePath(f, 'read', readSandbox);
-          } catch (err) {
-            if (err instanceof SafetyError) {
-              outOfSandbox.push(f);
-            } else {
-              throw err;
-            }
-          }
-        }
+        const outOfSandbox = filesOutsideReadSandbox(allFiles, readSandbox);
         if (outOfSandbox.length > 0) {
           console.error(
             chalk.red(
@@ -434,6 +427,19 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
   buildSkillCommands(program, args);
 }
 
+export function filesOutsideReadSandbox(files: string[], sandbox: SafetyOptions): string[] {
+  const out: string[] = [];
+  for (const f of files) {
+    try {
+      resolveSafePath(f, 'read', sandbox);
+    } catch (err) {
+      if (err instanceof SafetyError) out.push(f);
+      else throw err;
+    }
+  }
+  return out;
+}
+
 /**
  * 把 --batch <glob> 或 --dir <folder> 展开成绝对路径数组。
  * 都不传时返回 []（理论上不会被调用，但保险起见）。
@@ -443,6 +449,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
 export async function enumerateBatchFiles(opts: {
   batch?: string;
   dir?: string;
+  extensions?: string[];
 }): Promise<string[]> {
   if (opts.batch) {
     // fast-glob 默认相对 cwd 解析；absolute=true 直接给绝对路径。
@@ -454,10 +461,8 @@ export async function enumerateBatchFiles(opts: {
     });
   }
   if (opts.dir) {
-    const absRoot = path.resolve(opts.dir);
-    // 递归找所有 .md。fast-glob 的 ** 模式比 fs.readdirSync 递归省事。
-    return fastGlob('**/*.md', {
-      cwd: absRoot,
+    return fastGlob(extensionsToGlob(opts.extensions ?? []), {
+      cwd: path.resolve(opts.dir),
       absolute: true,
       onlyFiles: true,
       dot: false,
