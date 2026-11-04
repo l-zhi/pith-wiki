@@ -7,9 +7,7 @@
  * - frontmatter 序列化与反序列化的边界情况（Date 对象、undefined 字段、中文）
  * - 扫描器对格式错误文件的容错
  *
- * 测试不覆盖（v0 设计决策）：
- * - HydrationService 调 LLM 的部分（属于 integration test）
- * - 文件锁 / 并发写入（v0 假定单进程）
+ * 不覆盖 HydrationService 的 LLM 调用，也不覆盖文件锁 / 并发写入（v0 单进程）。
  */
 import fs from 'node:fs';
 import os from 'node:os';

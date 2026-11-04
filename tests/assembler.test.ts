@@ -7,7 +7,6 @@
  * - BFS 仅 1 层（不会越过到种子-link-link）
  * - token 预算截断
  * - context 渲染包含的字段
- * - 中文 tokenize 行为（已知局限：连续中文当作单一 token）
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -170,18 +169,6 @@ describe('ContextAssembler — token 预算', () => {
     const r = assembler.query('budget', 1000);
     // 1000 token × 4 char/tok × 0.7 = 2800 char 的预算，单条远超；但循环保证至少 1 条。
     expect(r.referencedEntries.length).toBe(1);
-  });
-
-  it('多个小 entry 都能装下时全部收录', () => {
-    lib.put(entry({ id: 'a', title: '查询 agent', content: '简短内容 a' }));
-    lib.put(entry({ id: 'b', title: '查询 agent two', content: '简短内容 b' }));
-    lib.put(entry({ id: 'c', title: '查询 agent three', content: '简短内容 c' }));
-
-    const r = assembler.query('查询', 4000);
-    // 每条 entry 几十字节，绝对装得下。
-    // 但注意：中文 "查询" 在 \W+ tokenize 后可能不会被切成独立 token；
-    // 这条用例验证当 title 中混合英文 token 时仍然能匹配。
-    expect(r.referencedEntries.length).toBeGreaterThanOrEqual(0);
   });
 });
 

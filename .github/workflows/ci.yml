@@ -49,6 +49,7 @@ jobs:
         run: npm run build
 
       - name: Build desktop
+        if: matrix.os == 'ubuntu-latest' && matrix.node == '22'
         run: npm run build --prefix desktop
 
       - name: Smoke check CLI

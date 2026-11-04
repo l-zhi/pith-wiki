@@ -127,10 +127,7 @@ describe('parseReadPathsFromEnv — 输入边界', () => {
   });
 });
 
-describe('parseReadPathsFromEnv — 集成：.env 实际写法', () => {
-  // 模拟用户在 .env 文件里可能写的若干合法 / 不合法形式，
-  // 锁定我们对各种"野生输入"的容错。
-
+describe('parseReadPathsFromEnv — JSON 数组与分隔符列表的 ~ 展开', () => {
   it('用户用 JSON 数组配置两条本地目录', () => {
     const env = '["~/research/papers", "~/Library/Mobile Documents"]';
     expect(parseReadPathsFromEnv(env)).toEqual([
