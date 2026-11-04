@@ -22,8 +22,8 @@ import { QueueLockedError, QueueStore } from '../wiki/queue/store.js';
 import { runQueue } from '../wiki/queue/runner.js';
 import { buildConverterPipeline } from '../wiki/converters/index.js';
 import { runWatcher, type WatchTargetConfig } from '../wiki/queue/watcher.js';
-import { resolveSafePath, SafetyError } from '../tools/safety.js';
-import { enumerateBatchFiles } from './subcommands.js';
+import { enumerateBatchFiles, filesOutsideReadSandbox } from './subcommands.js';
+import { resetDead } from './queueOps.js';
 
 interface BuildArgs {
   configFor: (overrides?: Partial<Config>) => Config;
@@ -45,7 +45,7 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
     .requiredOption('--collection <name>', 'Wiki collection (folder).')
     .option('--file <path>', 'Single file.')
     .option('--batch <glob>', 'Glob pattern (e.g. "papers/*.md").')
-    .option('--dir <folder>', 'Recursively enqueue all .md files under a folder.')
+    .option('--dir <folder>', 'Recursively enqueue files with a registered converter extension.')
     .option('--force', 'Re-enqueue files already completed (resets attempts).')
     .action(async (opts) => {
       const config = args.configFor();
@@ -78,7 +78,13 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
       if (opts.file) {
         files = [path.resolve(opts.file)];
       } else {
-        files = await enumerateBatchFiles(opts);
+        const extensions = opts.dir
+          ? buildConverterPipeline({
+              wikiRoot: config.wikiRoot,
+              cacheConverted: config.cacheConverted,
+            }).registry.extensions()
+          : undefined;
+        files = await enumerateBatchFiles({ ...opts, extensions });
       }
       if (files.length === 0) {
         console.error(chalk.yellow('No files matched.'));
@@ -86,15 +92,7 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
         return;
       }
 
-      const outOfSandbox: string[] = [];
-      for (const f of files) {
-        try {
-          resolveSafePath(f, 'read', readSandbox);
-        } catch (err) {
-          if (err instanceof SafetyError) outOfSandbox.push(f);
-          else throw err;
-        }
-      }
+      const outOfSandbox = filesOutsideReadSandbox(files, readSandbox);
       if (outOfSandbox.length > 0) {
         console.error(
           chalk.red(
@@ -381,48 +379,38 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
       ensureQueueDirs(config);
       const store = new QueueStore(config.queueStatePath);
 
-      let reset = 0;
-      const notFound: string[] = [];
-      store.mutate((s) => {
-        const targets = new Set<string>(ids);
-        if (opts.allDead) {
-          for (const j of Object.values(s.jobs)) if (j.status === 'dead') targets.add(j.id);
-        }
-        if (targets.size === 0) return;
-        for (const id of targets) {
-          const j = s.jobs[id];
-          if (!j) {
-            notFound.push(id);
-            continue;
-          }
-          j.status = 'pending';
-          j.attempts = 0;
-          j.lastError = undefined;
-          j.startedAt = undefined;
-          j.completedAt = undefined;
-          j.nextEarliestRunAt = undefined;
-          pushEvent(s, {
-            ts: new Date().toISOString(),
-            jobId: id,
-            kind: 'reset',
-            msg: 'manual retry',
-          });
-          reset += 1;
-        }
-      });
-      console.log(chalk.green(`reset ${reset} job(s) to pending`));
-      if (notFound.length) {
-        console.error(chalk.yellow(`unknown jobIds: ${notFound.join(', ')}`));
-        process.exitCode = 1;
-      }
-      if (reset === 0 && !opts.allDead && ids.length === 0) {
+      if (ids.length === 0 && !opts.allDead) {
         console.error(chalk.gray('Nothing to retry. Pass <id...> or --all-dead.'));
+        return;
+      }
+
+      const target =
+        ids.length === 0
+          ? undefined
+          : opts.allDead
+            ? [
+                ...new Set([
+                  ...ids,
+                  ...Object.values(store.load().jobs)
+                    .filter((j) => j.status === 'dead')
+                    .map((j) => j.id),
+                ]),
+              ]
+            : ids;
+      const r = resetDead(store, target);
+      console.log(chalk.green(`reset ${r.reset} job(s) to pending`));
+      if (r.skipped.length) {
+        console.log(chalk.yellow(`skipped: ${r.skipped.join(', ')}`));
+      }
+      if (r.notFound.length) {
+        console.error(chalk.yellow(`not found: ${r.notFound.join(', ')}`));
+        process.exitCode = 1;
       }
     });
 }
 
 /**
- * 注册 `watch` 顶层命令：监听一个或多个源目录，把 .md 变动入队。
+ * 注册 `watch` 顶层命令：监听一个或多个源目录，把变动入队。
  *
  * 与 `queue run` 解耦——watcher 进程只 enqueue，不取队列锁，可与 REPL / `queue run`
  * 并行。两种用法：
@@ -432,7 +420,7 @@ export function buildQueueCommands(program: Command, args: BuildArgs): void {
 export function buildWatchCommand(program: Command, args: BuildArgs): void {
   program
     .command('watch')
-    .description('Watch directories for .md changes and auto-enqueue into the queue.')
+    .description('Watch directories for changes and auto-enqueue into the queue.')
     .option('--dir <path>', 'Source directory to watch (overrides config.watchDirs).')
     .option('--collection <name>', 'Fixed collection (use with --dir).')
     .option(
@@ -440,7 +428,7 @@ export function buildWatchCommand(program: Command, args: BuildArgs): void {
       'Use first-level subdir name as collection (use with --dir).',
     )
     .option('--fallback-collection <name>', 'Fallback collection when subdir name is unsuitable.')
-    .option('--initial-scan', 'Enqueue all existing .md under --dir at startup.')
+    .option('--initial-scan', 'Enqueue all existing files under --dir at startup.')
     .action(async (opts) => {
       const config = args.configFor();
       ensureWikiRoot(config);
