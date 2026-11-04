@@ -182,7 +182,7 @@ export function Button({
   style = {},
 }: {
   children?: React.ReactNode;
-  variant?: 'primary' | 'secondary' | 'ghost' | 'destructive' | 'accentSoft';
+  variant?: 'primary' | 'secondary' | 'ghost' | 'destructive';
   size?: 'sm' | 'md' | 'lg';
   iconLeft?: React.ReactNode;
   iconRight?: React.ReactNode;
@@ -215,10 +215,6 @@ export function Button({
       background: hover ? 'color-mix(in srgb, var(--apple-red) 88%, #000)' : 'var(--apple-red)',
       color: '#fff',
       boxShadow: '0 1px 2px rgba(0,0,0,0.12)',
-    },
-    accentSoft: {
-      background: hover ? 'color-mix(in srgb, var(--accent-soft) 70%, var(--accent))' : 'var(--accent-soft)',
-      color: 'var(--accent)',
     },
   };
   return (
@@ -801,20 +797,11 @@ function fmtTokens(n: number): string {
 export function TokenMeter({
   inTokens = 0,
   outTokens = 0,
-  contextUsed,
-  contextMax,
 }: {
   inTokens?: number;
   outTokens?: number;
-  /** 本会话已占用的上下文 token；与 contextMax 同时给出才显示预算进度条。 */
-  contextUsed?: number;
-  /** 上下文窗口上限 token。 */
-  contextMax?: number;
 }) {
-  const hasBudget = typeof contextUsed === 'number' && typeof contextMax === 'number' && contextMax > 0;
-  if (inTokens === 0 && outTokens === 0 && !hasBudget) return null;
-  const frac = hasBudget ? Math.min(1, contextUsed! / contextMax!) : 0;
-  const near = frac > 0.85; // 接近上限 → 橙色预警
+  if (inTokens === 0 && outTokens === 0) return null;
   return (
     <div
       style={{
@@ -836,37 +823,6 @@ export function TokenMeter({
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--accent)', fontVariantNumeric: 'tabular-nums' }}>
         ↓ {fmtTokens(outTokens)}
       </span>
-      {hasBudget && (
-        <>
-          <span style={{ width: '0.5px', height: 13, background: 'var(--separator-strong)' }} />
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-            <span
-              style={{
-                position: 'relative',
-                width: 52,
-                height: 5,
-                borderRadius: 'var(--radius-pill)',
-                background: 'var(--gray-200)',
-                overflow: 'hidden',
-              }}
-            >
-              <span
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  width: `${frac * 100}%`,
-                  borderRadius: 'var(--radius-pill)',
-                  background: near ? 'var(--status-running)' : 'var(--accent)',
-                  transition: 'width var(--dur-slow) var(--ease-standard)',
-                }}
-              />
-            </span>
-            <span style={{ color: near ? 'var(--status-running)' : 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
-              {Math.round(frac * 100)}%
-            </span>
-          </span>
-        </>
-      )}
     </div>
   );
 }

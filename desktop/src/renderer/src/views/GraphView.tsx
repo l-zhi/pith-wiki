@@ -23,11 +23,6 @@ import type { GraphDTO } from '../../../shared/protocol';
  * 必须返回 #hex —— sigma v3 的 parseColor 只认 #hex / rgb() / 命名色，
  * 不解析 hsl()（遇到会回退成纯黑，这正是旧版节点全黑的原因）。
  */
-/** 浅色模式的中性兜底色（用于淡出态等，不再用于普通节点）。 */
-export function nodeColor(dark: boolean): string {
-  return dark ? '#a1a1aa' : '#55555c';
-}
-
 /** 深色模式集合调色板：色相均匀、暗底上鲜亮可辨。 */
 const PALETTE_DARK: readonly string[] = [
   '#ff8589', '#ff9d52', '#f3cb45', '#aede5f', '#69d97e', '#3ed3c2',
@@ -452,7 +447,8 @@ export function GraphView() {
   const graph = useStore((s) => s.graph);
   const loadGraph = useStore((s) => s.loadGraph);
   const openEntry = useStore((s) => s.openEntry);
-  const theme = useStore((s) => s.theme);
+  // 图例在渲染时读 data-theme；订阅 theme 以便切换主题时重绘。
+  useStore((s) => s.theme);
 
   const [hidden, setHidden] = React.useState<Set<string>>(new Set());
   const [showOrphans, setShowOrphans] = React.useState(true);
@@ -466,7 +462,7 @@ export function GraphView() {
     return [...set.entries()].sort((a, b) => b[1] - a[1]);
   }, [graph]);
 
-  // 按集合（数量降序）分配颜色：深色模式彩色、浅色模式灰；节点与图例同色。
+  // 按集合（数量降序）分配颜色（深浅两套同色相调色板）；节点与图例同色。
   const colorOf = React.useMemo(
     () => makeCollectionPalette(collections.map(([name]) => name), dark),
     [collections, dark],
@@ -618,7 +614,6 @@ export function GraphView() {
             </button>
           ))}
       </div>
-      <span style={{ display: 'none' }}>{theme}</span>
     </div>
   );
 }

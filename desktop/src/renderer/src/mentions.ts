@@ -123,11 +123,6 @@ export function descendValue(
   return replaceActive(value, cursor, `${mentionPrefix(pathSegs)}${seg}/`);
 }
 
-/** 退出当前目录回到上一层。 */
-export function ascendValue(value: string, cursor: number, pathSegs: string[]): MentionEdit {
-  return replaceActive(value, cursor, mentionPrefix(pathSegs.slice(0, -1)));
-}
-
 /** 确认条目 = 插入裸 `@id`（尾空格关闭选择器；丢弃导航用的路径前缀）。 */
 export function confirmEntryValue(value: string, cursor: number, id: string): MentionEdit {
   return replaceActive(value, cursor, `@${id} `);

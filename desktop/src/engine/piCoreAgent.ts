@@ -26,16 +26,6 @@ import type { ScopeDTO } from '../shared/protocol.js';
  *   - **历史仍是 OpenAI 形状**：`exportHistory()` 用 `fromPiMessages` 翻回来，既有的
  *     JSONL 持久化、`deriveDisplay` UI 回放、transcript 一行都不用改。这是让 A 可以
  *     增量落地（而不是一次性大爆炸）的关键。
- *
- * 已知取舍 / 待办（都是 A 全面落地前必须解决的，写在这里当活文档）：
- *   1. **安全过滤不再是「一个 monkey-patch 收口」**。pi-agent-core 不经 `chat.completions.create`，
- *      所以脱敏改在 `streamFn` 包装里做（出站 Context 逐字段 mask），还原分两处：
- *      流式 UI 事件用 spike 3 的流式还原器、`exportHistory()` 落盘前整体还原。
- *      **代价**：pi 内部持有的 `AgentMessage[]` 里存的是**脱敏后**的值（pith 现有实现是
- *      原地还原成原文），所以「pi 的会话对象」与「pith 落盘的历史」在脱敏场景下不再逐字相同。
- *   2. maxSteps 语义靠 `beforeToolCall` 阻断实现（达到上限后拒绝工具、逼模型作答），
- *      对齐 pith 的 `forceFinalAnswer`，但没有 pith 那条「预算告警」提前提醒。
- *   3. thinking 无签名（见 piMessageMap 的说明）。
  */
 
 /** pith 工具的最小描述：JSON Schema + 一个「返回任意 JSON」的 execute。 */

@@ -50,8 +50,6 @@ export interface ReviewingAgentOptions {
   rubric?: string;
   /** 审稿轨迹落点(做法 B:写 transcript);不传则不留痕。 */
   traceSink?: (trace: ReviewTrace) => void;
-  /** 把审稿进展(打回/通过)发给 UI 的事件回调(经 SessionManager 的 emit 流出)。 */
-  onReviewEvent?: (e: { round: number; verdict: 'PASS' | 'REVISE'; issues: string }) => void;
 }
 
 /** 审稿人无自定义 rubric 时的兜底标准。 */
@@ -138,7 +136,6 @@ export class ReviewingAgent implements AgentLike {
       );
       const { pass, issues } = parseVerdict(verdictText);
       rounds.push({ round, verdict: pass ? 'PASS' : 'REVISE', issues, draft });
-      this.opts.onReviewEvent?.({ round, verdict: pass ? 'PASS' : 'REVISE', issues });
       events.onToolRound?.({
         name: 'review',
         args: { round },

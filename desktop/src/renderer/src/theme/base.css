@@ -67,12 +67,6 @@ body {
 
 /* ---------- Material helpers ---------- */
 
-.pith-glass {
-  background: var(--material-glass);
-  -webkit-backdrop-filter: var(--blur-glass);
-  backdrop-filter: var(--blur-glass);
-}
-
 .pith-toolbar {
   background: var(--material-toolbar);
   -webkit-backdrop-filter: var(--blur-glass);
@@ -84,18 +78,6 @@ body {
   background: var(--surface-card);
   border-radius: var(--radius-card);
   box-shadow: var(--ring-card), var(--shadow-card);
-}
-
-.pith-container {
-  background: var(--surface-card);
-  border-radius: var(--radius-container);
-  box-shadow: var(--ring-card), var(--shadow-card);
-}
-
-.pith-hairline {
-  border: none;
-  border-top: 0.5px solid var(--separator);
-  margin: 0;
 }
 
 /* eyebrow / section label */

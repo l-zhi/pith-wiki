@@ -43,7 +43,6 @@ describe('SessionStore', () => {
     expect(loaded).not.toBeNull();
     expect(loaded!.meta).toEqual(meta('s1'));
     expect(loaded!.messages).toEqual(msgs);
-    expect(loaded!.corruptLines).toBe(0);
   });
 
   it('分批 append 等价于一次性 append', () => {
@@ -56,7 +55,7 @@ describe('SessionStore', () => {
     expect(store.load('s2')!.messages).toHaveLength(3);
   });
 
-  it('损坏行被跳过并计数；其余消息完好', () => {
+  it('损坏行被跳过；其余消息完好', () => {
     store.create(meta('s3'));
     store.appendMessages('s3', [{ role: 'user', content: 'ok' }]);
     fs.appendFileSync(path.join(dir, 's3.jsonl'), '{broken json…\n', 'utf8');
@@ -66,7 +65,6 @@ describe('SessionStore', () => {
       { role: 'user', content: 'ok' },
       { role: 'assistant', content: 'still ok' },
     ]);
-    expect(loaded.corruptLines).toBe(1);
   });
 
   it('首行 meta 损坏 → load 返回 null，list 跳过该会话', () => {

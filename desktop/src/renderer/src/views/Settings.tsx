@@ -691,7 +691,6 @@ function Labeled({ label, hint, children }: { label: string; hint?: string; chil
 
 function updateP(d: Draft, i: number, patch: Partial<ProviderDraft>): Draft {
   const providers = d.providers.map((p, j) => (j === i ? { ...p, ...patch } : p));
-  // 重命名新建 provider 时，若它恰好是 activeProvider 引用对象则同步
   return { ...d, providers };
 }
 

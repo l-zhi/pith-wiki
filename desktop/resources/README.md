@@ -17,16 +17,10 @@ pith 的应用图标:「脉络 / 橘络」分叉网(设计稿 LogoMark variant 6
 - **dev(未打包，`npm run dev` / `npx electron .`)**:dock 默认是 Electron 图标，
   必须运行时 `app.dock.setIcon(icon.png)` 才会变 —— 已在 `src/main/index.ts` 接好。
   **改完图标要重启 app**(重建 main + 重新启动)才看得到。
-- **打包**:目前仓库**未配置 electron 打包**。接 electron-builder 时:
-  ```jsonc
-  // package.json 或 electron-builder 配置
-  "build": {
-    "mac":   { "icon": "resources/icon.icns" },
-    "win":   { "icon": "resources/icon.png" },
-    "linux": { "icon": "resources/icon.png" },
-    "extraResources": ["resources/icon.png"]   // 让运行时 process.resourcesPath 也能找到
-  }
-  ```
+- **打包**:`desktop/package.json` 的 `build` 已接 electron-builder（`npm run pack` / `npm run dist`）。
+  `directories.buildResources` 为 `resources/`；mac 图标 `resources/icon.icns`，win 图标 `resources/icon.png`。
+  `extraResources` 把 `resources/icon.png` 放到包内 `icon.png`（运行时 `process.resourcesPath`）。
+  正式 mac 签名与公证走 `npm run dist:mac:release`（`electron-builder.mac-release.cjs`）。
 
 ## 从母版重新生成(改了 icon.svg 后)
 

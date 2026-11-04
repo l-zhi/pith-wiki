@@ -30,7 +30,7 @@ import { pithWikiHome } from '@core/paths.js';
 import { createClient } from '@core/llm/client.js';
 import { Agent, defaultSystemPrompt } from '@core/llm/agent.js';
 import { ClaudeCodeAgent } from './claudeCodeAgent.js';
-import { CodexAgent } from './codexAgent.js';
+import { CodexAgent, readPithMcpSpec } from './codexAgent.js';
 import { PiAgent } from './piAgent.js';
 import { readCodexModelOptions, applyProviderModelSettings } from './providerModelSettings.js';
 import { collectionFolders } from './collectionFolders.js';
@@ -41,7 +41,7 @@ import type { resolvePiModels as ResolvePiModels } from '@core/llm/piAiTransport
 import { createSecurityHooks, type SecurityHooks } from '@core/security/index.js';
 import { ensurePiBridge } from './piBridgeSource.js';
 import { ReviewingAgent, type ReviewTrace } from './reviewingAgent.js';
-import { composeSystemPrompt, loadSoul, SOUL_PROMPT_HEADER, type LoadedSoul } from '@core/llm/soul.js';
+import { composeSystemPrompt, loadSoul, SOUL_PROMPT_HEADER } from '@core/llm/soul.js';
 import { ALL_TOOLS, buildContext } from '@core/tools/index.js';
 import { makeSkillTool } from '@core/tools/skill.js';
 import { runCommandTool } from '@core/tools/run_command.js';
@@ -97,8 +97,6 @@ import { SessionStore } from './sessionStore.js';
 import { SessionManager, type AgentFactory, type AgentLike } from './sessionManager.js';
 import { Scheduler } from './scheduler.js';
 
-const APP_VERSION = '0.1.0';
-
 /* ───────────────────────── transport ───────────────────────── */
 
 // Electron utilityProcess 子进程：process.parentPort 收发 main 转发的 envelope
@@ -128,7 +126,6 @@ interface Services {
   library: LibraryService;
   converters: ReturnType<typeof buildConverterPipeline>;
   skillRegistry: SkillRegistry;
-  soul: LoadedSoul;
   sessions: SessionManager;
   scheduleService: ScheduleService;
   scheduler: Scheduler;
@@ -176,35 +173,6 @@ const DELEGATE_BINARIES: Record<DelegateKind, string> = {
   codex: 'codex',
   pi: 'pi',
 };
-
-/**
- * 读 pith-mcp 配置文件（JSON，`mcpServers.pith`）解析出 codex 内联注册用的启动规格。
- * claude-code 把该文件路径直接作为 `--mcp-config <file>` 传入；codex 无此标志，需读出
- * command/args/env 翻成 `-c mcp_servers.pith.*` 覆盖（见 CodexAgent.mcpConfigArgs）。
- * 文件缺失 / 解析失败 / 无 pith 条目 → undefined（codex 能聊天但读不到知识库）。
- */
-function readPithMcpSpec(
-  configPath: string,
-): { command: string; args: string[]; env?: Record<string, string> } | undefined {
-  try {
-    const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
-      mcpServers?: Record<string, { command?: string; args?: unknown; env?: unknown }>;
-    };
-    const s = raw.mcpServers?.pith;
-    if (!s || typeof s.command !== 'string' || !s.command) return undefined;
-    const args = Array.isArray(s.args) ? s.args.map(String) : [];
-    const env =
-      s.env && typeof s.env === 'object'
-        ? Object.fromEntries(
-            Object.entries(s.env as Record<string, unknown>).map(([k, v]) => [k, String(v)]),
-          )
-        : undefined;
-    return { command: s.command, args, env };
-  } catch {
-    return undefined;
-  }
-}
-
 
 async function initServices(): Promise<Services> {
   const home = pithWikiHome();
@@ -669,7 +637,6 @@ async function initServices(): Promise<Services> {
     library,
     converters,
     skillRegistry,
-    soul,
     sessions,
     scheduleService,
     scheduler,
@@ -849,7 +816,6 @@ async function handle(req: EngineRequest): Promise<unknown> {
         model: s.config.model,
         wikiRoot: s.config.wikiRoot,
         workspaceRoot: s.config.workspaceRoot,
-        version: APP_VERSION,
         providers,
       };
     }

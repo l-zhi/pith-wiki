@@ -341,7 +341,6 @@ export interface BootstrapDTO {
   model: string;
   wikiRoot: string;
   workspaceRoot: string;
-  version: string;
   providers: { name: string; model: string; hasKey: boolean }[];
 }
 
