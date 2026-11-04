@@ -4,7 +4,7 @@
 
 ## Problem Statement
 
-pith 的全部能力（水合、检索、agent 对话、自动 ingest）目前只能通过终端 REPL 使用。作为日常"第二大脑"，终端形态有硬伤：无法浏览和阅读自己的知识库（Entry 只能靠 wiki_get 一条条捞）、会话不可恢复（关掉终端即丢上下文）、队列里的 dead 任务要靠子命令排查、从 Finder/Dock 启动的桌面习惯完全无法满足。用户已经在 `design/pith-design-system` 里完成了桌面端设计系统（macOS 三栏、红黑品牌、亮暗双主题），需要把它变成真实应用。
+pith 的全部能力（水合、检索、agent 对话、自动 ingest）目前只能通过终端 REPL 使用。作为日常"第二大脑"，终端形态有硬伤：无法浏览和阅读自己的知识库（Entry 只能靠 wiki_get 一条条捞）、会话不可恢复（关掉终端即丢上下文）、队列里的 dead 任务要靠子命令排查、从 Finder/Dock 启动的桌面习惯完全无法满足。
 
 ## Solution
 
@@ -45,7 +45,7 @@ pith 的全部能力（水合、检索、agent 对话、自动 ingest）目前�
 
 ## Implementation Decisions
 
-依据：CONTEXT.md 词汇表、ADR-0005（monorepo 拆包，supersede ADR-0001）、ADR-0006（Engine 架构）。设计依据 `design/pith-design-system`（实现前先读其 README，按指引读 project/ 主设计文件及 imports；像素级还原视觉但不照搬原型代码结构）。
+依据：CONTEXT.md 词汇表、ADR-0005（monorepo 拆包，supersede ADR-0001）、ADR-0006（Engine 架构）。
 
 **包结构（ADR-0005）**：pnpm monorepo 三包——@pith/core（wiki/llm/tools/skills/security，无 CLI/Electron 依赖）、@pith/cli（npm 包名保留 pith-wiki）、@pith/desktop（产品名 pith，不发 npm）。第一步是纯重构：拆包后 CLI 行为不变、现有测试全绿，桌面端再压上来。
 
@@ -94,5 +94,5 @@ pith 的全部能力（水合、检索、agent 对话、自动 ingest）目前�
 
 - 术语以 CONTEXT.md 为准：产品=pith、CLI 包=pith-wiki、Engine vs Queue Worker、Inbox、Scope、Session、Hydration。
 - 设计系统 README 写"8 sandboxed tools"已过时（现为 11 个工具），实现工具相关 UI 时以代码为准。
-- 设计系统覆盖的是桌面端，不是终端 UI；TUI 的旧设计稿（design/pith-wiki TUI _ standalone.html）不再作为依据。
+- 设计系统覆盖的是桌面端，不是终端 UI。
 - 实施顺序受依赖约束：① 纯重构拆包 → ② Engine 协议 + 三深模块 → ③ renderer 三栏骨架 → ④ 首启/队列内置/打包 → ⑤ REPL 退役评估。

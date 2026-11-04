@@ -19,7 +19,7 @@ function isDevEntrypoint(): boolean {
 }
 
 /**
- * 用户级"home"目录：放 .env、config.json、wiki-data/、queue/、history、SOUL.md。
+ * 用户级"home"目录：放 config.json、wiki-data/、queue/、history、SOUL.md。
  *
  * 解析顺序：
  *   1. `PITH_WIKI_HOME` 环境变量（显式覆盖，最高优先）—— 典型用途是 `bin/pith-wiki-dev`

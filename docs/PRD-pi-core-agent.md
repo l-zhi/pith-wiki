@@ -2,7 +2,7 @@
 
 状态：**已接线到桌面端对话路径，开关默认关**（`agentImpl: 'pi-core'` 才启用；默认仍是 pith 内置 loop）
 分支：`research/pi-harness-migration` · 日期：2026-07-27
-上游依据：`docs/research-pi-harness-migration.md`（成本/能力分析）、`docs/PRD-pi-integration.md`（C 与 B）
+上游依据：`docs/PRD-pi-integration.md`（C 与 B）
 
 ## 0. 这一步做了什么、没做什么
 

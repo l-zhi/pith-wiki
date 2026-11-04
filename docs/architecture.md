@@ -1,6 +1,6 @@
 # Architecture
 
-> Companion docs: [PRD](./PRD.md) · [Roadmap](./roadmap.md)
+> Companion docs: [Roadmap](./roadmap.md)
 
 ## 1. Layering overview
 
@@ -153,20 +153,3 @@ in-code DEFAULTS
    ▼
 zod.parse → Config object (fail-fast at startup on invalid config)
 ```
-
-## 5. Extension points
-
-| Slot | Interface | Candidate v1+ implementations |
-| --- | --- | --- |
-| Storage backend | `LibraryService` class | SQLite / Git remote |
-| Retrieval algorithm | `ContextAssembler` class | BM25 / embedding hybrid |
-| LLM provider | `createClient(config)` | Anthropic / OpenAI / Ollama |
-| Tool set | `ALL_TOOLS` array | shell exec / web fetch / git |
-| Entry mode | `src/cli/*` | HTTP REST / SDK package |
-
-## 6. Known limitations (v0)
-
-- Single-process read/write; concurrent processes may stale the in-memory index.
-- No locking: a user editing in Obsidian while the CLI writes produces last-write-wins.
-- Link index scan is O(n); with n > 5000 entries, startup gets slow.
-- Tokenization is a naive `\W+` split — unfriendly to Chinese (an entire sentence becomes one token).

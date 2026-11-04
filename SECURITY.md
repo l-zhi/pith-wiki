@@ -35,9 +35,6 @@ claims:
 - **Sandbox escape** — `read_file` / `write_file` / `list_dir` tools
   accessing paths outside `workspaceRoot ∪ wikiRoot ∪ additionalReadPaths`
   (realpath / symlink bypasses, race-window escapes, etc.).
-- **Prompt-injection-driven file writes that bypass the approval prompt** —
-  e.g. an ingested document that tricks the agent into a `write_file` call
-  the user never sees the approval dialog for.
 - **API key / secret leakage** — keys ending up in `output/<sessionTs>.md`
   transcripts, `~/.pith-wiki/history`, `<wikiRoot>/.queue/logs/*.log`, or
   any other persisted artifact.
@@ -60,9 +57,9 @@ model:
   Administrator privileges they already have.
 - CVEs in `node_modules` dependencies that are **not reachable** from
   pith-wiki code. (Reachable ones — yes, please report.)
-- Anything in Windows-specific code paths — per [ADR-0003](docs/adr/0003-windows-best-effort.md),
-  Windows is best-effort and not in CI. Bug reports welcome, but they
-  get warning severity, not security severity.
+- Anything in Windows-specific code paths. Windows is best-effort and not
+  in CI. Bug reports welcome, but they get warning severity, not security
+  severity.
 
 ## Disclosure Policy
 
@@ -88,12 +85,5 @@ Before reporting, it's worth knowing what's already considered:
   `resolveSafePath` in [src/tools/safety.ts](src/tools/safety.ts), which
   applies `realpathSync` + post-resolve sandbox-root containment check.
   Symlink-based escape attempts are rejected after realpath, not before.
-- The REPL has a path-level write approval prompt (`y` / `a` / `n`) for
-  every new write target. Subcommands bypass this — by design, for
-  scripting.
-- API keys are loaded from `~/.pith-wiki/.env` (recommended) or the
-  workspace `.env`. The transcript writer (`src/cli/transcript.ts`)
-  attempts to redact common secret patterns but is not exhaustive — never
-  paste keys verbatim into the REPL chat box.
 
 If you spot a gap in any of the above, that's almost certainly in scope.

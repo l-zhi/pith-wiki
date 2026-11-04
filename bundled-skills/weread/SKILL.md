@@ -34,8 +34,8 @@ test:
     )
 
 若工具回错 `WEREAD_API_KEY is not set`，告诉用户：到
-https://weread.qq.com/r/weread-skills 登录获取 key，写进 `.env`：
-`WEREAD_API_KEY=wrk-xxxxxxxx`，然后重启 REPL。
+https://weread.qq.com/r/weread-skills 登录获取 key，写进 `config.json` 的 `secrets`：
+`"WEREAD_API_KEY": "wrk-xxxxxxxx"`。
 
 ## 核心接口
 

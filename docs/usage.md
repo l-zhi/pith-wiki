@@ -20,8 +20,8 @@ commands.
 
 ## Initialize (`init`)
 
-One-shot setup of `~/.pith-wiki/`: create the directory, write a minimal `.env`,
-optionally write a `config.json`, `chmod 600` the secret. **Run this once after install.**
+One-shot setup of `~/.pith-wiki/`: create the directory and write `config.json`
+(mode 600). The API key is the selected provider entry's `apiKey`. **Run this once after install.**
 
 Interactive (default when stdin is a TTY):
 
@@ -44,21 +44,18 @@ Flags:
 
 | Flag | Effect |
 |---|---|
-| `--force` | Overwrite existing `.env` / `config.json` (each backed up to `.pre-init.bak`). |
+| `--force` | Overwrite existing `config.json` (backed up to `config.json.pre-init.bak`). |
 | `--provider <id>` | Skip the provider picker. One of: `deepseek`, `openai`, `openrouter`, `qwen`, `kimi`. |
-| `--api-key <key>` | Inline the API key into `.env`'s `<PROVIDER>_API_KEY=` line. |
+| `--api-key <key>` | Write the API key into the provider entry's `apiKey`. |
 | `--watch-dir <path>` | Set the auto-watch directory (also added to `additionalReadPaths`). `~/` expands. |
 | `--no-initial-scan` | With `--watch-dir`: don't sweep existing files on first REPL start. |
 | `--no-prompt` | Skip interactive prompts even on a TTY. Use defaults + whatever flags you passed. |
 
 Behaviour:
 
-- **Idempotent**: refuses to overwrite an existing `.env` / `config.json` (exit 1).
-- **`--force`**: backs each file up to `*.pre-init.bak`, then overwrites.
-- **Minimal `.env`**: just `<PROVIDER>_API_KEY=<value>` plus one comment line.
-- **Conditional `config.json`**: only written when you pick a non-default
-  provider, or set a watch directory. Default (`deepseek`, no watch) → no
-  `config.json` at all; defaults take over.
+- **Idempotent**: refuses to overwrite an existing `config.json` (exit 1).
+- **`--force`**: backs `config.json` up to `config.json.pre-init.bak`, then overwrites.
+- **`config.json`**: always written (selected provider + `activeProvider`). The API key, when given, is that entry's `apiKey`. A watch directory is included only when set.
 
 For all 5 supported providers, see [Switching providers](#switching-providers) below.
 

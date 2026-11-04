@@ -12,7 +12,7 @@ discussion issue first so we can scope-check before you sink hours into it.
 - Doc improvements (typos, unclear sections, missing examples)
 - New `Likely next` items from [docs/roadmap.md](docs/roadmap.md) — leave a
   comment on the issue first so we don't both end up writing it
-- Platform fixes (especially Windows — see [ADR-0003](docs/adr/0003-windows-best-effort.md))
+- Platform fixes (especially Windows)
 
 **Open an issue first**:
 
@@ -39,9 +39,7 @@ cd pith-wiki
 npm install
 
 # Provide an API key only if you're running ingest / REPL. List/query/doctor
-# work without one.
-mkdir -p ~/.pith-wiki && cp .env.example ~/.pith-wiki/.env && chmod 600 ~/.pith-wiki/.env
-# edit ~/.pith-wiki/.env and fill DEEPSEEK_API_KEY (or your provider's key)
+# work without one. `npm run dev -- init` writes it into ~/.pith-wiki/config.json.
 
 npm run build
 ```
@@ -139,10 +137,6 @@ When naming things in code or docs, check [CONTEXT.md](CONTEXT.md) first
 resolve domain terms). If your PR introduces a new domain concept, propose
 a glossary entry in the PR body so we don't end up with synonyms drift.
 
-For architectural decisions, browse [docs/adr/](docs/adr/) — if your PR
-contradicts an existing ADR, surface that explicitly. We can reopen the
-decision, but silent override leads to confused future readers.
-
 ## Security
 
 If you find a security issue, **do not open a public PR or issue.** See
@@ -150,7 +144,7 @@ If you find a security issue, **do not open a public PR or issue.** See
 
 If you're refactoring `src/tools/` for any reason, read
 [docs/security-model.md](docs/security-model.md) first — the sandbox /
-approval / payload-truncation invariants there must be preserved.
+payload-truncation invariants there must be preserved.
 
 ## Questions
 
