@@ -9,7 +9,7 @@ import { z } from 'zod';
  *
  * skill 不携带可执行代码——但可以通过 `commands` 声明它需要 agent 能执行的
  * 外部 CLI(如 weread / lark-cli)。声明的二进制进入 run_command 工具的白名单,
- * 执行仍需会话内审批(见 docs/adr/0004-cli-skill-exec.md)。frontmatter 里的
+ * 执行仍需会话内审批。frontmatter 里的
  * `type`/`version`/`metadata` 等其他额外字段被 zod 静默忽略(兼容 Claude Code
  * 风格的 SKILL.md)。
  */
@@ -56,7 +56,7 @@ export const SkillFrontmatterSchema = z.object({
   description: z.string().min(1, 'skill description is required'),
   /**
    * 该 skill 允许 agent 执行的二进制白名单(argv[0] 精确匹配)。
-   * 声明即授权额度——安装含 commands 的 skill 等于同意 agent 在审批后运行它们。
+   * 声明即授权额度——安装含 commands 的 skill 等于同意 agent 运行它们。
    */
   commands: z
     .array(z.string().regex(COMMAND_BIN_RE, 'command must be a bare binary name (no path/space)'))
@@ -74,7 +74,7 @@ export const SkillFrontmatterSchema = z.object({
     .default([]),
   /**
    * 该 skill 允许 agent 经 http_request 工具访问的 host 白名单 + 鉴权声明。
-   * 声明即授权:装含 http_allow 的 skill = 同意 agent 在审批后访问这些域名。
+   * 声明即授权:装含 http_allow 的 skill = 同意 agent 访问这些域名。
    * 密钥从 auth_env 指定的环境变量取,由工具注入,模型永远看不到也改不了。
    */
   http_allow: z

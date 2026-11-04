@@ -528,18 +528,6 @@ export class LibraryService {
 }
 
 /**
- * frontmatter 的 `date` 归一化成 `YYYY-MM-DD` 字符串。
- *
- * 为什么需要：YAML 1.1 把无引号的 `date: 2026-07-24` 当 timestamp，js-yaml（gray-matter
- * 的解析器）直接给回一个 **Date 对象**。`EntrySchema.date` 是 `z.string()`，于是整条
- * EntrySchema.parse 抛错 → readFile 抛错 → scanDirRecursive 的 catch 静默跳过整个文件。
- * 症状是「文件在磁盘上、库里却看不到」，且没有任何报错（曾丢掉 agent 写的日报）。
- * 姊妹字段 `updated` 一直有这个归一化，`date` 漏了，还被 `as string` 断言骗过了 TS。
- *
- * 纯日期在 YAML 里按 UTC 午夜解析，所以 toISOString().slice(0,10) 忠实还原原始日期。
- * 非 Date 非字符串（数字等异常值）→ undefined，让条目仍可入库（date 本就是可选的）。
- */
-/**
  * 把解析异常压成一行人读得懂的原因，供 onWarn 上报。
  * zod 的 message 是一整串 JSON issue 数组（多行、含 code/expected 等噪声），
  * 直接抛给用户没法读——这里只取第一个 issue 的 `字段: 说明`。

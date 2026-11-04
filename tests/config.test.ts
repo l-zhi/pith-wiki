@@ -10,7 +10,7 @@ import path from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   applyActiveProvider,
-  loadConfig,
+  loadConfigFromEnv,
   parsePositiveIntEnv,
   parseReadPathsFromEnv,
   pickHydrationProvider,
@@ -470,7 +470,7 @@ describe('multi-provider — loadConfig 端到端', () => {
     process.env.PITH_WIKI_PROVIDER = 'qwen';
     process.env.QWEN_KEY = 'qwen-env';
     process.env.DEEPSEEK_KEY = 'deepseek-env';
-    const cfg = loadConfig({
+    const cfg = loadConfigFromEnv({
       activeProvider: 'deepseek',
       providers: {
         deepseek: {
@@ -494,7 +494,7 @@ describe('multi-provider — loadConfig 端到端', () => {
   it('env PITH_WIKI_PROVIDER 在没 CLI override 时被采用', () => {
     process.env.PITH_WIKI_PROVIDER = 'qwen';
     process.env.QWEN_KEY = 'qwen-from-env';
-    const cfg = loadConfig({
+    const cfg = loadConfigFromEnv({
       providers: {
         deepseek: { baseURL: 'https://api.deepseek.com', model: 'deepseek-chat' },
         qwen: {
@@ -511,7 +511,7 @@ describe('multi-provider — loadConfig 端到端', () => {
 
   it('providers 空 + activeProvider 也空 → 完全 v0 行为（顶层默认）', () => {
     delete process.env.PITH_WIKI_PROVIDER;
-    const cfg = loadConfig({});
+    const cfg = loadConfigFromEnv({});
     expect(cfg.activeProvider).toBeUndefined();
     expect(cfg.providers).toEqual({});
     // baseURL 走 DEFAULTS
@@ -555,7 +555,7 @@ describe('PITH_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
     );
     process.env.PITH_WIKI_CONFIG_PATH = cfgFile;
 
-    const cfg = loadConfig({});
+    const cfg = loadConfigFromEnv({});
     expect(cfg.activeProvider).toBe('custom');
     expect(cfg.baseURL).toBe('https://custom.example.com/v1');
     expect(cfg.model).toBe('custom-model');
@@ -578,7 +578,7 @@ describe('PITH_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
     );
     process.env.PITH_WIKI_CONFIG_PATH = cfgFile;
 
-    const cfg = loadConfig({});
+    const cfg = loadConfigFromEnv({});
     expect(cfg.hydrationProvider).toBe('b');
     expect(cfg.reviewProvider).toBe('b');
     expect(cfg.reviewMaxRounds).toBe(3);
@@ -588,13 +588,13 @@ describe('PITH_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
     const cfgFile = path.join(tmpDir, 'config.json');
     fs.writeFileSync(cfgFile, JSON.stringify({ providers: {}, activeProvider: undefined }));
     process.env.PITH_WIKI_CONFIG_PATH = cfgFile;
-    expect(loadConfig({}).reviewMaxRounds).toBe(2);
+    expect(loadConfigFromEnv({}).reviewMaxRounds).toBe(2);
   });
 
   it('指向不存在的文件 → 等价于"没有 config"（silent fallback 到默认 + overrides）', () => {
     process.env.PITH_WIKI_CONFIG_PATH = path.join(tmpDir, 'does-not-exist.json');
 
-    const cfg = loadConfig({});
+    const cfg = loadConfigFromEnv({});
     // 没有任何 provider 配置 → 顶层默认 baseURL
     expect(cfg.activeProvider).toBeUndefined();
     expect(cfg.providers).toEqual({});
@@ -606,8 +606,8 @@ describe('PITH_WIKI_CONFIG_PATH — 显式 config 文件路径', () => {
     fs.writeFileSync(cfgFile, '{ not valid json');
     process.env.PITH_WIKI_CONFIG_PATH = cfgFile;
 
-    expect(() => loadConfig({})).toThrow(/Failed to parse/);
-    expect(() => loadConfig({})).toThrow(cfgFile);
+    expect(() => loadConfigFromEnv({})).toThrow(/Failed to parse/);
+    expect(() => loadConfigFromEnv({})).toThrow(cfgFile);
   });
 });
 
@@ -634,15 +634,15 @@ describe('requestTimeoutMs — 配置链', () => {
   });
   it('默认 120_000', () => {
     delete process.env.PITH_WIKI_TIMEOUT_MS;
-    expect(loadConfig({}).requestTimeoutMs).toBe(120_000);
+    expect(loadConfigFromEnv({}).requestTimeoutMs).toBe(120_000);
   });
   it('PITH_WIKI_TIMEOUT_MS 覆盖默认', () => {
     process.env.PITH_WIKI_TIMEOUT_MS = '45000';
-    expect(loadConfig({}).requestTimeoutMs).toBe(45_000);
+    expect(loadConfigFromEnv({}).requestTimeoutMs).toBe(45_000);
   });
   it('overrides 优先级高于 env', () => {
     process.env.PITH_WIKI_TIMEOUT_MS = '45000';
-    expect(loadConfig({ requestTimeoutMs: 5000 }).requestTimeoutMs).toBe(5000);
+    expect(loadConfigFromEnv({ requestTimeoutMs: 5000 }).requestTimeoutMs).toBe(5000);
   });
 });
 
@@ -672,7 +672,7 @@ describe('piProvider —— 用 pi-ai 内建 provider（如 Anthropic 原生协�
 
   it('既没 baseURL 也没 piProvider 的 openai provider 仍然报错', () => {
     expect(() =>
-      loadConfig({
+      loadConfigFromEnv({
         providers: { bad: { kind: 'openai', model: 'm' } },
         activeProvider: 'bad',
       } as never),

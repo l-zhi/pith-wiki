@@ -28,15 +28,15 @@ interface BuildArgs {
 export function buildSkillCommands(program: Command, args: BuildArgs): void {
   const skill = program
     .command('skill')
-    .description('Manage installed skills (prompt instruction packages + code tool plugins).');
+    .description('Manage installed skills (prompt instruction packages).');
 
   skill
     .command('list')
     .description('List discovered skills across skillDirs.')
-    .action(async () => {
+    .action(() => {
       const config = args.configFor();
       const warnings: string[] = [];
-      const reg = await buildSkillRegistry({
+      const reg = buildSkillRegistry({
         skillDirs: config.skillDirs,
         onWarn: (m) => warnings.push(m),
       });
@@ -130,10 +130,9 @@ export function buildSkillCommands(program: Command, args: BuildArgs): void {
   skill
     .command('remove <name>')
     .description('Remove an installed skill by name (deletes its directory).')
-    .option('--force', 'Skip the confirmation note and just delete.')
-    .action(async (name: string) => {
+    .action((name: string) => {
       const config = args.configFor();
-      const reg = await buildSkillRegistry({ skillDirs: config.skillDirs });
+      const reg = buildSkillRegistry({ skillDirs: config.skillDirs });
       const s = reg.get(name);
       if (!s) {
         console.error(chalk.red(`Skill not found: ${name}`));

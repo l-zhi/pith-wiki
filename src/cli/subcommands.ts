@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
 import chalk from 'chalk';
@@ -272,7 +271,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
         return;
       }
       // stdin 分支：纯文本 / markdown 直接喂 hydrator（没有文件路径，转换器不参与）。
-      const raw = await readRaw(undefined);
+      const raw = await readRaw();
       const source: Source = opts.url ? { type: 'url', value: opts.url } : { type: 'inline' };
       const entry = await hydrator.hydrate({
         rawContent: raw,
@@ -466,8 +465,7 @@ export async function enumerateBatchFiles(opts: {
   return [];
 }
 
-async function readRaw(file?: string): Promise<string> {
-  if (file) return fs.readFileSync(file, 'utf8');
+async function readRaw(): Promise<string> {
   if (process.stdin.isTTY) {
     throw new Error('Provide --file <path>, or pipe content via stdin.');
   }

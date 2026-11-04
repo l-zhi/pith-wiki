@@ -31,9 +31,6 @@ export interface ChatClient {
   };
 }
 
-/** 传输实现的选择键。config.transport / PITH_WIKI_TRANSPORT。 */
-export type TransportKind = 'openai' | 'pi-ai';
-
 /**
  * 传输层用途。决定「能不能用 pi-ai」：
  *   - chat      ：REPL / 桌面对话，可走 pi-ai

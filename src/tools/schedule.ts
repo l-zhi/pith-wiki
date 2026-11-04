@@ -9,7 +9,7 @@ import type { ScheduleSpec, ScheduledTask } from '../schedule/types.js';
  * 注意:schedule 是 once|cron 的判别联合,但手搓的 zodToJsonSchema 不认 union
  * （会降级成 {}）。所以这里把 schedule **摊平**成 kind/at/cron/tz 几个
  * string/enum/boolean 参数(全部 converter-safe),在 handler 里重新组装成
- * ScheduleSpec。详见 CLAUDE.md 里 zodToJsonSchema 的约束说明。
+ * ScheduleSpec。约束见 src/tools/index.ts 的 zodToJsonSchema。
  *
  * 这组工具只在桌面 engine（有 ScheduleService 宿主）挂载;ctx.scheduleService
  * 缺失时直接返回错误(REPL/CLI 没有触发宿主)。

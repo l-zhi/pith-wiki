@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import Spinner from 'ink-spinner';
 import os from 'node:os';
 import path from 'node:path';
-import type { DashboardData, CollectionRow, WatchRow } from './dashboardData.js';
+import type { DashboardData, CollectionRow, WatchRow, WorkerSummary } from './dashboardData.js';
 import { visualWidth } from './dashboardData.js';
 import { C } from './theme.js';
 
@@ -22,16 +22,10 @@ import { C } from './theme.js';
  * 纯文本兜底（formatDashboard）见 dashboardData.ts，给 CLI `pith-wiki status` 和 transcript 用。
  */
 
-/** 进程级队列 worker 状态，只在 REPL 模式下传入；CLI 子命令 `status` 不传 → 不渲染该 pill。 */
-export interface WorkerInfo {
-  mode: 'self' | 'external' | 'off' | 'error';
-  externalPid?: number;
-  error?: string;
-}
-
 interface Props {
   data: DashboardData;
-  worker?: WorkerInfo;
+  /** 进程级队列 worker 状态。CLI 子命令 `status` 不传 → 不渲染该 pill。 */
+  worker?: WorkerSummary;
 }
 
 const NUM_COL_W = 8;
@@ -70,7 +64,7 @@ function TopBanner({
   provider: string;
   model: string;
   wikiRoot: string;
-  worker?: WorkerInfo;
+  worker?: WorkerSummary;
 }) {
   return (
     <Box flexDirection="column">
@@ -92,7 +86,7 @@ function TopBanner({
   );
 }
 
-function ModePill({ worker }: { worker: WorkerInfo }) {
+function ModePill({ worker }: { worker: WorkerSummary }) {
   // mode = worker 进程所有权状态，与 ready/provider 同一层级（顶部 banner）
   const { value, color } = (() => {
     switch (worker.mode) {

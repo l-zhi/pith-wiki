@@ -1,4 +1,3 @@
-import React, { useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 export interface ApprovalRequest {
@@ -20,10 +19,6 @@ export function ToolApproval({ request }: Props) {
     else if (ch === 'a') request.resolve('always');
     else if (ch === 'n' || key.escape || key.return) request.resolve('no');
   });
-
-  useEffect(() => () => {
-    /* nothing to cleanup */
-  }, []);
 
   const isExec = request.kind === 'exec';
   const title = isExec ? `Run command "${request.path}"?` : `Approve write to ${request.path}?`;
