@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
+import { LocalLink } from '../components/LocalLink';
 import { Badge, Button, SegmentedControl, Tag } from '../ds';
 import { GraphCanvas } from './GraphView';
 import { useStore } from '../store';
@@ -118,7 +119,9 @@ export function EntryReader() {
             <LinkGraph />
           ) : (
             <div className="pith-md">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{entry.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: LocalLink }}>
+                {entry.content}
+              </ReactMarkdown>
             </div>
           )}
 
