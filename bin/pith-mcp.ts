@@ -44,7 +44,7 @@ async function main(): Promise<void> {
   const library = new LibraryService(config.wikiRoot, { ignoredDirs: [config.outputDir] });
   // dummy client: retrieval tools never touch the hydrator, so this is never called.
   const dummyClient = new OpenAI({ apiKey: 'unused-mcp-readonly', baseURL: 'http://127.0.0.1:1' });
-  const ctx = buildContext(config, dummyClient, async () => 'no', library, {});
+  const ctx = buildContext(config, dummyClient, library, {});
 
   const server = new McpServer({ name: 'pith', version: '0.2.0' });
   for (const tool of RETRIEVAL_TOOLS) {

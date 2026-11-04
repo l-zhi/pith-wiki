@@ -19,7 +19,6 @@ afterEach(() => {
   fs.rmSync(ws, { recursive: true, force: true });
 });
 
-/** 不提供 requestApproval/approvedWritePaths —— 验证写入不依赖审批（免审批）。 */
 function ctx(): ToolContext {
   return {
     config: { workspaceRoot: ws, wikiRoot: wiki, maxToolPayloadBytes: 100_000, readOnly: false },

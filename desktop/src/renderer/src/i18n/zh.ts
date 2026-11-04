@@ -117,7 +117,6 @@ export const zh = {
     noteCancelled: '⏹ 已取消',
   },
   approval: {
-    writeTitle: '允许写入文件？',
     execTitle: '允许执行命令？',
     approve: '允许',
     always: '本会话总是允许',
@@ -245,7 +244,7 @@ export const zh = {
     catchUp: '错过补跑',
     catchUpHint: 'App 关闭期间错过的触发，下次打开时补跑一次。',
     requireApproval: '需要人工审批',
-    requireApprovalHint: '触发时工具调用（写文件 / 执行命令）需你确认；关闭则无人值守自动放行。',
+    requireApprovalHint: '触发时执行命令需你确认；关闭则无人值守自动放行。',
     review: '输出前审稿',
     reviewHint: '开启后该任务以审稿模式跑：输出先经审稿人审核，不达标自动打回重写。适合日报等写作任务（更慢、更耗额度）。',
     save: '保存',

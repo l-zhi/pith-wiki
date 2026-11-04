@@ -412,7 +412,7 @@ export type EngineEvent =
       kind: 'session.approvalRequest';
       sessionId: string;
       approvalId: string;
-      approvalKind: 'write' | 'exec';
+      approvalKind: 'exec';
       path: string;
       preview: string;
     }

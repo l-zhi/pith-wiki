@@ -382,28 +382,10 @@ export function App({ config: initialConfig }: Props) {
     };
   }, [config, hydrationClient, hydrationConfig, library]);
 
-  const requestApproval = useMemo(
-    () => (path: string, preview: string) =>
-      new Promise<'yes' | 'no' | 'always'>((resolve) => {
-        setApproval({
-          kind: 'write',
-          path,
-          preview,
-          resolve: (answer) => {
-            setApproval(null);
-            resolve(answer);
-          },
-        });
-      }),
-    [],
-  );
-
-  // 命令执行审批：与写入审批共用 setApproval 队列，靠 kind='exec' 区分文案。
   const requestCommandApproval = useMemo(
     () => (command: string, argvPreview: string) =>
       new Promise<'yes' | 'no' | 'always'>((resolve) => {
         setApproval({
-          kind: 'exec',
           path: command,
           preview: argvPreview,
           resolve: (answer) => {
@@ -468,7 +450,7 @@ export function App({ config: initialConfig }: Props) {
     // 共用的 library + converter pipeline 透传进 toolCtx；wiki_* 工具和 worker /
     // watcher 看到同一份索引、同一份转换器注册表。
     // buildContext 的 client 只用于造 hydrator（wiki_ingest）→ 传水合专用 client。
-    const ctx = buildContext(hydrationConfig, hydrationClient, requestApproval, library, {
+    const ctx = buildContext(hydrationConfig, hydrationClient, library, {
       converterRegistry: converters.registry,
       converterCache: converters.cache,
       skillRegistry,
@@ -489,7 +471,6 @@ export function App({ config: initialConfig }: Props) {
     hydrationConfig,
     client,
     hydrationClient,
-    requestApproval,
     requestCommandApproval,
     library,
     converters,

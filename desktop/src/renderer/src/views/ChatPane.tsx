@@ -255,7 +255,6 @@ function Item({ item }: { item: ChatItem }) {
       return (
         <div className="pith-fade-up" style={{ marginLeft: 40 }}>
           <ToolApprovalCard
-            kind={item.approvalKind}
             path={item.path}
             preview={item.preview}
             decided={item.decided}

@@ -47,7 +47,7 @@ export interface AgentLike {
 
 export interface ApprovalBridge {
   /** SessionManager 提供给 AgentFactory 的审批通道（工具层回调 → UI 事件）。 */
-  request(kind: 'write' | 'exec', path: string, preview: string): Promise<'yes' | 'no' | 'always'>;
+  request(kind: 'exec', path: string, preview: string): Promise<'yes' | 'no' | 'always'>;
 }
 
 export interface MadeAgent {

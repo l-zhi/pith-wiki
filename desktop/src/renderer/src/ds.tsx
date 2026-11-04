@@ -830,7 +830,6 @@ export function TokenMeter({
 /* ───────── ToolApprovalCard ───────── */
 
 export function ToolApprovalCard({
-  kind = 'write',
   path = '',
   preview = '',
   decided = null,
@@ -838,7 +837,6 @@ export function ToolApprovalCard({
   onAlways,
   onDeny,
 }: {
-  kind?: 'write' | 'exec';
   path?: string;
   preview?: string;
   decided?: 'yes' | 'no' | 'always' | null;
@@ -847,9 +845,8 @@ export function ToolApprovalCard({
   onDeny?: () => void;
 }) {
   const { t } = useTranslation();
-  const isExec = kind === 'exec';
-  const accent = isExec ? 'var(--status-running)' : 'var(--apple-yellow)';
-  const title = isExec ? t('approval.execTitle') : t('approval.writeTitle');
+  const accent = 'var(--status-running)';
+  const title = t('approval.execTitle');
   return (
     <div
       style={{
@@ -869,7 +866,7 @@ export function ToolApprovalCard({
           background: `color-mix(in srgb, ${accent} 8%, transparent)`,
         }}
       >
-        <span style={{ display: 'inline-flex', color: accent, fontSize: 15 }}>{isExec ? '⌘' : '✎'}</span>
+        <span style={{ display: 'inline-flex', color: accent, fontSize: 15 }}>⌘</span>
         <span style={{ fontSize: 'var(--text-callout)', fontWeight: 600, color: 'var(--text-primary)' }}>{title}</span>
         <code
           style={{

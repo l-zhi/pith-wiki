@@ -41,12 +41,7 @@ export interface ToolContext {
   /** 会话触发来源；缺省构造（buildContext 不传）视为 interactive。 */
   origin: RunOrigin;
   scheduledOutput?: ScheduledOutputContext;
-  approvedWritePaths: Set<string>;
-  requestApproval: (path: string, preview: string) => Promise<ApprovalAnswer>;
-  /**
-   * 会话内已放行的命令二进制（run_command 审批答 `a` 后加入）。
-   * 与 approvedWritePaths 同生命周期：ctx 存活期间累积。
-   */
+  /** 会话内已放行的命令二进制（run_command 审批答 `a` 后加入）。 */
   approvedCommands: Set<string>;
   /**
    * 命令执行审批通道。仅 REPL 注入（有 UI 才能审批）；缺省 undefined →
@@ -111,7 +106,6 @@ export interface BuildContextExtras {
 export function buildContext(
   config: Config,
   client: ChatClient,
-  requestApproval: ToolContext['requestApproval'],
   /**
    * 可选传入一个已经构造好的 LibraryService。
    *
@@ -148,8 +142,6 @@ export function buildContext(
     hydrator,
     origin: extras.origin ?? 'interactive',
     scheduledOutput: extras.scheduledOutput,
-    approvedWritePaths: new Set(),
-    requestApproval,
     approvedCommands: new Set(),
     requestCommandApproval: extras.requestCommandApproval,
     converterRegistry: registry,

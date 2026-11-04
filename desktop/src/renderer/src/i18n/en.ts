@@ -117,7 +117,6 @@ export const en: Shape<typeof zh> = {
     noteCancelled: '⏹ cancelled',
   },
   approval: {
-    writeTitle: 'Approve file write?',
     execTitle: 'Run command?',
     approve: 'Approve',
     always: 'Always allow',
@@ -245,7 +244,7 @@ export const en: Shape<typeof zh> = {
     catchUp: 'Catch up',
     catchUpHint: 'If the app was closed over a fire time, run once on next launch.',
     requireApproval: 'Require approval',
-    requireApprovalHint: 'Tool calls (writes/commands) need your confirmation at fire time; off = auto-approve unattended.',
+    requireApprovalHint: 'Commands need your confirmation at fire time; off = auto-approve unattended.',
     review: 'Review before output',
     reviewHint: 'Runs this task in review mode: output is checked by a reviewer and bounced back for a rewrite if it falls short. Good for writing tasks like daily reports (slower, more tokens).',
     save: 'Save',
