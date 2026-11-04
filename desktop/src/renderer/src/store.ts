@@ -717,7 +717,7 @@ export const useStore = create<PithStore>((set, get) => {
           }));
           return;
         case 'session.thinking':
-          patchChat(evt.sessionId, (c) => ({ ...c, activity: 'thinking…' }));
+          patchChat(evt.sessionId, (c) => ({ ...c, activity: i18n.t('chat.thinking') }));
           return;
         case 'session.assistantText':
           if (evt.final) {

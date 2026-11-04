@@ -132,9 +132,6 @@ export interface DashboardRowDTO {
 
 export interface DashboardDTO {
   wikiRoot: string;
-  provider: string;
-  model: string;
-  ready: boolean;
   collections: DashboardRowDTO[];
   watchDirs: { path: string; collection: string; count: number; error?: string }[];
   extensions: string[];
@@ -340,8 +337,7 @@ export interface BootstrapDTO {
   provider: string;
   model: string;
   wikiRoot: string;
-  workspaceRoot: string;
-  providers: { name: string; model: string; hasKey: boolean }[];
+  providers: { name: string; model: string }[];
 }
 
 /* ───────────────────────── 请求 / 事件 ───────────────────────── */
@@ -349,7 +345,7 @@ export interface BootstrapDTO {
 export type EngineRequest =
   | { kind: 'app.bootstrap' }
   | { kind: 'app.saveOnboarding'; provider: string; baseURL: string; model: string; apiKey: string }
-  | { kind: 'session.create'; provider?: string; reviewMode?: boolean }
+  | { kind: 'session.create' }
   | { kind: 'session.setReviewMode'; sessionId: string; reviewMode: boolean }
   | { kind: 'session.list' }
   | { kind: 'session.resume'; sessionId: string }
