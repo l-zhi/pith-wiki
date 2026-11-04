@@ -27,13 +27,21 @@ const SOURCE_ICON: Record<string, React.ReactNode> = {
 };
 
 /**
- * 中栏：nav=library/inbox → 条目列表（设计稿 EntryList.jsx）；
- *      nav=chat          → 会话列表（Claude Code 桌面端布局）。
- * dashboard 不渲染中栏。
+ * 中栏：nav=library → 条目列表（设计稿 EntryList.jsx）；
+ *      nav=chat    → 会话列表（Claude Code 桌面端布局）。
+ * dashboard / inbox / settings / graph / skills / schedule 不渲染中栏。
  */
 export function MiddleColumn() {
   const nav = useStore((s) => s.nav);
-  if (nav === 'dashboard' || nav === 'inbox' || nav === 'settings' || nav === 'graph') return null;
+  if (
+    nav === 'dashboard' ||
+    nav === 'inbox' ||
+    nav === 'settings' ||
+    nav === 'graph' ||
+    nav === 'skills' ||
+    nav === 'schedule'
+  )
+    return null;
   return nav === 'chat' ? <SessionList /> : <EntryColumn />;
 }
 
@@ -122,7 +130,7 @@ function EntryColumn() {
       title={e.title}
       summary={e.summary}
       tags={e.tags}
-      updated={e.updated}
+      updated={relDay(e.updated)}
       selected={entryId === e.id}
       onClick={() => void openEntry(e.id, e.collection)}
     />
@@ -347,7 +355,7 @@ function SessionList() {
             >
               <EntryListItem
                 icon={<MessageCircle size={14} />}
-                title={s.title}
+                title={s.title === 'New chat' ? t('sessions.newChat') : s.title}
                 summary={t('sessions.meta', { n: s.msgCount, model: s.model })}
                 updated={relDay(s.updatedAt)}
                 selected={active === s.id}

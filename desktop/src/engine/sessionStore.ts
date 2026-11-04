@@ -14,7 +14,7 @@ import { ScheduledOutputContextSchema, type ScheduledOutputContext } from '@core
  *     安全过滤器只作用于出站链路，恢复重放时由 Sanitizer 重新确定性掩码（见 PRD）。
  *   - append 用 appendFileSync：进程崩溃最多丢最后一行，已落盘的行不会损坏。
  *   - load 对坏行容错（跳过），坏 meta 整个会话视为不可用。
- *   - meta 更新（标题）通过重写首行实现——频率极低（标题只定一次）。
+ *   - meta 更新（标题）通过重写首行实现。
  */
 
 export interface StoredMeta {

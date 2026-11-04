@@ -687,17 +687,6 @@ function requireSvc(): Services {
   return svc;
 }
 
-function relTime(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!Number.isFinite(ms) || ms < 0) return '';
-  const m = Math.floor(ms / 60_000);
-  if (m < 1) return 'now';
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h`;
-  return `${Math.floor(h / 24)}d`;
-}
-
 function entrySummary(e: {
   id: string;
   collection: string;
@@ -716,7 +705,7 @@ function entrySummary(e: {
     summary: e.summary,
     tags: e.tags,
     sourceType: e.source.type,
-    updated: relTime(e.updated),
+    updated: e.updated,
   };
 }
 
@@ -801,10 +790,6 @@ async function handle(req: EngineRequest): Promise<unknown> {
       const providers = Object.entries(s.config.providers ?? {}).map(([name, p]) => ({
         name,
         model: (p as { model?: string }).model ?? s.config.model,
-        hasKey: Boolean(
-          (p as { apiKey?: string; apiKeyEnv?: string }).apiKey ||
-          process.env[(p as { apiKeyEnv?: string }).apiKeyEnv ?? ''],
-        ),
       }));
       return {
         ready: s.config.apiKey.length > 0,
@@ -813,7 +798,6 @@ async function handle(req: EngineRequest): Promise<unknown> {
         provider: s.config.activeProvider || 'deepseek',
         model: s.config.model,
         wikiRoot: s.config.wikiRoot,
-        workspaceRoot: s.config.workspaceRoot,
         providers,
       };
     }
@@ -825,7 +809,7 @@ async function handle(req: EngineRequest): Promise<unknown> {
       return { ok: true };
     }
     case 'session.create':
-      return requireSvc().sessions.create(req.provider, { reviewMode: req.reviewMode });
+      return requireSvc().sessions.create();
     case 'session.setReviewMode':
       return requireSvc().sessions.setReviewMode(req.sessionId, req.reviewMode);
     case 'session.list':
@@ -937,7 +921,6 @@ async function handle(req: EngineRequest): Promise<unknown> {
       ].join('\n');
       const detail: EntryDetail = {
         ...entrySummary(e),
-        updated: e.updated,
         content: e.content,
         links: e.links,
         backlinks: idx?.backward ?? [],
@@ -1124,9 +1107,6 @@ async function handle(req: EngineRequest): Promise<unknown> {
       const data = await collectDashboardData(s.config, s.converters.registry);
       const dto: DashboardDTO = {
         wikiRoot: data.wikiRoot,
-        provider: data.provider,
-        model: data.model,
-        ready: data.ready,
         collections: data.collections,
         watchDirs: data.watchDirs,
         extensions: data.registeredExtensions,
@@ -1279,8 +1259,6 @@ function synthCliEntry(name: string): Record<string, unknown> | null {
   const bin = resolveBinaryPath(DELEGATE_BINARIES[name]);
   return {
     kind: name,
-    // ProviderSchema.model 是 min(1)，pi 的「用 pi 默认模型」用 'default' 占位，
-    // PiAgent 见到它就不传 --model（见 normalizeDelegateModel）。
     model: DELEGATE_DEFAULT_MODELS[name] || 'default',
     ...(bin ? { binary: bin } : {}),
   };

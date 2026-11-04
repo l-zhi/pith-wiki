@@ -10,8 +10,6 @@
  * 语义（filesystem 直觉，与 store.parseScopeFromText 对齐）：
  *   - 条目引用：`@<id>`          —— 钉住该条目
  *   - 集合引用：`@<collection>/`  —— 结尾斜杠 = 目录，收窄到该集合
- * 深层子目录（`@col/sub/`）可下钻浏览，但桌面 ScopeDTO 只有集合 / 条目两级，
- * 确认深层目录不产生 scope（parseScopeFromText 只认已知集合）——浏览辅助而已。
  */
 import type { MentionTreeDTO, MentionNodeDTO } from '../../shared/protocol';
 
