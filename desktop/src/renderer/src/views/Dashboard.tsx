@@ -1,6 +1,6 @@
 import { Folder, LayoutDashboard, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Badge, Button, Card, ProgressBar, StatusDot } from '../ds';
+import { Badge, Button, Card, StatusDot } from '../ds';
 import { useStore } from '../store';
 
 /** Dashboard —— 库健康（设计稿 Dashboard.jsx）：stat 卡 + 按 Collection 聚合状态表 + 队列行。 */
@@ -133,11 +133,8 @@ export function Dashboard() {
                 </Badge>
               )}
               <Badge tone="neutral">{t('dashboard.pendingCount', { n: totals.pending })}</Badge>
-              <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, width: 220 }}>
-                <ProgressBar value={totalFiles ? totals.done / totalFiles : 0} tone="done" />
-                <span style={{ fontSize: 'var(--text-caption)', color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>
-                  {t('dashboard.watchRatio', { w: watching, n: cols.length })}
-                </span>
+              <span style={{ marginLeft: 'auto', fontSize: 'var(--text-caption)', color: 'var(--text-tertiary)', fontVariantNumeric: 'tabular-nums' }}>
+                {t('dashboard.watchRatio', { w: watching, n: cols.length })}
               </span>
             </div>
           </Card>

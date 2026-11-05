@@ -8,8 +8,9 @@ import { resolve } from 'node:path';
  *             Engine 直接 import 仓库根 src/ 的领域核心（@pith/core 物理拆包前的
  *             过渡形态，见 ADR-0005）；运行时依赖（openai/zod/…）externalize 到
  *             desktop/node_modules。
- *   preload — contextBridge。sandbox=false（需要 Node 的 EventEmitter），但仍走
- *             contextIsolation，renderer 只见 window.pith。
+ *   preload — contextBridge。sandbox=false（preload 调用 electron.clipboard，
+ *             该模块不在沙箱 preload 白名单：contextBridge / ipcRenderer 等），
+ *             但仍走 contextIsolation，renderer 只见 window.pith。
  *   renderer— React 三栏应用。设计 token CSS 从 design system 复制（src/renderer/src/theme/）。
  */
 export default defineConfig({

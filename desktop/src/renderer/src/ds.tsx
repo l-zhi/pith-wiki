@@ -721,53 +721,6 @@ export function EntryListItem({
   );
 }
 
-/* ───────── ProgressBar ───────── */
-
-export function ProgressBar({
-  value = 0,
-  tone = 'accent',
-  height = 6,
-  style = {},
-}: {
-  value?: number;
-  tone?: 'done' | 'accent' | 'running' | 'brand';
-  height?: number;
-  style?: React.CSSProperties;
-}) {
-  const colors = {
-    done: 'var(--status-done)',
-    accent: 'var(--accent)',
-    running: 'var(--status-running)',
-    brand: 'var(--status-brand)',
-  };
-  const pct = Math.max(0, Math.min(1, value)) * 100;
-  return (
-    <div
-      role="progressbar"
-      style={{
-        position: 'relative',
-        width: '100%',
-        height,
-        background: 'var(--surface-sunken)',
-        borderRadius: 'var(--radius-pill)',
-        overflow: 'hidden',
-        boxShadow: 'var(--ring-card)',
-        ...style,
-      }}
-    >
-      <div
-        style={{
-          height: '100%',
-          width: pct + '%',
-          borderRadius: 'var(--radius-pill)',
-          background: colors[tone],
-          transition: 'width var(--dur-slow) var(--ease-out)',
-        }}
-      />
-    </div>
-  );
-}
-
 /* ───────── Spinner ───────── */
 
 export function Spinner({ size = 14, tone = 'var(--status-running)' }: { size?: number; tone?: string }) {

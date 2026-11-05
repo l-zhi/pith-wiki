@@ -504,7 +504,7 @@ export function GraphView() {
             variant="ghost"
             iconLeft={<Sparkles size={14} />}
             onClick={() => setReplayNonce((n) => n + 1)}
-            disabled={!graph || graph.edges.length === 0}
+            disabled={!graph || graph.nodes.length === 0}
           >
             {t('graph.replay')}
           </Button>
@@ -515,7 +515,7 @@ export function GraphView() {
       </div>
 
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-        {!graph || graph.edges.length === 0 ? (
+        {!graph || graph.nodes.length === 0 ? (
           <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)', fontSize: 'var(--text-subhead)', padding: 40, textAlign: 'center' }}>
             {graph ? t('graph.empty') : '…'}
           </div>
