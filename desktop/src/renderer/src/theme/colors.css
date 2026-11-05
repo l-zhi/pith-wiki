@@ -13,7 +13,7 @@
   --apple-orange: #ff8a00;     /* running / busy */
   --apple-red: #9e0018;        /* danger: dead / error / destructive (darkest red) */
   --apple-brand-red: #e11d2a;  /* THE brand accent — deeper red-black identity */
-  --apple-green: #34c759;      /* retained raw — not used by brand UI */
+  --apple-green: #34c759;      /* Switch default on-state */
   --apple-cyan: #32ade6;       /* retained raw — not used by brand UI */
   --apple-purple: #af52de;     /* legacy secondary (unused by brand) */
   --apple-yellow: #ffcc00;     /* warning */
