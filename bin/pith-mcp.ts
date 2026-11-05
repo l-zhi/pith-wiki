@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 /**
- * pith-mcp — a stdio MCP server exposing pith's READ-ONLY retrieval tools.
+ * pith-mcp — a stdio MCP server for wiki retrieval tools plus weread_gateway.
  *
  * Purpose: let an external agent host (notably Claude Code, via `claude -p
  * --mcp-config … --allowedTools "mcp__pith__*"`) query a pith library through
- * the same wiki tools the built-in agent uses — wiki_query / wiki_grep /
- * wiki_get / wiki_list / wiki_read_source. No write/ingest/schedule tools are
- * exposed, so the worst this server can do is read inside the sandbox.
+ * wiki_query / wiki_grep / wiki_get / wiki_list / wiki_read_source.
+ * weread_gateway POSTs to the WeChat Reading gateway. No wiki write/ingest/schedule tools.
  *
  * The library it serves is whatever `loadConfigFromEnv()` resolves — set
  * `PITH_WIKI_HOME` in the MCP server's `env` to point at the right profile

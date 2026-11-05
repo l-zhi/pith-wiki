@@ -5,6 +5,7 @@ import fastGlob from 'fast-glob';
 import type { Config } from '../config.js';
 import type { ConverterRegistry } from '../wiki/converters/registry.js';
 import { readState, type JobStatus } from '../wiki/queue/state.js';
+import { extensionsToGlob } from '../wiki/queue/watcher.js';
 
 /**
  * REPL 启动时打的 dashboard。
@@ -55,7 +56,6 @@ export interface DashboardData {
 
 /**
  * 同步扫 wikiRoot 一层得到 collection 列表 + 每个 collection 的 .md 数量。
- * 口径与 LibraryService.scanAll 一致：只看 `<wikiRoot>/<collection>/*.md` 一层。
  * 跳过 dotdir（.cache、.queue 等不是 collection）。
  */
 function scanWikiCollections(wikiRoot: string): Map<string, number> {
@@ -118,8 +118,6 @@ export function loadQueueDigest(queueStatePath: string): QueueDigest {
 /**
  * 读队列 state.json，按 collection 聚合各状态数量。
  * state 文件不存在或读不出 → 返回空 Map（dashboard 仍可只显示 wiki 库存）。
- *
- * 导出给 Dashboard 组件做 live polling 用（启动快照 + 2s 增量合并）。
  */
 export function loadQueueCounts(queueStatePath: string): Map<string, QueueStatusCount> {
   const out = new Map<string, QueueStatusCount>();
@@ -175,12 +173,6 @@ function describeCollection(wd: Config['watchDirs'][number]): string {
   return '(unconfigured)';
 }
 
-function buildExtensionGlob(exts: string[]): string {
-  if (exts.length === 0) return '**/*.md';
-  if (exts.length === 1) return `**/*${exts[0]}`;
-  return `**/*.{${exts.map((e) => e.replace(/^\./, '')).join(',')}}`;
-}
-
 /**
  * 从 baseURL 提取显示用的 provider 名（fallback）：去 scheme 取 host 第一段。
  * 优先用 `activeProvider`（用户在 config 里命名的 key）。
@@ -232,7 +224,7 @@ export async function collectDashboardData(
   });
 
   const exts = registry.extensions();
-  const glob = buildExtensionGlob(exts);
+  const glob = extensionsToGlob(exts);
 
   const watchRows: WatchRow[] = await Promise.all(
     config.watchDirs.map(async (wd) => {

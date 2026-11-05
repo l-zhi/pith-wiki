@@ -13,7 +13,7 @@ import { C } from './theme.js';
  * 三段：
  *   1. TopBanner —— `● ready` + provider/model/root pill
  *   2. WatchLines —— 每个 watchDir 一行（路径 + 文件数 + collection 描述），尾部一行 exts
- *   3. UnifiedTable —— 按 collection 聚合的 8 列表格，含 ASCII 进度条 + watch 指示符 + 总计行
+ *   3. UnifiedTable —— 按 collection 聚合的 8 列表格，含 watch 指示符 + 总计行
  *
  * 颜色口径对齐 design palette：
  *   green=done/ready · cyan=watch/system · amber=running/exts · pink/red=dead · purple=brand

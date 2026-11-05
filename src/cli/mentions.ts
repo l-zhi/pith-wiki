@@ -1,8 +1,5 @@
 /**
- * `@`-mention 注册表 + 解析 / 过滤 / 补全。
- *
- * 单一真相：InputBox 的实时提示、Tab 补全、App.tsx 提交时的 scope 解析都从这里读，
- * 对标 slashCommands.ts 之于 `/` 命令。
+ * `@`-mention 候选、目录树 picker 与 parseScope。
  *
  * 语义（filesystem 直觉）：
  *   - 条目 mention：`@<id>`          —— 把该条目钉死注入本轮检索
@@ -64,40 +61,6 @@ export function buildMentionCandidates(library: LibraryService): MentionCandidat
 export function activeMention(value: string): string | null {
   const m = value.match(/@([^\s@]*)$/);
   return m ? m[1] : null;
-}
-
-/**
- * 按 partial 过滤候选：对 token / label / collection 做大小写无关子串匹配。
- * 空 partial → 返回前 limit 条（集合优先）。结果上限 limit（默认 8）。
- */
-export function filterMentions(
-  candidates: MentionCandidate[],
-  partial: string,
-  limit = 8,
-): MentionCandidate[] {
-  const needle = partial.toLowerCase();
-  if (!needle) return candidates.slice(0, limit);
-  const out: MentionCandidate[] = [];
-  for (const c of candidates) {
-    const hay =
-      c.kind === 'collection'
-        ? `${c.token} ${c.label}`
-        : `${c.token} ${c.label} ${c.collection}`;
-    if (hay.toLowerCase().includes(needle)) {
-      out.push(c);
-      if (out.length >= limit) break;
-    }
-  }
-  return out;
-}
-
-/**
- * 把输入末尾的 `@partial` 替换成选中候选的规范 token，并追加一个空格
- * （集合 token 已自带尾斜杠；空格让用户接着打问题）。
- */
-export function completeMention(value: string, cand: MentionCandidate): string {
-  const replaced = value.replace(/@([^\s@]*)$/, `@${cand.token}`);
-  return `${replaced} `;
 }
 
 // ── 目录树导航（picker 用）─────────────────────────────────────────────────
