@@ -6,8 +6,8 @@
  *   - hydrator:  把当前 collection 的 linkCandidates 按"与原文相关性"挑 top-N
  *                喂给 LLM，避免一次塞 500 条噪声
  *
- * 不上正经分词器（jieba / segmentit）的原因见 assembler.ts 旧注释：
- * 依赖体积太大，bigram 召回已经够用；想要语义检索得换 embedding，不是 tokenizer 的事。
+ * 不上正经分词器（jieba / segmentit）：依赖体积太大，bigram 召回已经够用；
+ * 想要语义检索得换 embedding，不是 tokenizer 的事。
  */
 import type { Entry } from './types.js';
 

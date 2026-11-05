@@ -447,7 +447,7 @@ function expandHome(p: string): string {
  *   2. 分隔符串：用 path.delimiter 分隔（POSIX 是 `:`，Windows 是 `;`），
  *      例 `~/notes:/Users/me/papers`
  *
- * 两种语法都自动做 `~/` 展开，便于 `.env` 里跨机器复用配置。
+ * 两种语法都自动做 `~/` 展开。
  *
  * 导出供 tests/config.test.ts 直接单元测试，loadConfig 内部只用环境变量值喂它。
  */

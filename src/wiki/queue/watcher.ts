@@ -295,7 +295,7 @@ export function enqueueFromWatch(
 }
 
 /**
- * 把 target 路径下已有的 .md 全量批量入队。一次 store.mutate 完成 N 次写入，
+ * 把 target 路径下匹配 extensions 的已有文件全量批量入队。一次 store.mutate 完成 N 次写入，
  * 避免 N 个原子 rename。已存在的 job 走 add 语义（不 reset force）。
  *
  * 返回 added 的条目数。

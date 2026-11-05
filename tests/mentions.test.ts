@@ -1,5 +1,5 @@
 /**
- * `@`-mention 解析 / 过滤 / 补全单测（src/cli/mentions.ts）。
+ * `@`-mention 解析与目录树 picker 单测（src/cli/mentions.ts）。
  *
  * 关注纯函数行为，不碰 Ink。用一个轻量 fake library（只实现 list()）喂候选。
  */
@@ -9,11 +9,9 @@ import {
   ascendValue,
   buildMentionCandidates,
   buildMentionTree,
-  completeMention,
   confirmDirValue,
   confirmEntryValue,
   descendValue,
-  filterMentions,
   listLevel,
   parseMentionInput,
   parseScope,
@@ -78,48 +76,6 @@ describe('activeMention', () => {
   });
   it('多个 @ 时取最后一个', () => {
     expect(activeMention('@a/ @b')).toBe('b');
-  });
-});
-
-describe('filterMentions', () => {
-  const cands: MentionCandidate[] = [
-    { kind: 'collection', token: '技术相关/', label: '技术相关', count: 3 },
-    { kind: 'entry', token: 'agent-loop', label: 'Agent Loop', collection: '技术相关' },
-    { kind: 'entry', token: 'db-mvcc', label: 'MVCC 并发', collection: '技术相关' },
-  ];
-  it('对 token/label/collection 做大小写无关子串匹配', () => {
-    expect(filterMentions(cands, 'agent').map((c) => c.token)).toEqual(['agent-loop']);
-    expect(filterMentions(cands, 'AGENT').map((c) => c.token)).toEqual(['agent-loop']);
-    // collection 名命中两条条目 + 集合本身
-    expect(filterMentions(cands, '技术').length).toBe(3);
-  });
-  it('空 partial 返回前 limit 条', () => {
-    expect(filterMentions(cands, '', 2).length).toBe(2);
-  });
-  it('limit 上限生效', () => {
-    const many: MentionCandidate[] = Array.from({ length: 20 }, (_, i) => ({
-      kind: 'entry',
-      token: `e-${i}`,
-      label: `t${i}`,
-      collection: 'c',
-    }));
-    expect(filterMentions(many, 'e-', 8).length).toBe(8);
-  });
-});
-
-describe('completeMention', () => {
-  it('把末尾 @partial 替换成规范 token 并补空格', () => {
-    expect(
-      completeMention('@tec', { kind: 'collection', token: '技术相关/', label: '技术相关', count: 3 }),
-    ).toBe('@技术相关/ ');
-    expect(
-      completeMention('总结一下 @age', {
-        kind: 'entry',
-        token: 'agent-loop',
-        label: 'Agent Loop',
-        collection: '技术相关',
-      }),
-    ).toBe('总结一下 @agent-loop ');
   });
 });
 

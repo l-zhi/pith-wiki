@@ -453,7 +453,7 @@ export class LibraryService {
    * 递归扫一个目录，把 .md 文件读成 Entry 收集到 out。
    * subpath 由 dirAbs 相对 collectionRoot 派生（POSIX 形式），永远跳过 dotdir
    * 以及 ignoredDirs 里的目录（如 transcriptsDir 子树）。
-   * 异常 / 解析失败的单个文件被静默跳过，不影响其它条目（v0 容错策略沿用）。
+   * 异常 / 解析失败的单个文件被跳过并经 onWarn 报出原因，不影响其它条目。
    */
   private scanDirRecursive(
     dirAbs: string,

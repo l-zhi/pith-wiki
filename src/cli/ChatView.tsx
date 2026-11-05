@@ -14,7 +14,6 @@ export interface DisplayMessage {
    */
   role: 'user' | 'assistant' | 'system' | 'tool' | 'error' | 'process';
   text: string;
-  meta?: string;
   /** 消息产生时刻（HH:MM）。append() 统一盖戳；缺省不渲染时间。 */
   ts?: string;
   /**
@@ -131,7 +130,6 @@ function Message({ m }: { m: DisplayMessage }) {
           {labelFor(m.role)}
         </Text>
         {m.ts ? <Text color={C.dim2}>  {m.ts}</Text> : null}
-        {m.meta ? <Text color={C.dim2}> {m.meta}</Text> : null}
       </Box>
       {m.node ? m.node : <Text color={C.fg2}>{m.text}</Text>}
     </Stripe>
