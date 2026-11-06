@@ -18,6 +18,7 @@ import {
   ALL_CHECKS,
   type DoctorCheck,
 } from '../src/wiki/doctor.js';
+import { LibraryService, readEntryFile } from '../src/wiki/library.js';
 
 /** 用 tmpdir 起一个 wiki 根，给 sandbox 用的 workspaceRoot 用同一根。 */
 function makeWiki(): { wikiRoot: string; workspaceRoot: string; cleanup: () => void } {
@@ -330,6 +331,81 @@ describe('runDoctor — checks 过滤', () => {
     const report = runDoctor({ wikiRoot: wiki.wikiRoot, checks: filtered });
     expect(report.summary.byCheck['orphan-link']).toBe(1);
     expect(report.summary.byCheck['dangling-concept']).toBe(0);
+  });
+});
+
+describe('runDoctor — ignoredDirs 与 readFile 同一套归一化', () => {
+  let wiki: ReturnType<typeof makeWiki>;
+  beforeEach(() => {
+    wiki = makeWiki();
+  });
+  afterEach(() => wiki.cleanup());
+
+  it('output/transcripts 里 schema 合法的 transcript 不是 doctor error', () => {
+    writeEntry(wiki.wikiRoot, 'output', 'real-digest');
+    const transcriptsDir = path.join(wiki.wikiRoot, 'output', 'transcripts');
+    fs.mkdirSync(transcriptsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(transcriptsDir, 'leaked-transcript.md'),
+      [
+        '---',
+        'id: leaked-transcript',
+        'collection: output',
+        'title: 一段会话记录',
+        'updated: 2026-04-30T00:00:00.000Z',
+        '---',
+        'body',
+      ].join('\n'),
+    );
+    fs.writeFileSync(
+      path.join(transcriptsDir, '2026-11-06T12-00-00-000Z.md'),
+      '# Chat Session 2026-11-06T12:00:00.000Z\n\nhello\n',
+    );
+
+    const report = runDoctor({
+      wikiRoot: wiki.wikiRoot,
+      ignoredDirs: [transcriptsDir],
+    });
+    expect(report.summary.problemsFound).toBe(0);
+    expect(report.summary.entriesScanned).toBe(1);
+    expect(
+      report.problems.some((p) => p.filePath.includes(`${path.sep}transcripts${path.sep}`)),
+    ).toBe(false);
+  });
+
+  it('无引号 date: 2026-07-24 与库一样被接受', () => {
+    const file = path.join(wiki.wikiRoot, 'output', '2026-07-24.md');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      '---\ntitle: 2026-07-24 内容日报\ndate: 2026-07-24\ntags: [daily-report]\n---\n# 日报正文\n',
+    );
+    const report = runDoctor({ wikiRoot: wiki.wikiRoot });
+    expect(report.summary.problemsFound).toBe(0);
+    expect(report.summary.entriesScanned).toBe(1);
+    expect(report.summary.byCheck.frontmatter).toBe(0);
+
+    const fromLib = new LibraryService(wiki.wikiRoot, { persist: false }).get('2026-07-24');
+    expect(fromLib?.date).toBe('2026-07-24');
+    // doctor 走 readEntryFile，日期归一化结果与库一致。
+    expect(readEntryFile(file, 'output').date).toBe('2026-07-24');
+  });
+
+  it('缺 updated 时用文件 mtime，不报 frontmatter', () => {
+    const file = path.join(wiki.wikiRoot, 'tech', 'no-updated.md');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '---\ntitle: No Updated\n---\nbody\n');
+    const mtime = fs.statSync(file).mtime.toISOString();
+
+    const report = runDoctor({ wikiRoot: wiki.wikiRoot });
+    expect(report.summary.byCheck.frontmatter).toBe(0);
+    expect(report.summary.entriesScanned).toBe(1);
+
+    const parsed = readEntryFile(file, 'tech');
+    expect(parsed.updated).toBe(mtime);
+    expect(new LibraryService(wiki.wikiRoot, { persist: false }).get('no-updated')?.updated).toBe(
+      mtime,
+    );
   });
 });
 

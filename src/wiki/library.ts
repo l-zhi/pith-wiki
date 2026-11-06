@@ -148,7 +148,7 @@ export class LibraryService {
       const cached = this.entryCache!.get(id);
       if (!cached || cached.collection !== collection) return null;
       const file = this.filePath(id, collection, cached.subpath);
-      return fs.existsSync(file) ? this.readFile(file, collection, cached.subpath) : null;
+      return fs.existsSync(file) ? readEntryFile(file, collection, cached.subpath) : null;
     }
     return this.entryCache!.get(id) ?? null;
   }
@@ -478,7 +478,7 @@ export class LibraryService {
         this.scanDirRecursive(abs, collectionRoot, collection, out);
       } else if (e.isFile() && e.name.endsWith('.md')) {
         try {
-          out.push(this.readFile(abs, collection, subpath));
+          out.push(readEntryFile(abs, collection, subpath));
         } catch (err) {
           // 跳过解析失败的文件（v0 不尝试修复），但**报出原因**——静默跳过会变成
           // 「文件在磁盘上、库里死活不出现」的幽灵问题，没有任何线索可查。
@@ -487,44 +487,48 @@ export class LibraryService {
       }
     }
   }
+}
 
-  private readFile(file: string, collection: string, subpath?: string): Entry {
-    const raw = fs.readFileSync(file, 'utf8');
-    const parsed = matter(raw);
-    const id = (parsed.data.id as string) ?? path.basename(file, '.md');
-    const updatedRaw = parsed.data.updated;
-    // frontmatter 缺 updated 时（如 agent 用 write_file 直接写的产物）回退到文件 mtime，
-    // 而非 epoch 0——否则这类条目会显示成「20629d」并永远沉到列表底部。
-    const updated =
-      updatedRaw instanceof Date
-        ? updatedRaw.toISOString()
-        : typeof updatedRaw === 'string' && updatedRaw
-          ? updatedRaw
-          : fs.statSync(file).mtime.toISOString();
-    // frontmatter 的 subpath 优先（明确写入的总比目录派生的可信），缺省回退到目录派生
-    const fmSubpath = parsed.data.subpath as string | undefined;
-    const candidate = {
-      id,
-      collection: (parsed.data.collection as string) ?? collection,
-      subpath: fmSubpath ?? subpath,
-      scheduledTaskId: parsed.data.scheduledTaskId,
-      title: (parsed.data.title as string) ?? id,
-      summary: parsed.data.summary ?? '',
-      tags: parsed.data.tags ?? [],
-      links: parsed.data.links ?? [],
-      content: parsed.content.trim(),
-      source: parsed.data.source ?? { type: 'unknown' },
-      updated,
-      // 旧条目没有 ingestedAt → 回退到 updated（至少不为空，且对未再水合的条目就等于入库时间）
-      ingestedAt: (parsed.data.ingestedAt as string) ?? updated,
-      // YAML 会把无引号的 `date: 2026-07-24` 解析成 Date 对象（YAML 1.1 timestamp），
-      // 而 EntrySchema.date 是 string → 不归一化就整条 parse 失败、文件被静默丢弃。
-      // agent 用 write_file 直接写的日报正是这种写法（曾导致日报在库里不可见）。
-      date: normalizeDate(parsed.data.date),
-      compressionRatio: parsed.data.compressionRatio,
-    };
-    return EntrySchema.parse(candidate);
-  }
+/**
+ * 把一个 .md 读成 Entry。`LibraryService` 扫描与 `pith-wiki doctor` 共用这条路径
+ * （`normalizeDate`、缺 `updated` 时回退 mtime），避免两套 frontmatter 规则。
+ */
+export function readEntryFile(file: string, collection: string, subpath?: string): Entry {
+  const raw = fs.readFileSync(file, 'utf8');
+  const parsed = matter(raw);
+  const id = (parsed.data.id as string) ?? path.basename(file, '.md');
+  const updatedRaw = parsed.data.updated;
+  // frontmatter 缺 updated 时（如 agent 用 write_file 直接写的产物）回退到文件 mtime，
+  // 而非 epoch 0——否则这类条目会显示成「20629d」并永远沉到列表底部。
+  const updated =
+    updatedRaw instanceof Date
+      ? updatedRaw.toISOString()
+      : typeof updatedRaw === 'string' && updatedRaw
+        ? updatedRaw
+        : fs.statSync(file).mtime.toISOString();
+  // frontmatter 的 subpath 优先（明确写入的总比目录派生的可信），缺省回退到目录派生
+  const fmSubpath = parsed.data.subpath as string | undefined;
+  const candidate = {
+    id,
+    collection: (parsed.data.collection as string) ?? collection,
+    subpath: fmSubpath ?? subpath,
+    scheduledTaskId: parsed.data.scheduledTaskId,
+    title: (parsed.data.title as string) ?? id,
+    summary: parsed.data.summary ?? '',
+    tags: parsed.data.tags ?? [],
+    links: parsed.data.links ?? [],
+    content: parsed.content.trim(),
+    source: parsed.data.source ?? { type: 'unknown' },
+    updated,
+    // 旧条目没有 ingestedAt → 回退到 updated（至少不为空，且对未再水合的条目就等于入库时间）
+    ingestedAt: (parsed.data.ingestedAt as string) ?? updated,
+    // YAML 会把无引号的 `date: 2026-07-24` 解析成 Date 对象（YAML 1.1 timestamp），
+    // 而 EntrySchema.date 是 string → 不归一化就整条 parse 失败、文件被静默丢弃。
+    // agent 用 write_file 直接写的日报正是这种写法（曾导致日报在库里不可见）。
+    date: normalizeDate(parsed.data.date),
+    compressionRatio: parsed.data.compressionRatio,
+  };
+  return EntrySchema.parse(candidate);
 }
 
 /**
@@ -532,7 +536,7 @@ export class LibraryService {
  *
  * 为什么需要：YAML 1.1 把无引号的 `date: 2026-07-24` 当 timestamp，js-yaml（gray-matter
  * 的解析器）直接给回一个 **Date 对象**。`EntrySchema.date` 是 `z.string()`，于是整条
- * EntrySchema.parse 抛错 → readFile 抛错 → scanDirRecursive 的 catch 静默跳过整个文件。
+ * EntrySchema.parse 抛错 → readEntryFile 抛错 → scanDirRecursive 的 catch 静默跳过整个文件。
  * 症状是「文件在磁盘上、库里却看不到」，且没有任何报错（曾丢掉 agent 写的日报）。
  * 姊妹字段 `updated` 一直有这个归一化，`date` 漏了，还被 `as string` 断言骗过了 TS。
  *

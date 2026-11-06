@@ -3,9 +3,8 @@
  *
  * 设计原则：
  *   - **report-only**。不修改任何 entry / 文件系统状态。`--fix` 是单独的后续 issue。
- *   - **独立的文件扫描**。不复用 `LibraryService.scanAll`——那个会**静默跳过**
- *     格式有问题的文件，正好屏蔽了我们最想报的 bug。doctor 走自己的递归扫描，
- *     每个 .md 文件都尝试解析，失败也保留为一条 problem。
+ *   - **独立的文件扫描**。不复用 `LibraryService.scanAll`（失败文件只 onWarn，不进报告）。
+ *     doctor 自己递归，跳过同样的 ignoredDirs；解析走 `readEntryFile`，失败留成 problem。
  *   - **结构化 + 人类双形态**。`runDoctor` 返回 `DoctorReport` 对象，CLI 层决定
  *     输出 chalk 着色文本还是 JSON。tests 直接 assert on report 对象，与展示解耦。
  *
@@ -18,9 +17,10 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import matter from 'gray-matter';
 import chalk from 'chalk';
-import { EntrySchema, type Entry } from './types.js';
+import { ZodError } from 'zod';
+import type { Entry } from './types.js';
+import { readEntryFile } from './library.js';
 import { resolveSafePath, SafetyError } from '../tools/safety.js';
 
 export type DoctorSeverity = 'error' | 'warning';
@@ -78,12 +78,14 @@ export interface DoctorOptions {
     workspaceRoot: string;
     additionalReadPaths?: string[];
   };
+  /** 与 LibraryService `ignoredDirs` 相同：这些目录及其子树不诊断。CLI 传入 `config.outputDir`。 */
+  ignoredDirs?: readonly string[];
 }
 
 interface ScannedFile {
   filePath: string;
   collection: string;
-  rawText: string;
+  subpath?: string;
 }
 
 interface ParsedEntry {
@@ -108,7 +110,7 @@ export function runDoctor(opts: DoctorOptions): DoctorReport {
   const checks = opts.checks ?? ALL_CHECKS;
   const enabled = (c: DoctorCheck): boolean => checks.includes(c);
 
-  const scanned = scanWiki(opts.wikiRoot);
+  const scanned = scanWiki(opts.wikiRoot, opts.ignoredDirs);
   const problems: DoctorProblem[] = [];
   const parsed: ParsedEntry[] = [];
 
@@ -116,6 +118,7 @@ export function runDoctor(opts: DoctorOptions): DoctorReport {
   // 必须放在最先：parse 失败的文件不会进入 parsed[]，后续 check 自然跳过它们。
   for (const sf of scanned) {
     const result = tryParseEntry(sf);
+    if (!result) continue;
     if (result.kind === 'ok') {
       parsed.push({ filePath: sf.filePath, collection: sf.collection, entry: result.entry });
     } else if (enabled('frontmatter')) {
@@ -283,100 +286,91 @@ export function runDoctor(opts: DoctorOptions): DoctorReport {
   };
 }
 
-/** wikiRoot 下递归收集所有 .md 文件原文。dotdir（.cache / .git 等）始终跳过。 */
-function scanWiki(wikiRoot: string): ScannedFile[] {
+/** wikiRoot 下递归收集 .md。dotdir 与 ignoredDirs 子树跳过。 */
+function scanWiki(wikiRoot: string, ignoredDirs: readonly string[] | undefined): ScannedFile[] {
   if (!fs.existsSync(wikiRoot)) return [];
+  const ignored = new Set((ignoredDirs ?? []).map((p) => path.resolve(p)));
+  const skip = (abs: string): boolean => ignored.size > 0 && ignored.has(path.resolve(abs));
   const collections = fs
     .readdirSync(wikiRoot, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && !d.name.startsWith('.'));
+    .filter(
+      (d) => d.isDirectory() && !d.name.startsWith('.') && !skip(path.join(wikiRoot, d.name)),
+    );
   const out: ScannedFile[] = [];
   for (const c of collections) {
-    walk(path.join(wikiRoot, c.name), c.name, out);
+    const root = path.join(wikiRoot, c.name);
+    walk(root, root, c.name, skip, out);
   }
   return out;
 }
 
-function walk(dir: string, collection: string, out: ScannedFile[]): void {
+function walk(
+  dir: string,
+  collectionRoot: string,
+  collection: string,
+  skip: (abs: string) => boolean,
+  out: ScannedFile[],
+): void {
   let dirents: fs.Dirent[];
   try {
     dirents = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
     return;
   }
+  const rel = path.relative(collectionRoot, dir);
+  const subpath = rel ? rel.split(path.sep).join('/') : undefined;
   for (const e of dirents) {
     if (e.name.startsWith('.')) continue;
     const abs = path.join(dir, e.name);
     if (e.isDirectory()) {
-      walk(abs, collection, out);
+      if (skip(abs)) continue;
+      walk(abs, collectionRoot, collection, skip, out);
     } else if (e.isFile() && e.name.endsWith('.md')) {
-      try {
-        out.push({ filePath: abs, collection, rawText: fs.readFileSync(abs, 'utf8') });
-      } catch {
-        // unreadable file—skip silently. doctor's mandate is content quality, not disk health.
-      }
+      out.push({ filePath: abs, collection, subpath });
     }
   }
 }
 
 /**
- * 尝试把一个 .md 文件解析成 Entry。
- *
- * 失败分两类，message 措辞要可区分：
- *   - gray-matter 抛 → YAML 语法层错误（"YAML frontmatter could not be parsed"）
- *   - matter ok 但 zod 校验失败 → schema 层错误（"frontmatter does not satisfy EntrySchema"），
- *     带出第一条 zod issue 的 path 与 message
- *
- * 不修复任何字段，但容忍 LibraryService.readFile 的几个默认：缺 id 用文件名、
- * 缺 title 用 id、缺 updated 用 epoch。这样测试能针对"用户真的没填 updated"和
- * "用户填了非法 updated"分别给出不同的 problem。
+ * 走 `readEntryFile`（与库同一套归一化）。失败分两类：
+ *   - 非 ZodError → YAML 语法层（"YAML frontmatter could not be parsed"）
+ *   - ZodError → schema 层（"frontmatter does not satisfy EntrySchema"）
+ * 读不到的文件返回 null（内容质量检查，不报磁盘故障）。
  */
-function tryParseEntry(sf: ScannedFile): ParseResult {
-  let fm: matter.GrayMatterFile<string>;
+function tryParseEntry(sf: ScannedFile): ParseResult | null {
   try {
-    fm = matter(sf.rawText);
+    return { kind: 'ok', entry: readEntryFile(sf.filePath, sf.collection, sf.subpath) };
   } catch (err) {
+    if (isFsError(err)) return null;
+    if (err instanceof ZodError) {
+      const issues = err.issues;
+      const firstIssue = issues[0];
+      const pathStr = firstIssue?.path.join('.') || '(root)';
+      return {
+        kind: 'fail',
+        message: `frontmatter does not satisfy EntrySchema (${issues.length} issue${
+          issues.length === 1 ? '' : 's'
+        }): ${firstIssue?.message ?? 'unknown'} at ${pathStr}`,
+        suggestion: `fix the \`${pathStr}\` field in the YAML frontmatter of ${sf.filePath}`,
+        detail: {
+          issues: issues.map((i) => ({ path: i.path, message: i.message, code: i.code })),
+        },
+      };
+    }
     return {
       kind: 'fail',
       message: `YAML frontmatter could not be parsed: ${(err as Error).message}`,
       suggestion: `open ${sf.filePath} in an editor and fix the YAML between the --- markers`,
     };
   }
-  const id = (fm.data.id as string) ?? path.basename(sf.filePath, '.md');
-  const updatedRaw = fm.data.updated;
-  const updated =
-    updatedRaw instanceof Date
-      ? updatedRaw.toISOString()
-      : (updatedRaw ?? new Date(0).toISOString());
-  const candidate = {
-    id,
-    collection: (fm.data.collection as string) ?? sf.collection,
-    subpath: fm.data.subpath,
-    title: (fm.data.title as string) ?? id,
-    summary: fm.data.summary ?? '',
-    tags: fm.data.tags ?? [],
-    links: fm.data.links ?? [],
-    content: fm.content.trim(),
-    source: fm.data.source ?? { type: 'unknown' },
-    updated,
-    compressionRatio: fm.data.compressionRatio,
-  };
-  const parsed = EntrySchema.safeParse(candidate);
-  if (parsed.success) {
-    return { kind: 'ok', entry: parsed.data };
-  }
-  const issues = parsed.error.issues;
-  const firstIssue = issues[0];
-  const pathStr = firstIssue?.path.join('.') || '(root)';
-  return {
-    kind: 'fail',
-    message: `frontmatter does not satisfy EntrySchema (${issues.length} issue${
-      issues.length === 1 ? '' : 's'
-    }): ${firstIssue?.message ?? 'unknown'} at ${pathStr}`,
-    suggestion: `fix the \`${pathStr}\` field in the YAML frontmatter of ${sf.filePath}`,
-    detail: {
-      issues: issues.map((i) => ({ path: i.path, message: i.message, code: i.code })),
-    },
-  };
+}
+
+function isFsError(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    typeof (err as NodeJS.ErrnoException).code === 'string' &&
+    'syscall' in err
+  );
 }
 
 // ── formatters ───────────────────────────────────────────────────────────
