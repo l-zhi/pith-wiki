@@ -24,7 +24,7 @@ function DeadRow({ job }: { job: QueueJobDTO }) {
       bridge
         .request<{ log: string; path: string }>({ kind: 'queue.jobLog', id: job.id })
         .then((r) => setLog(`# ${r.path}\n\n${r.log}`))
-        .catch((err: Error) => setLog(`(failed to load log: ${err.message})`));
+        .catch((err: Error) => setLog(t('inbox.logLoadFailed', { error: err.message })));
     }
   };
 
