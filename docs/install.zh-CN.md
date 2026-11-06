@@ -132,8 +132,8 @@ Docker 方式可替代上面的本机 Node 安装。宿主机需要安装并启�
 ```bash
 docker build --pull -t pith:local .
 docker run --rm pith:local --version
-docker volume create pith-brain-data
-docker run --rm -it --mount type=volume,src=pith-brain-data,dst=/data pith:local init
+docker volume create pith-data
+docker run --rm -it --mount type=volume,src=pith-data,dst=/data pith:local init
 ```
 
 `pith:local` 是本地构建的镜像名。首次初始化按提示选择 provider、填写 API key，暂时跳过监听目录。镜像以非 root 的 `node` 用户运行，固定 `PITH_WIKI_HOME=/data`；配置写入卷中的 `/data/config.json`，知识库写入 `/data/wiki-data/`。每次启动都挂载同一个卷，`--rm` 删除容器后数据仍会保留；卷的生命周期见 [Docker 官方说明](https://docs.docker.com/engine/storage/volumes/)。
@@ -142,18 +142,18 @@ docker run --rm -it --mount type=volume,src=pith-brain-data,dst=/data pith:local
 
 ```bash
 mkdir -p "$HOME/.pith-brain-docker"
-docker run --rm --mount type=volume,src=pith-brain-data,dst=/data --entrypoint cat pith:local /data/config.json > "$HOME/.pith-brain-docker/config.json"
+docker run --rm --mount type=volume,src=pith-data,dst=/data --entrypoint cat pith:local /data/config.json > "$HOME/.pith-brain-docker/config.json"
 chmod 600 "$HOME/.pith-brain-docker/config.json"
 # 用编辑器修改上面的 config.json，完成后执行：
-docker run --rm -i --mount type=volume,src=pith-brain-data,dst=/data --entrypoint sh pith:local -c 'umask 077; cat > /data/config.json' < "$HOME/.pith-brain-docker/config.json"
+docker run --rm -i --mount type=volume,src=pith-data,dst=/data --entrypoint sh pith:local -c 'umask 077; cat > /data/config.json' < "$HOME/.pith-brain-docker/config.json"
 ```
 
 ### 启动与验证
 
 ```bash
-docker run --rm --mount type=volume,src=pith-brain-data,dst=/data pith:local list
-docker run --rm --mount type=volume,src=pith-brain-data,dst=/data pith:local query "安装验证"
-docker run --rm -it --mount type=volume,src=pith-brain-data,dst=/data pith:local chat
+docker run --rm --mount type=volume,src=pith-data,dst=/data pith:local list
+docker run --rm --mount type=volume,src=pith-data,dst=/data pith:local query "安装验证"
+docker run --rm -it --mount type=volume,src=pith-data,dst=/data pith:local chat
 ```
 
 前两条不需要 API key：空库应分别显示 `(no entries)` 和 `(no matching entries)`。第三条进入交互式 REPL，需要有效模型配置；`-it` 为交互终端所需参数，参见 [Docker 容器运行说明](https://docs.docker.com/engine/containers/run/)。
@@ -161,8 +161,8 @@ docker run --rm -it --mount type=volume,src=pith-brain-data,dst=/data pith:local
 配置真实 key 后，可以通过标准输入验证入库；管道输入使用 `-i`，不分配 TTY：
 
 ```bash
-printf '%s\n' '安装验证：pith 支持将文档整理为本地知识库。' | docker run --rm -i --mount type=volume,src=pith-brain-data,dst=/data pith:local ingest --collection install-check
-docker run --rm --mount type=volume,src=pith-brain-data,dst=/data pith:local list --collection install-check
+printf '%s\n' '安装验证：pith 支持将文档整理为本地知识库。' | docker run --rm -i --mount type=volume,src=pith-data,dst=/data pith:local ingest --collection install-check
+docker run --rm --mount type=volume,src=pith-data,dst=/data pith:local list --collection install-check
 ```
 
 预期第二个新容器仍能列出第一个容器入库的条目，证明知识库已持久化。基础镜像包含内置 skills 文件；需要额外 CLI 的技能须另行安装其依赖。
@@ -174,7 +174,7 @@ docker run --rm --mount type=volume,src=pith-brain-data,dst=/data pith:local lis
 ```bash
 mkdir -p "$HOME/notes"
 docker run --rm -it \
-  --mount type=volume,src=pith-brain-data,dst=/data \
+  --mount type=volume,src=pith-data,dst=/data \
   --mount "type=bind,src=$HOME/notes,dst=/workspace,readonly" \
   pith:local chat
 ```
