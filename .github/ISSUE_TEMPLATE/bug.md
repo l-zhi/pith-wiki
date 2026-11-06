@@ -33,7 +33,7 @@ pith-wiki ingest --collection demo --file ./paper.pdf
 ## Relevant logs / output
 
 <!-- Paste stderr / job log / transcript. Wrap in ``` for readability.
-     Redact API keys before pasting — the project does best-effort but not guaranteed redaction. -->
+     Redact API keys yourself before pasting. Transcripts are not sanitized. -->
 
 ```
 ```

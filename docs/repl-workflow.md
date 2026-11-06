@@ -53,9 +53,9 @@ exists, the lock is automatically taken over.
 
 The REPL writes every session to
 `<wikiRoot>/output/transcripts/<sessionTs>.md`. Putting it under `<wikiRoot>`
-is deliberate — it shares the wiki tree's root, but the `transcripts/` subdir
-is invisible to `LibraryService`'s collection scan (which only reads
-`<wikiRoot>/<collection>/*.md` one level deep; subdirs are ignored).
+is deliberate — it shares the wiki tree's root. Transcripts stay out of the
+scan because callers pass `ignoredDirs: [config.outputDir]`; `scanDirRecursive`
+walks every depth.
 
 The content is clean chronological markdown:
 

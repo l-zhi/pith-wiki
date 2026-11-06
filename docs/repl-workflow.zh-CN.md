@@ -48,9 +48,9 @@ pith-wiki queue run
 ## 自动 transcript
 
 REPL 默认把每次 session 写到 `<wikiRoot>/output/transcripts/<sessionTs>.md`。
-路径选在 `<wikiRoot>` 下是有意为之——和数字化的 wiki 条目共享同一棵树根，
-但用 `transcripts/` 子目录屏蔽 `LibraryService` 的 collection 扫描（它只读
-`<wikiRoot>/<collection>/*.md` 一层，子目录被忽略）。
+路径选在 `<wikiRoot>` 下是有意为之——和数字化的 wiki 条目共享同一棵树根。
+transcript 不进扫描，是因为调用方传入 `ignoredDirs: [config.outputDir]`；
+`scanDirRecursive` 会走到每一层。
 
 内容是规整的 markdown，按时间顺序：
 

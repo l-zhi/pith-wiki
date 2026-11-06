@@ -70,7 +70,7 @@ ScheduleState { version, tasks, lastTickAt }   // lastTickAt 用于判定停机�
 
 ## 无人值守的审批（重要）
 
-定时触发的会话是**无人值守**的。交互式审批（写文件 / `run_command` 执行命令）会 `await`
+定时触发的会话是**无人值守**的。交互式审批（`run_command` 执行命令）会 `await`
 一个「等人点 y/a/n」的 Promise —— 没人在触发时刻回答就会让整轮**永久卡死**（曾导致
 任务转圈不结束）。处理：
 
