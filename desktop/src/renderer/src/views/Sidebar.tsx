@@ -14,9 +14,10 @@ import { useTranslation } from 'react-i18next';
 import { SidebarItem, StatusDot } from '../ds';
 import { LogoLockup } from '../Logo';
 import { useStore } from '../store';
+import { rendererPlatform } from '../../../shared/revealLabel';
 
 /**
- * 玻璃侧边栏（设计稿 Sidebar.jsx）：红绿灯留白 + 品牌、Chat/Inbox/Dashboard 导航、
+ * 玻璃侧边栏（设计稿 Sidebar.jsx）：macOS 红绿灯留白 + 品牌、Chat/Inbox/Dashboard 导航、
  * Collections 列表（watch 点 + 计数）、底部 provider 信息 + 主题切换。
  */
 export function Sidebar() {
@@ -31,6 +32,7 @@ export function Sidebar() {
   const { t, i18n } = useTranslation();
 
   const inboxCount = queue ? queue.counts.pending + queue.counts.dead : 0;
+  const darwin = rendererPlatform() === 'darwin';
   // output（生成产物）从普通 collection 列表里抽出，提升为顶部固定导航 tab
   const outputCol = collections.find((c) => c.output);
   const normalCols = collections.filter((c) => !c.output);
@@ -49,14 +51,14 @@ export function Sidebar() {
         borderRight: '0.5px solid var(--separator)',
       }}
     >
-      {/* 红绿灯区域（hiddenInset 时由系统绘制）+ 品牌 */}
+      {/* macOS hiddenInset 的红绿灯画在内容区；Windows/Linux 是系统标题栏，不再留出这块空位 */}
       <div
         className="titlebar-drag"
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: 8,
-          padding: '0 14px 0 84px',
+          padding: darwin ? '0 14px 0 84px' : '0 14px',
           height: 'var(--titlebar-h)',
           flex: 'none',
         }}

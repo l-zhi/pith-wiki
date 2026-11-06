@@ -478,7 +478,7 @@ export function Settings() {
         {draft.watchDirs.map((w, i) => (
           <Row
             key={w.path}
-            title={w.path.split('/').slice(-2).join('/')}
+            title={w.path.split(/[/\\]/).filter(Boolean).slice(-2).join(w.path.includes('\\') ? '\\' : '/')}
             desc={w.path}
           >
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 14 }}>
