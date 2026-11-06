@@ -19,14 +19,11 @@ import { explainDelegateError } from './delegateErrors.js';
  */
 /**
  * claude-code provider 的默认 `--allowedTools`（逗号分隔）。除 pith 自家 MCP 工具外，
- * 默认放行两类外部技能，好让无人值守的定时任务也能核验飞书 / 微信读书当日动态：
- *   - `Bash(lark-cli:*)` —— 飞书 lark-* 技能全走 lark-cli（用用户已登录的飞书凭据）。
- *   - `Bash(curl:*)`     —— 微信读书技能用 curl POST i.weread.qq.com 网关（读 WEREAD_API_KEY）。
- * 安全取舍：等于允许无监督执行 lark-cli 与 curl；curl 无法按 URL 收窄，实际等于放开出站
- * HTTP。这是为「飞书/weread 默认可用」接受的代价。要收紧就传 opts.allowedTools 覆盖。
- * 前提：微信读书还需在设置里配好 WEREAD_API_KEY（否则 curl 拿不到 Bearer）。
+ * 默认放行飞书：`Bash(lark-cli:*)`（lark-* 技能全走 lark-cli，用用户已登录的飞书凭据），
+ * 好让无人值守的定时任务也能核验飞书当日动态。
+ * 安全取舍：等于允许无监督执行 lark-cli。要收紧就传 opts.allowedTools 覆盖。
  */
-export const DEFAULT_ALLOWED_TOOLS = 'mcp__pith__*,Bash(lark-cli:*),Bash(curl:*)';
+export const DEFAULT_ALLOWED_TOOLS = 'mcp__pith__*,Bash(lark-cli:*)';
 
 export interface ClaudeCodeAgentOptions {
   /** claude 可执行文件（绝对路径或 PATH 中的名字）。 */
@@ -42,7 +39,7 @@ export interface ClaudeCodeAgentOptions {
   env: NodeJS.ProcessEnv;
   /** Read the refreshed CLI environment on each new/resumed turn. */
   getEnv?: () => NodeJS.ProcessEnv;
-  /** 允许的工具白名单（逗号分隔）；不传用 DEFAULT_ALLOWED_TOOLS（pith MCP + 飞书/weread）。 */
+  /** 允许的工具白名单（逗号分隔）；不传用 DEFAULT_ALLOWED_TOOLS（pith MCP + 飞书 lark-cli）。 */
   allowedTools?: string;
   /**
    * 与用户自己的 Claude Code 环境的隔离级别。**默认 'standard'。**
