@@ -423,7 +423,7 @@ export function Settings() {
                       ${p.keyEnvVar}
                     </Badge>
                   )}
-                  {p.keySource === 'literal' && <Badge tone={p.keyResolved ? 'done' : 'dead'} dot>literal</Badge>}
+                  {p.keySource === 'literal' && <Badge tone={p.keyResolved ? 'done' : 'dead'} dot>{t('settings.keyLiteral')}</Badge>}
                 </div>
               </Field>
             </div>
@@ -458,19 +458,12 @@ export function Settings() {
           <Select aria-label={t('settings.chatProvider')} disabled={switchDisabled}
             value={draft.activeProvider} onChange={onChatChange} options={chatOptions} />
         </Row>
-        {active && <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <ProviderModelFields key={active.name} provider={active} disabled={saving || switching}
-            onChange={(fields) => patch((d) => updateP(d, activeIndex, fields))} />
-          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
-            <Button disabled={!dirty || saving || switching} onClick={onSaveClick}
-              variant={confirmBusy ? 'destructive' : 'primary'}>
-              {saving ? t('settings.saving') : confirmBusy ? t('settings.confirmBusySave') : saved && !dirty ? t('settings.saved') : t('settings.save')}
-            </Button>
-            {dirty && <Button variant="ghost" disabled={saving} onClick={() => patch(() => toDraft(settings))}>{t('settings.reset')}</Button>}
-            <span style={{ fontSize: 'var(--text-caption)', color: 'var(--text-tertiary)' }}>{t('settings.modelSaveHint')}</span>
+        {active && active.kind !== 'openai' && (
+          <div style={{ padding: '16px 20px' }}>
+            <ProviderModelFields key={active.name} provider={active} disabled={saving || switching}
+              onChange={(fields) => patch((d) => updateP(d, activeIndex, fields))} />
           </div>
-          {error && <span role="alert" style={{ color: 'var(--status-dead)', fontSize: 'var(--text-caption)' }}>{error}</span>}
-        </div>}
+        )}
       </Section>
 
       {/* ───── Library ───── */}
@@ -621,6 +614,7 @@ export function Settings() {
 /* ───────── 布局原子 ───────── */
 
 function Shell({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation();
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--surface-window)' }}>
       <div
@@ -628,7 +622,7 @@ function Shell({ children }: { children: React.ReactNode }) {
         style={{ flex: 'none', height: 'var(--titlebar-h)', display: 'flex', alignItems: 'center', gap: 12, padding: '0 18px' }}
       >
         <Settings2 size={17} style={{ color: 'var(--text-secondary)' }} />
-        <span style={{ fontSize: 'var(--text-callout)', fontWeight: 600, color: 'var(--text-primary)' }}>Settings</span>
+        <span style={{ fontSize: 'var(--text-callout)', fontWeight: 600, color: 'var(--text-primary)' }}>{t('settings.title')}</span>
       </div>
       <div style={{ flex: 1, overflowY: 'auto' }}>
         <div style={{ maxWidth: 680, margin: '0 auto', padding: '32px 36px 64px', display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
