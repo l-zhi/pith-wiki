@@ -401,6 +401,7 @@ export function buildSubcommands(program: Command, args: BuildArgs): void {
       const report = runDoctor({
         wikiRoot: config.wikiRoot,
         checks,
+        ignoredDirs: [config.outputDir],
         sandbox: {
           workspaceRoot: config.workspaceRoot,
           additionalReadPaths: config.additionalReadPaths,
