@@ -7,11 +7,8 @@ import {
 } from '../src/engine/claudeCodeAgent.js';
 
 describe('DEFAULT_ALLOWED_TOOLS', () => {
-  it('默认放行 pith MCP + 飞书(lark-cli) + 微信读书(curl)', () => {
-    const tools = DEFAULT_ALLOWED_TOOLS.split(',');
-    expect(tools).toContain('mcp__pith__*');
-    expect(tools).toContain('Bash(lark-cli:*)'); // 飞书
-    expect(tools).toContain('Bash(curl:*)'); // 微信读书网关
+  it('默认放行 pith MCP + 飞书(lark-cli)', () => {
+    expect(DEFAULT_ALLOWED_TOOLS.split(',')).toEqual(['mcp__pith__*', 'Bash(lark-cli:*)']);
   });
 });
 
