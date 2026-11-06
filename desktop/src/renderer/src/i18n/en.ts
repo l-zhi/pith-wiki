@@ -1,4 +1,5 @@
 import type { zh } from './zh';
+import { rendererPlatform, revealLabel } from '../../../shared/revealLabel';
 
 /** 叶子全 string 的同型约束：en 缺 key / 多 key / 结构漂移都是编译错。 */
 type Shape<T> = { [K in keyof T]: T[K] extends string ? string : Shape<T[K]> };
@@ -103,7 +104,7 @@ export const en: Shape<typeof zh> = {
     digestTooltip: 'Digest this conversation into a new wiki entry (output collection)',
     emptyResult: '(empty result)',
     artifactOpen: 'Open',
-    artifactReveal: 'Show in Finder',
+    artifactReveal: revealLabel(rendererPlatform(), 'en'),
     slashDigest: 'hydrate this conversation into the wiki',
     slashReset: 'clear conversation context',
     mentionDirCount: '{{count}} entries',

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, shell, type IpcMainInvokeEvent } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { revealLabel } from '../shared/revealLabel.js';
 
 /** Keep OS menus and Finder access in main; renderer supplies resolved collection folders. */
 export async function showFolderContextMenu(
@@ -22,14 +23,7 @@ export async function showFolderContextMenu(
   if (!folders.length) return { ok: false, error: missing };
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!window || window.isDestroyed()) return { ok: false, error: missing };
-  const label =
-    process.platform === 'darwin'
-      ? zh
-        ? '在 Finder 中显示'
-        : 'Show in Finder'
-      : zh
-        ? '在文件管理器中显示'
-        : 'Show in File Manager';
+  const label = revealLabel(process.platform, typeof language === 'string' ? language : '');
   const icon = await app.getFileIcon(folders[0], { size: 'small' }).catch(() => undefined);
   if (window.isDestroyed()) return { ok: false, error: missing };
   return new Promise((resolve) => {

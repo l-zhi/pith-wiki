@@ -67,7 +67,7 @@ function DeadRow({ job }: { job: QueueJobDTO }) {
               whiteSpace: 'nowrap',
             }}
           >
-            {job.file.split('/').pop()}
+            {job.file.split(/[/\\]/).filter(Boolean).pop()}
           </span>
           <span style={{ display: 'block', fontSize: 'var(--text-caption)', color: 'var(--text-tertiary)' }}>
             → {job.collection}

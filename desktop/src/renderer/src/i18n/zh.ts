@@ -1,3 +1,5 @@
+import { rendererPlatform, revealLabel } from '../../../shared/revealLabel';
+
 /**
  * 中文文案 —— i18n 的 key 结构基准（en.ts 以 typeof zh 同型约束，缺译即编译错）。
  * 范围（grill 共识）：仅 renderer 界面文案；Engine 通知/错误保持英文原文；
@@ -103,7 +105,7 @@ export const zh = {
     digestTooltip: '把当前对话整理成新的 wiki 条目（落入 output 集合）',
     emptyResult: '（空结果）',
     artifactOpen: '打开',
-    artifactReveal: '在 Finder 显示',
+    artifactReveal: revealLabel(rendererPlatform(), 'zh'),
     slashDigest: '把本次对话整理成 wiki 条目',
     slashReset: '清空对话上下文',
     mentionDirCount: '{{count}} 条',
