@@ -15,7 +15,8 @@ export interface SafetyOptions {
   readOnly: boolean;
   /**
    * 额外允许读取的目录列表（仅 kind='read' 生效）。
-   * 写操作仍只接受 workspaceRoot ∪ wikiRoot，确保 LLM 不会篡改这些"参考资料"目录。
+   * 写不走这些目录。writeRoot 一旦传入（write_file 固定为 `<wikiRoot>/output`），
+   * workspaceRoot ∪ wikiRoot 也不再是合法写根。
    */
   additionalReadPaths?: string[];
   /**
@@ -93,9 +94,27 @@ export function resolveSafePath(
   return realCheck;
 }
 
+/** UTF-8 prefix of at most `maxBytes`, never splitting a code point. */
+function utf8Prefix(content: string, maxBytes: number): string {
+  if (maxBytes <= 0) return '';
+  const buf = Buffer.from(content, 'utf8');
+  if (buf.length <= maxBytes) return content;
+  // Continuation bytes are 10xxxxxx. Step back to the lead byte and drop it
+  // so the cut stays on a code-point boundary.
+  let end = maxBytes;
+  while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
+  return buf.subarray(0, end).toString('utf8');
+}
+
 export function truncatePayload(content: string, max: number): string {
-  if (Buffer.byteLength(content, 'utf8') <= max) return content;
-  const slice = content.slice(0, max);
-  const dropped = Buffer.byteLength(content, 'utf8') - Buffer.byteLength(slice, 'utf8');
-  return `${slice}\n…[truncated ${dropped} bytes]\n`;
+  const total = Buffer.byteLength(content, 'utf8');
+  if (total <= max) return content;
+  const marker = (dropped: number) => `\n…[truncated ${dropped} bytes]\n`;
+  // Digit length is monotonic and dropped <= total, so a marker sized for
+  // `total` is an upper bound on the marker we actually append.
+  const room = max - Buffer.byteLength(marker(total), 'utf8');
+  if (room < 0) return utf8Prefix(marker(total), max);
+  const slice = utf8Prefix(content, room);
+  const dropped = total - Buffer.byteLength(slice, 'utf8');
+  return `${slice}${marker(dropped)}`;
 }
