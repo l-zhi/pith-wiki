@@ -29,11 +29,11 @@ function finalResp(text: string) {
   return { choices: [{ message: { role: 'assistant', content: text } }] };
 }
 
-/** ctx 里只放 send() 实际会碰到的字段；wiki_list 不依赖 assembler/scope。 */
+/** ctx 里只放 send() 实际会碰到的字段；wiki_list 调的是 library.list。 */
 function buildCtx() {
   return {
     config: {} as never,
-    library: { listEntries: () => [] } as never,
+    library: { list: () => [] } as never,
     assembler: { query: () => ({ context: '', references: [] }) } as never,
     hydrator: {} as never,
     converterRegistry: {} as never,
@@ -80,6 +80,12 @@ describe('Agent — tool loop 触顶兜底', () => {
     expect(lastMsgs.some((m) => m.role === 'user' && m.content.includes('工具调用轮数上限'))).toBe(
       true,
     );
+    // 工具失败会被 loop 吞掉，收尾答案仍会返回。断言 wiki_list 真的打到了 library.list。
+    const toolMsgs = lastMsgs.filter((m) => m.role === 'tool');
+    expect(toolMsgs).toHaveLength(2);
+    for (const m of toolMsgs) {
+      expect(JSON.parse(m.content)).toMatchObject({ ok: true, items: [] });
+    }
   });
 
   it('接近上限时注入一次"预算告警"，促使模型趁 tools 还在时完成写入', async () => {

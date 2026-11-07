@@ -35,13 +35,17 @@ describe('resolveGitSource', () => {
   });
 
   it('本地存在的路径优先于短名解析', () => {
-    const local = path.join(tmp, 'a', 'b');
+    // 短名分支只认恰好两段的 owner/repo。放在 cwd 下相对路径才稳定是两段；
+    // os.tmpdir() 相对 cwd 通常更深，path.relative 变成多段后断言会被跳过。
+    expect.assertions(2);
+    const rel = 'pith-skilladd-owner/pith-skilladd-repo';
+    const local = path.resolve(rel);
     fs.mkdirSync(local, { recursive: true });
-    // 传一个恰好像 owner/repo 但本地存在的相对路径
-    const rel = path.relative(process.cwd(), local);
-    // 仅当 rel 恰好是单斜杠两段时这条分支才触发；多段路径本就返回 null
-    if (/^[^/\s]+\/[^/\s]+$/.test(rel)) {
+    try {
+      expect(rel).toMatch(/^[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*$/);
       expect(resolveGitSource(rel)).toBeNull();
+    } finally {
+      fs.rmSync(path.resolve('pith-skilladd-owner'), { recursive: true, force: true });
     }
   });
 
