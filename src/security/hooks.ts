@@ -1,6 +1,6 @@
 import type { Config } from '../config.js';
 import { ensureSecurityRulesFile, loadSecurityRules } from './rules.js';
-import { Sanitizer } from './sanitizer.js';
+import { Sanitizer, SecurityBlockError } from './sanitizer.js';
 import { createStreamRestorer } from './streamRestore.js';
 import type { SecurityNoticeKind } from './wrap.js';
 
@@ -17,7 +17,7 @@ import type { SecurityNoticeKind } from './wrap.js';
  * （同一会话内 re-mask 才是确定的、还原才查得到）。
  */
 export interface SecurityHooks {
-  /** 出站：把一段文本脱敏成占位符形式。 */
+  /** 出站：mask 换成占位符；block 命中抛 SecurityBlockError（与 client wrap 一样拒发）。 */
   maskText(text: string): string;
   /** 入站（整段）：把占位符还原成原文。 */
   restoreText(text: string): string;
@@ -42,6 +42,7 @@ export function createSecurityHooks(
   return {
     maskText: (text) => {
       const r = sanitizer.sanitize(text);
+      if (r.blocked.length > 0) throw new SecurityBlockError(r.blocked);
       if (r.newLabels.length > 0) {
         onNotice?.(`已脱敏 ${r.newLabels.length} 处: ${r.newLabels.join(', ')}`, 'masked');
       }

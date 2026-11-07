@@ -6,12 +6,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { Config } from '../src/config.js';
 import {
   compilePresets,
+  createSecurityHooks,
   ensureSecurityRulesFile,
   loadSecurityRules,
   luhnValid,
   Sanitizer,
+  SecurityBlockError,
   type PresetName,
   type PresetState,
 } from '../src/security/index.js';
@@ -237,5 +240,48 @@ describe('ensureSecurityRulesFile — 首次初始化', () => {
     fs.writeFileSync(user, '{"rules":[{"pattern":"x","action":"mask"}]}', 'utf8');
     expect(ensureSecurityRulesFile([user])).toBeNull();
     expect(fs.readFileSync(user, 'utf8')).toContain('"x"'); // 用户内容原封不动
+  });
+});
+
+describe('createSecurityHooks — block 与 client wrap 同语义', () => {
+  const hooksConfig = (rulesFile: string) =>
+    ({ securityEnabled: true, securityRulesFiles: [rulesFile] }) as Config;
+
+  it('mask 规则仍把敏感值换成占位符', () => {
+    const rulesFile = writeRules('hooks-mask.json', {
+      presets: { phone: 'mask', email: 'off', idCard: 'off', bankCard: 'off', apiKey: 'off' },
+    });
+    const notices: string[] = [];
+    const hooks = createSecurityHooks(hooksConfig(rulesFile), (msg, kind) => {
+      notices.push(`${kind}:${msg}`);
+    });
+    expect(hooks).toBeDefined();
+    const out = hooks!.maskText('手机 13800138000');
+    expect(out).toContain('[PHONE_1]');
+    expect(out).not.toContain('13800138000');
+    expect(notices.some((n) => n.startsWith('masked:'))).toBe(true);
+  });
+
+  it('block 规则命中时抛 SecurityBlockError，不把原文交还给出站', () => {
+    const rulesFile = writeRules('hooks-block.json', {
+      presets: { phone: 'off', email: 'off', idCard: 'off', bankCard: 'off', apiKey: 'off' },
+      rules: [{ pattern: '绝密项目', action: 'block', label: 'TOP_SECRET' }],
+    });
+    const hooks = createSecurityHooks(hooksConfig(rulesFile));
+    expect(hooks).toBeDefined();
+    expect(() => hooks!.maskText('介绍一下绝密项目的进展')).toThrow(SecurityBlockError);
+    try {
+      hooks!.maskText('介绍一下绝密项目的进展');
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(SecurityBlockError);
+      expect((err as SecurityBlockError).hits[0]?.label).toBe('TOP_SECRET');
+    }
+  });
+
+  it('securityEnabled=false 时不建钩子', () => {
+    expect(
+      createSecurityHooks({ securityEnabled: false, securityRulesFiles: [] } as Config),
+    ).toBeUndefined();
   });
 });

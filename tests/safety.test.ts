@@ -312,11 +312,12 @@ describe('truncatePayload — 按字节计数', () => {
     expect(truncatePayload(exact, 100)).toBe(exact);
   });
 
-  it('超过上限的内容尾部追加 truncated 标记', () => {
+  it('超过上限的内容尾部追加 truncated 标记，且整体不超过字节上限', () => {
     const big = 'a'.repeat(500);
     const out = truncatePayload(big, 100);
     expect(out.length).toBeLessThan(big.length + 100);
     expect(out).toContain('truncated');
+    expect(Buffer.byteLength(out, 'utf8')).toBeLessThanOrEqual(100);
   });
 
   it('truncated 标记包含具体被丢弃的字节数', () => {
@@ -333,14 +334,15 @@ describe('truncatePayload — 按字节计数', () => {
 
     const out = truncatePayload(chinese, 100);
     expect(out).toContain('truncated');
-    // 截断后的字节数大致应该在 100 ~ 100 + 标记长度 之间。
-    expect(Buffer.byteLength(out, 'utf8')).toBeLessThan(150 + 50);
+    // 含截断标记在内也不得超过上限。按 UTF-16 码元 slice 会把整段中文原样带回。
+    expect(Buffer.byteLength(out, 'utf8')).toBeLessThanOrEqual(100);
   });
 
   it('混合 ASCII + 中文也能正确截断', () => {
     const mixed = 'hello 中文 '.repeat(20); // 大概 240 字节
     const out = truncatePayload(mixed, 100);
     expect(out).toContain('truncated');
+    expect(Buffer.byteLength(out, 'utf8')).toBeLessThanOrEqual(100);
   });
 
   it('空字符串保持空字符串', () => {
