@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
-import type { QueryScope } from '../wiki/assembler.js';
+import { loadConfigFromEnv } from '../config.js';
+import { ContextAssembler, type QueryScope } from '../wiki/assembler.js';
+import { LibraryService } from '../wiki/library.js';
 import { explainDelegateError } from './delegateErrors.js';
 import type { ReasoningEffort, ModelVerbosity } from './modelSettings.js';
 
@@ -343,11 +345,44 @@ export class CodexAgent {
       : ['exec', ...commonFlags, ...(this.opts.cwd ? ['-C', this.opts.cwd] : []), prompt];
   }
 
+  /**
+   * 委托进程没有宿主 ToolContext。检索边界跟 pith-mcp 同一份库：
+   * `loadConfigFromEnv()` 解析到的 wiki，只读扫描（persist:false，不和引擎/MCP 抢写
+   * index.json）。措辞与 pi-core 的 buildScopePreamble 一致（core 不能引用 desktop 那份）。
+   * 空 scope 不读库、不加 preamble。
+   */
+  private scopePreamble(question: string, scope: QueryScope | undefined): string {
+    const collections = scope?.collections ?? [];
+    const folders = scope?.folders ?? [];
+    const entryIds = scope?.entryIds ?? [];
+    if (!collections.length && !folders.length && !entryIds.length) return '';
+    const config = loadConfigFromEnv();
+    const library = new LibraryService(config.wikiRoot, {
+      persist: false,
+      ignoredDirs: [config.outputDir],
+    });
+    const result = new ContextAssembler(library).query(question, 4000, {
+      collections,
+      folders,
+      entryIds,
+    });
+    if (!result.context) return '';
+    const hints: string[] = [];
+    if (collections.length) hints.push(`collections: ${collections.join(', ')}`);
+    if (folders.length)
+      hints.push(`folders: ${folders.map((f) => `${f.collection}/${f.subpath}`).join(', ')}`);
+    if (entryIds.length) hints.push(`pinned entries: ${entryIds.join(', ')}`);
+    return (
+      `[Scoped context for this question — ${hints.join(' · ')}. ` +
+      `Answer primarily from the entries below; use wiki_query (already scoped) only if you need more.]\n\n` +
+      result.context
+    );
+  }
+
   async send(
     text: string,
     opts: {
       signal?: AbortSignal;
-      // scope 目前不参与 codex 检索（它经 MCP 工具自查库），保留以满足 AgentLike。
       scope?: QueryScope;
       events?: StreamEvents;
     } = {},
@@ -357,10 +392,14 @@ export class CodexAgent {
       err.name = 'AbortError';
       throw err;
     }
+    const preamble = this.scopePreamble(text, opts.scope);
     this.history.push({ role: 'user', content: text });
 
     const pendingContext = this.pendingContext.splice(0);
-    const turnPrompt = [...pendingContext, text].join('\n\n---\n\n');
+    const turnParts = [...pendingContext];
+    if (preamble.trim()) turnParts.push(preamble);
+    turnParts.push(text);
+    const turnPrompt = turnParts.join('\n\n---\n\n');
 
     // codex 无 --append-system-prompt：首轮把人设前置拼进 prompt；resume 轮人设已在 thread 历史里。
     const prompt =
