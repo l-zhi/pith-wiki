@@ -1,8 +1,13 @@
 import { spawn } from 'node:child_process';
+import { loadConfigFromEnv } from '@core/config.js';
 import { resolveExecutable } from '@core/runtime/commandEnvironment.js';
+import type { ToolContext } from '@core/tools/index.js';
+import { ContextAssembler } from '@core/wiki/assembler.js';
+import { LibraryService } from '@core/wiki/library.js';
 import type { AgentLike } from './sessionManager.js';
 import type { ScopeDTO } from '../shared/protocol.js';
 import { explainDelegateError } from './delegateErrors.js';
+import { buildScopePreamble } from './piCoreWiring.js';
 
 /**
  * PiAgent —— 把一次问答委托给本机 `pi` CLI（headless，`pi --mode json`），让 pi 作为 agent
@@ -282,18 +287,41 @@ export class PiAgent implements AgentLike {
     return args;
   }
 
+  /**
+   * 委托进程没有宿主 ToolContext。检索边界跟 pith-mcp 同一份库：
+   * `loadConfigFromEnv()` 解析到的 wiki，只读扫描（persist:false，不和引擎/MCP 抢写
+   * index.json），再套用 pi-core 的 `buildScopePreamble`。空 scope 不读库、不加 preamble。
+   */
+  private scopePreamble(question: string, scope: ScopeDTO | undefined): string {
+    const collections = scope?.collections ?? [];
+    const folders = scope?.folders ?? [];
+    const entryIds = scope?.entryIds ?? [];
+    if (!collections.length && !folders.length && !entryIds.length) return '';
+    const config = loadConfigFromEnv();
+    const library = new LibraryService(config.wikiRoot, {
+      persist: false,
+      ignoredDirs: [config.outputDir],
+    });
+    return buildScopePreamble(
+      { assembler: new ContextAssembler(library) } as ToolContext,
+      question,
+      { collections, folders, entryIds },
+    );
+  }
+
   async send(
     text: string,
     opts: {
       signal?: AbortSignal;
-      // scope 不参与 pi 检索（它经桥接的 wiki_* 工具自查库），保留以满足 AgentLike。
       scope?: ScopeDTO;
       events?: StreamEvents;
     } = {},
   ): Promise<string> {
+    const preamble = this.scopePreamble(text, opts.scope);
+    const prompt = preamble.trim() ? `${preamble}\n\n---\n\n${text}` : text;
     this.history.push({ role: 'user', content: text });
 
-    const args = this.buildArgs(text);
+    const args = this.buildArgs(prompt);
     console.log(
       `[pith/pi] spawn ${this.opts.binary} --mode json ${this.piSessionId ? `(session ${this.piSessionId})` : '(new session)'} ` +
         `model=${this.opts.model || '(default)'} bridge=${this.opts.bridgePath ? 'on' : 'off'} ` +
