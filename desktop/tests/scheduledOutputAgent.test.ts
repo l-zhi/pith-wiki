@@ -30,6 +30,7 @@ it('delegated output is archived before final emission; persisted answer links p
   const library = new LibraryService(dir, { persist: false });
   const wrapper = new ScheduledOutputAgent(agent, library, { taskId: 'daily', subpath: '日报' });
   const finals: string[] = [];
+  const previews: string[] = [];
   const reply = await wrapper.send('生成日报', {
     events: {
       onAssistantText: (e) => {
@@ -38,6 +39,7 @@ it('delegated output is archived before final emission; persisted answer links p
           finals.push(e.text);
         }
       },
+      onToolRound: (e) => previews.push(e.preview),
     },
   });
   const archived = path.join(dir, 'output/日报/2026-09-04.md');
@@ -46,4 +48,32 @@ it('delegated output is archived before final emission; persisted answer links p
   expect(reply).not.toContain(original);
   expect(wrapper.exportHistory().at(-1)).toMatchObject({ content: reply });
   expect(fs.existsSync(original)).toBe(false);
+  expect(previews).toEqual(['Archived and added to the wiki index']);
+});
+
+it('lists unlinked archives in English, including attachment previews', async () => {
+  const history: unknown[] = [];
+  const attachment = path.join(dir, 'output', 'daily', 'shot.png');
+  const agent: AgentLike = {
+    async send(_text, opts) {
+      fs.mkdirSync(path.dirname(attachment), { recursive: true });
+      fs.writeFileSync(attachment, 'png');
+      const reply = 'finished without a link';
+      history.push({ role: 'user', content: _text }, { role: 'assistant', content: reply });
+      opts.events?.onAssistantText?.({ text: reply, final: true });
+      return reply;
+    },
+    exportHistory: () => history,
+    restoreHistory: () => {},
+  };
+  const library = new LibraryService(dir, { persist: false });
+  const wrapper = new ScheduledOutputAgent(agent, library, { taskId: 'daily', subpath: 'daily' });
+  const previews: string[] = [];
+  const reply = await wrapper.send('run', {
+    events: { onToolRound: (e) => previews.push(e.preview) },
+  });
+  expect(reply.startsWith('finished without a link\n\nArchived:\n')).toBe(true);
+  expect(reply).toContain(`[shot.png](<${path.join(dir, 'output', 'daily', 'shot.png')}>)`);
+  expect(reply).not.toMatch(/\p{Script=Han}/u);
+  expect(previews).toEqual(['Archived attachment', 'Archived and added to the wiki index']);
 });

@@ -41,7 +41,7 @@ export class ScheduledOutputAgent implements AgentLike {
     );
     if (unlinked.length)
       final +=
-        '\n\n已归档：\n' +
+        '\n\nArchived:\n' +
         unlinked.map((file) => `- [${path.basename(file)}](<${file}>)`).join('\n');
     const history = this.agent.exportHistory();
     for (let i = history.length - 1; i >= 0; i--) {
@@ -55,7 +55,9 @@ export class ScheduledOutputAgent implements AgentLike {
         name: 'write_file',
         args: { path: file },
         ok: true,
-        preview: file.endsWith('.md') ? '已归档并加入 Wiki 索引' : '已归档附件',
+        preview: file.endsWith('.md')
+          ? 'Archived and added to the wiki index'
+          : 'Archived attachment',
       });
     opts.events?.onAssistantText?.({ text: final, final: true });
     return final;
