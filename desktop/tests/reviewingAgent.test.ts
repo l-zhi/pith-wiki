@@ -80,8 +80,15 @@ describe('ReviewingAgent', () => {
     const writer = new FakeAgent(['初稿', '改进稿']);
     const reviewer = new FakeAgent(['VERDICT: REVISE\n- 结论不清', 'VERDICT: PASS']);
     const a = new ReviewingAgent({ writer, reviewer, maxRounds: 3 });
-    const out = await a.send('任务');
+    const previews: string[] = [];
+    const out = await a.send('任务', {
+      events: { onToolRound: (e) => previews.push(e.preview) },
+    });
     expect(out).toBe('改进稿');
+    expect(previews).toEqual([
+      'Round 1: bounced back — - 结论不清',
+      'Round 2: passed',
+    ]);
     expect(writer.sent[0]).toBe('任务');
     expect(writer.sent[1]).toContain('结论不清'); // 修订提示带上了审稿意见
     expect(reviewer.sent.length).toBe(2);

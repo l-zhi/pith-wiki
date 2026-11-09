@@ -140,7 +140,9 @@ export class ReviewingAgent implements AgentLike {
         name: 'review',
         args: { round },
         ok: pass,
-        preview: pass ? `第${round}轮:通过` : `第${round}轮:打回 — ${issues.slice(0, 200)}`,
+        preview: pass
+          ? `Round ${round}: passed`
+          : `Round ${round}: bounced back — ${issues.slice(0, 200)}`,
       });
       if (pass) break;
       if (round === this.maxRounds) {
