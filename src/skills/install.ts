@@ -159,18 +159,23 @@ export interface RemoveResult {
 }
 
 /**
- * 按 name 卸载已安装 skill(删目录)。在 skillDirs 里逐个找;找不到返回 null。
- * 只删落在某个 skillDir 直接子目录的 skill —— 防止 name 含路径片段时越界删除。
+ * 按 name 卸载已安装 skill(删目录)。找不到返回 null。
+ * 多个 skillDir 撞名时删 buildSkillRegistry 会加载的那一份:后扫描的覆盖先扫描的,
+ * 校验失败或 frontmatter name 不符的副本跳过。只删 skillDir 的直接子目录。
  */
 export function removeSkillByName(name: string, config: Config): RemoveResult | null {
-  for (const root of config.skillDirs) {
+  for (const root of [...config.skillDirs].reverse()) {
     const dir = path.join(root, name);
     // path.join 会归一化 `../`，确保结果仍是 root 的直接子目录
     if (path.dirname(dir) !== path.resolve(root)) continue;
-    if (fs.existsSync(path.join(dir, 'SKILL.md'))) {
-      fs.rmSync(dir, { recursive: true, force: true });
-      return { name, dir };
+    if (!fs.existsSync(path.join(dir, 'SKILL.md'))) continue;
+    try {
+      if (loadSkill(dir).name !== name) continue;
+    } catch {
+      continue;
     }
+    fs.rmSync(dir, { recursive: true, force: true });
+    return { name, dir };
   }
   return null;
 }
