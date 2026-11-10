@@ -257,8 +257,9 @@ export class Agent {
     this.currentScope = scope;
 
     // 安全阻断的回滚点：SecurityBlockError 时把本轮压入的所有消息（scope preamble、
-    // user 提问、中间 assistant/tool 轮）整体弹掉。否则违禁内容驻留历史，
-    // 之后每一轮请求都会再次命中 block，会话被永久卡死。
+    // user 提问、中间 assistant/tool 轮、触顶兜底提示）整体弹掉。否则违禁内容驻留历史，
+    // 之后每一轮请求都会再次命中 block，会话被永久卡死。loop 和 forceFinalAnswer
+    // 都把阻断原样抛出，由下面同一个 catch 剪掉。
     const historyMark = this.messages.length;
 
     // @-mention 钉死保证：本轮范围非空时，先用 scope-aware query 预算一段上下文，
@@ -307,13 +308,7 @@ export class Agent {
             { signal: opts.signal },
           );
         } catch (err) {
-          const e = err as { status?: number; message?: string; name?: string };
-          if (e.name === 'AbortError') throw err;
-          if (err instanceof SecurityBlockError) {
-            this.messages.splice(historyMark);
-            throw err;
-          }
-          throw new AgentError(classifyError(e), e.message ?? 'LLM request failed');
+          rethrowRequestError(err);
         }
 
         const choice = completion.choices[0];
@@ -390,6 +385,9 @@ export class Agent {
       }
 
       return finalText;
+    } catch (err) {
+      if (err instanceof SecurityBlockError) this.messages.splice(historyMark);
+      throw err;
     } finally {
       this.currentScope = null;
     }
@@ -421,9 +419,7 @@ export class Agent {
         { signal },
       );
     } catch (err) {
-      const e = err as { status?: number; message?: string; name?: string };
-      if (e.name === 'AbortError') throw err;
-      throw new AgentError(classifyError(e), e.message ?? 'LLM request failed');
+      rethrowRequestError(err);
     }
 
     const choice = completion.choices[0];
@@ -581,4 +577,12 @@ function classifyError(err: { status?: number; name?: string; message?: string }
   if (err.message?.toLowerCase().includes('econn') || err.message?.toLowerCase().includes('fetch'))
     return 'network';
   return 'model_error';
+}
+
+// SecurityBlockError 必须原样冒泡：send() 只认它来剪本轮。包成 AgentError 的话，
+// 触顶兜底那次请求的阻断会留在历史里，下一轮重放再次命中。
+function rethrowRequestError(err: unknown): never {
+  const e = err as { status?: number; message?: string; name?: string };
+  if (e.name === 'AbortError' || err instanceof SecurityBlockError) throw err;
+  throw new AgentError(classifyError(e), e.message ?? 'LLM request failed');
 }
