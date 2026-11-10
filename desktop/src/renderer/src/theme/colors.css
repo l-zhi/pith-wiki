@@ -7,19 +7,12 @@
 
 :root {
   /* ---- Raw Apple system palette (light) ---- */
-  --apple-blue: #007aff;       /* info only (links/blue accents) */
   --apple-amber: #c8870f;      /* done / ready — warm, red-analogous (replaces green) */
   --apple-plum: #a85689;       /* watch / system — warm, red-analogous (replaces blue) */
   --apple-orange: #ff8a00;     /* running / busy */
   --apple-red: #9e0018;        /* danger: dead / error / destructive (darkest red) */
   --apple-brand-red: #e11d2a;  /* THE brand accent — deeper red-black identity */
   --apple-green: #34c759;      /* retained raw — not used by brand UI */
-  --apple-cyan: #32ade6;       /* retained raw — not used by brand UI */
-  --apple-purple: #af52de;     /* legacy secondary (unused by brand) */
-  --apple-yellow: #ffcc00;     /* warning */
-  --apple-pink: #ff2d55;
-  --apple-indigo: #5856d6;
-  --apple-teal: #30b0c7;
 
   /* ---- Neutral ramp (light) ---- */
   --gray-0: #ffffff;
@@ -76,11 +69,8 @@
   --status-ready: var(--apple-amber);
   --status-done: var(--apple-amber);
   --status-watch: var(--apple-plum);
-  --status-system: var(--apple-plum);
   --status-running: var(--apple-orange);
-  --status-pending: var(--gray-500);
   --status-dead: var(--apple-red);
-  --status-error: var(--apple-red);
   --status-brand: var(--apple-brand-red);
 
   --status-done-soft: rgba(200, 135, 15, 0.16);
@@ -97,19 +87,12 @@
    ("auto"), set data-theme from matchMedia in JS (see the app shell).
    ============================================================ */
 [data-theme="dark"] {
-  --apple-blue: #0a84ff;
   --apple-amber: #eab04a;
   --apple-plum: #d78bbe;
   --apple-orange: #ff9f0a;
   --apple-red: #d11a26;        /* danger on dark */
   --apple-brand-red: #ff5247;  /* brand accent — deep red, pops on black */
   --apple-green: #30d158;
-  --apple-cyan: #64d2ff;
-  --apple-purple: #bf5af3;
-  --apple-yellow: #ffd60a;
-  --apple-pink: #ff375f;
-  --apple-indigo: #5e5ce6;
-  --apple-teal: #40c8e0;
 
   --gray-0: #1c1c1e;
   --gray-50: #161618;

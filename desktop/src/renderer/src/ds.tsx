@@ -1,9 +1,3 @@
-/**
- * pith Design System 组件 —— 从 design/pith-design-system/project/components 逐一移植。
- * 视觉规则保持原样（token CSS 变量 + inline style）；唯一改动：
- *   - <i data-lucide> → lucide-react 组件（icon prop 收 ReactNode）
- *   - JSX → TSX，补类型
- */
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -14,9 +8,7 @@ const DOT_COLORS: Record<string, string> = {
   done: 'var(--status-done)',
   watch: 'var(--status-watch)',
   running: 'var(--status-running)',
-  pending: 'var(--status-pending)',
   dead: 'var(--status-dead)',
-  error: 'var(--status-error)',
   brand: 'var(--status-brand)',
   accent: 'var(--accent)',
   off: 'var(--text-quaternary)',
