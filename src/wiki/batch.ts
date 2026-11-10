@@ -2,15 +2,14 @@ import path from 'node:path';
 import PQueue from 'p-queue';
 import type { HydrationService } from './hydration.js';
 import type { LibraryService } from './library.js';
-import type { Entry } from './types.js';
 import type { ConverterRegistry } from './converters/registry.js';
 import type { ConverterCache } from './converters/cache.js';
 import {
   processJob,
-  resolveSourcePath,
   formatResultLine,
   type FileResult,
 } from './queue/processJob.js';
+import { buildSnapshot } from './queue/runner.js';
 
 /**
  * 给一个文件计算它在 collection 内的 subpath（POSIX 形式）。
@@ -32,8 +31,8 @@ function deriveSubpathFromRoot(absFile: string, batchRoot: string): string | und
  *   1. 拿到一组绝对路径文件 → 跟现有 entry 的 source.value 对比做去重
  *   2. 用 p-queue 并发跑 hydration（单文件逻辑复用 queue/processJob.ts）
  *   3. 处理 LLM 偶尔产出重复 id 的情况：批内维护一个 claimedIds Set
- *   4. 批量场景下让 hydration 复用一次 snapshot 的 linkCandidates，避免
- *      LibraryService 反链索引被高频 invalidate 拖慢
+ *   4. 每次成功入库后重建 linkCandidates（复用 queue runner 的 buildSnapshot），
+ *      让同批后面的文件能自动链接到前面刚写入的条目
  *
  * 不在本模块责任内：
  *   - 文件枚举（glob/dir 由 subcommands.ts 处理后传入 absolute paths 数组）
@@ -78,16 +77,11 @@ export interface BatchSummary {
 }
 
 export async function runBatch(opts: BatchOptions): Promise<BatchSummary> {
-  // 1. 一次性 snapshot 现有条目：candidates 用作 linkCandidates、existingPaths 用作去重、
-  //    claimedIds 用作 id 命名空间。三者只在批次开始前读一次。
-  const existingEntries: Entry[] = opts.library.list(opts.collection);
-  const existingPaths = new Set<string>();
-  const claimedIds = new Set<string>();
-  for (const e of existingEntries) {
-    const abs = resolveSourcePath(e.source?.value);
-    if (abs) existingPaths.add(abs);
-    claimedIds.add(e.id);
-  }
+  // 与 queue runner 相同：成功 put 之后重建 snapshot，后面的文件才能 auto-link
+  // 到本批刚写入的条目。claimedIds 不换成新 Set——processJob 就地 add，
+  // 并发中的任务必须共享这一份 id 命名空间。
+  let snap = buildSnapshot(opts.library, opts.collection);
+  const claimedIds = snap.claimedIds;
 
   const total = opts.files.length;
   const results: FileResult[] = [];
@@ -105,14 +99,18 @@ export async function runBatch(opts: BatchOptions): Promise<BatchSummary> {
         force: opts.force,
         hydrator: opts.hydrator,
         library: opts.library,
-        existingEntries,
-        existingPaths,
+        existingEntries: snap.entries,
+        existingPaths: snap.existingPaths,
         claimedIds,
         converterRegistry: opts.converterRegistry,
         cache: opts.cache,
         converter: opts.converter,
         subpath,
       });
+      if (result.status === 'ok') {
+        const fresh = buildSnapshot(opts.library, opts.collection);
+        snap = { entries: fresh.entries, existingPaths: fresh.existingPaths, claimedIds };
+      }
       completed += 1;
       results.push(result);
       opts.log(formatResultLine(completed, total, result));
