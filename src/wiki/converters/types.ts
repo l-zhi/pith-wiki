@@ -61,11 +61,6 @@ export interface ConvertContext {
    * 不强制调用——快速转换器（passthrough）忽略即可。
    */
   onProgress?(p: ConvertProgress): void;
-  /**
-   * 转换器临时工作目录（已 mkdir）。OCR / PDF 抽图 / 解压可能需要。
-   * 调用方负责清理；转换器不要假设目录会持久化。
-   */
-  workDir?: string;
 }
 
 export interface ConvertProgress {
