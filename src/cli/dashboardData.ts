@@ -4,6 +4,7 @@ import path from 'node:path';
 import fastGlob from 'fast-glob';
 import type { Config } from '../config.js';
 import type { ConverterRegistry } from '../wiki/converters/registry.js';
+import { LibraryService } from '../wiki/library.js';
 import { readState, type JobStatus } from '../wiki/queue/state.js';
 
 /**
@@ -52,37 +53,6 @@ export interface DashboardData {
 }
 
 /* ───────────────────────── 收集层 ───────────────────────── */
-
-/**
- * 同步扫 wikiRoot 一层得到 collection 列表 + 每个 collection 的 .md 数量。
- * 口径与 LibraryService.scanAll 一致：只看 `<wikiRoot>/<collection>/*.md` 一层。
- * 跳过 dotdir（.cache、.queue 等不是 collection）。
- */
-function scanWikiCollections(wikiRoot: string): Map<string, number> {
-  const out = new Map<string, number>();
-  if (!fs.existsSync(wikiRoot)) return out;
-  let dirents: fs.Dirent[];
-  try {
-    dirents = fs.readdirSync(wikiRoot, { withFileTypes: true });
-  } catch {
-    return out;
-  }
-  for (const entry of dirents) {
-    if (!entry.isDirectory()) continue;
-    if (entry.name.startsWith('.')) continue;
-    const dir = path.join(wikiRoot, entry.name);
-    let count = 0;
-    try {
-      for (const f of fs.readdirSync(dir)) {
-        if (f.endsWith('.md')) count += 1;
-      }
-    } catch {
-      /* ignore */
-    }
-    out.set(entry.name, count);
-  }
-  return out;
-}
 
 export type CollectionQueueCount = QueueStatusCount;
 
@@ -199,11 +169,19 @@ export async function collectDashboardData(
   config: Config,
   registry: ConverterRegistry,
 ): Promise<DashboardData> {
-  const wikiMap = scanWikiCollections(config.wikiRoot);
+  // persist:false：看板只计数，不写 index.json，也不吃一份和这次 ignoredDirs 可能不一致的缓存。
+  const library = new LibraryService(config.wikiRoot, {
+    ignoredDirs: [config.outputDir],
+    persist: false,
+  });
+  const wikiMap = new Map<string, number>();
+  for (const entry of library.list()) {
+    wikiMap.set(entry.collection, (wikiMap.get(entry.collection) ?? 0) + 1);
+  }
   const queueMap = loadQueueCounts(config.queueStatePath);
   const watchSet = watchedCollections(config);
 
-  // 行集合 = (wiki 目录) ∪ (queue 提到过的 collection)
+  // 行集合 = (已入库的 collection) ∪ (queue 提到过的 collection)
   // 设计稿里 `dead-letter` 这种"只存在于队列里"的虚拟 collection 也要出现。
   const names = new Set<string>([...wikiMap.keys(), ...queueMap.keys()]);
   const rows: CollectionRow[] = [];
