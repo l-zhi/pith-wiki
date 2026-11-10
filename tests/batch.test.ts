@@ -9,7 +9,7 @@
  *   - 429 指数退避重试 ≤ 3 次
  *   - 非 429 错误立即失败
  *   - 退出码不在本模块范围（subcommands.ts 测；这里只看 summary 计数）
- *   - linkCandidates 一次 snapshot 不每文件 list
+ *   - linkCandidates 在成功入库后刷新，后一个文件能看到先写入的条目
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -56,6 +56,8 @@ interface FakeOpts {
   errorFor?: (input: HydrateInput, callIndex: number) => unknown | null;
   /** 模拟 LLM 延迟（毫秒）。 */
   delayMs?: number;
+  /** 自定义 links；缺省空数组。 */
+  linksFor?: (input: HydrateInput, callIndex: number) => string[];
 }
 
 function makeFakeHydrator(opts: FakeOpts = {}): FakeHydrator {
@@ -77,7 +79,7 @@ function makeFakeHydrator(opts: FakeOpts = {}): FakeHydrator {
         title: id,
         summary: '',
         tags: [],
-        links: [],
+        links: opts.linksFor?.(input, idx) ?? [],
         content: `# ${id}\n\nfake content`,
         source: input.source,
         updated: new Date().toISOString(),
@@ -420,7 +422,34 @@ describe('runBatch — 错误处理', () => {
 });
 
 describe('runBatch — linkCandidates snapshot 模式', () => {
-  it('hydrator 收到的 linkCandidates 是批次开始前的 snapshot', async () => {
+  it('后一个文件能链接到同批先入库的条目', async () => {
+    const fileA = makeFile('a.md');
+    const fileB = makeFile('b.md');
+    // 假 hydrator 把当时看见的候选 id 写进 links，这样断言落在入库结果上，
+    // 而不是只看调用参数。
+    const { hydrator, calls } = makeFakeHydrator({
+      linksFor: (input) => (input.linkCandidates ?? []).map((e) => e.id),
+    });
+
+    await runBatch({
+      files: [fileA, fileB],
+      collection: 'tech',
+      force: false,
+      concurrency: 1,
+      hydrator,
+      library,
+      log: () => {},
+    });
+
+    expect(calls).toHaveLength(2);
+    // 第一个文件入库时库里还没有自己。
+    expect((calls[0].linkCandidates ?? []).map((e) => e.id)).not.toContain('a');
+    // 第二个文件必须看见第一个刚写入的条目，否则无法 auto-link。
+    expect((calls[1].linkCandidates ?? []).map((e) => e.id)).toContain('a');
+    expect(library.get('b')!.links).toContain('a');
+  });
+
+  it('linkCandidates 含批次开始前的条目，后一个文件还能看到先写入的兄弟', async () => {
     // 预置 1 条已存在的 entry。
     library.put({
       id: 'pre-existing',
@@ -447,17 +476,15 @@ describe('runBatch — linkCandidates snapshot 模式', () => {
       log: () => {},
     });
 
-    // 两个文件的 hydrate 调用都应该收到同一个 snapshot
-    // （即只包含 pre-existing，不包含批次内刚刚 put 的 a/b）。
     expect(calls).toHaveLength(2);
-    for (const c of calls) {
-      expect(c.linkCandidates).toBeDefined();
-      const ids = c.linkCandidates!.map((e) => e.id);
-      expect(ids).toContain('pre-existing');
-      // 关键：snapshot 不会包含同批次正在写入的兄弟
-      expect(ids).not.toContain('a');
-      expect(ids).not.toContain('b');
-    }
+    const first = calls[0].linkCandidates!.map((e) => e.id);
+    const second = calls[1].linkCandidates!.map((e) => e.id);
+    expect(first).toContain('pre-existing');
+    expect(first).not.toContain('a');
+    expect(first).not.toContain('b');
+    expect(second).toContain('pre-existing');
+    expect(second).toContain('a');
+    expect(second).not.toContain('b');
   });
 
   it('hydrator 收到 filenameHint = basename', async () => {
