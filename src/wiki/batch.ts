@@ -32,8 +32,8 @@ function deriveSubpathFromRoot(absFile: string, batchRoot: string): string | und
  *   1. 拿到一组绝对路径文件 → 跟现有 entry 的 source.value 对比做去重
  *   2. 用 p-queue 并发跑 hydration（单文件逻辑复用 queue/processJob.ts）
  *   3. 处理 LLM 偶尔产出重复 id 的情况：批内维护一个 claimedIds Set
- *   4. 批量场景下让 hydration 复用一次 snapshot 的 linkCandidates，避免
- *      LibraryService 反链索引被高频 invalidate 拖慢
+ *   4. 每个成功 job 后刷新 linkCandidates（同 queue runner），让后面的文件
+ *      能链接到本批刚写入的条目。claimedIds 仍是整批共享的一个 Set。
  *
  * 不在本模块责任内：
  *   - 文件枚举（glob/dir 由 subcommands.ts 处理后传入 absolute paths 数组）
@@ -78,9 +78,10 @@ export interface BatchSummary {
 }
 
 export async function runBatch(opts: BatchOptions): Promise<BatchSummary> {
-  // 1. 一次性 snapshot 现有条目：candidates 用作 linkCandidates、existingPaths 用作去重、
-  //    claimedIds 用作 id 命名空间。三者只在批次开始前读一次。
-  const existingEntries: Entry[] = opts.library.list(opts.collection);
+  // linkCandidates 随成功 put 刷新，后启动的 job 才能链到刚写入的条目。
+  // claimedIds 整批共享：processJob 在返回前同步 add，换一份 Set 会让尚在飞的
+  // job 和后启动的 job 各看各的占用。
+  let existingEntries: Entry[] = opts.library.list(opts.collection);
   const existingPaths = new Set<string>();
   const claimedIds = new Set<string>();
   for (const e of existingEntries) {
@@ -113,6 +114,9 @@ export async function runBatch(opts: BatchOptions): Promise<BatchSummary> {
         converter: opts.converter,
         subpath,
       });
+      if (result.status === 'ok') {
+        existingEntries = opts.library.list(opts.collection);
+      }
       completed += 1;
       results.push(result);
       opts.log(formatResultLine(completed, total, result));
