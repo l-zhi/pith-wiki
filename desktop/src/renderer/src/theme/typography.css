@@ -12,12 +12,9 @@
 
   /* ---- Weights ---- */
   --weight-regular: 400;
-  --weight-medium: 500;
   --weight-semibold: 600;
-  --weight-bold: 700;
 
   /* ---- Type scale (px) — desktop-app density ---- */
-  --text-display: 34px;   /* large title */
   --text-title-1: 28px;
   --text-title-2: 22px;
   --text-title-3: 20px;
@@ -41,8 +38,5 @@
   --tracking-wide: 0.02em;      /* uppercase eyebrows */
 
   /* ---- Semantic roles ---- */
-  --font-title: var(--weight-bold) var(--text-display) / var(--leading-tight) var(--font-sans);
-  --font-section: var(--weight-semibold) var(--text-headline) / var(--leading-snug) var(--font-sans);
-  --font-ui: var(--weight-medium) var(--text-callout) / var(--leading-normal) var(--font-sans);
   --font-code: var(--weight-regular) var(--text-subhead) / var(--leading-normal) var(--font-mono);
 }
