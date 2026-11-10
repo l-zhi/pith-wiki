@@ -9,7 +9,7 @@
  *   - 429 指数退避重试 ≤ 3 次
  *   - 非 429 错误立即失败
  *   - 退出码不在本模块范围（subcommands.ts 测；这里只看 summary 计数）
- *   - linkCandidates 一次 snapshot 不每文件 list
+ *   - linkCandidates 在每次成功入库后刷新（后一个文件能链到前一个）
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -420,7 +420,7 @@ describe('runBatch — 错误处理', () => {
 });
 
 describe('runBatch — linkCandidates snapshot 模式', () => {
-  it('hydrator 收到的 linkCandidates 是批次开始前的 snapshot', async () => {
+  it('后一个文件看到本批刚写入的条目，也仍看到批次开始前的条目', async () => {
     // 预置 1 条已存在的 entry。
     library.put({
       id: 'pre-existing',
@@ -447,17 +447,16 @@ describe('runBatch — linkCandidates snapshot 模式', () => {
       log: () => {},
     });
 
-    // 两个文件的 hydrate 调用都应该收到同一个 snapshot
-    // （即只包含 pre-existing，不包含批次内刚刚 put 的 a/b）。
     expect(calls).toHaveLength(2);
-    for (const c of calls) {
-      expect(c.linkCandidates).toBeDefined();
-      const ids = c.linkCandidates!.map((e) => e.id);
-      expect(ids).toContain('pre-existing');
-      // 关键：snapshot 不会包含同批次正在写入的兄弟
-      expect(ids).not.toContain('a');
-      expect(ids).not.toContain('b');
-    }
+    const firstIds = calls[0].linkCandidates!.map((e) => e.id);
+    expect(firstIds).toContain('pre-existing');
+    expect(firstIds).not.toContain('a');
+    expect(firstIds).not.toContain('b');
+
+    const secondIds = calls[1].linkCandidates!.map((e) => e.id);
+    expect(secondIds).toContain('pre-existing');
+    expect(secondIds).toContain('a');
+    expect(secondIds).not.toContain('b');
   });
 
   it('hydrator 收到 filenameHint = basename', async () => {

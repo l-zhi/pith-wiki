@@ -77,7 +77,7 @@ interface CollectionSnapshot {
   claimedIds: Set<string>;
 }
 
-function buildSnapshot(library: LibraryService, collection: string): CollectionSnapshot {
+export function buildSnapshot(library: LibraryService, collection: string): CollectionSnapshot {
   const entries = library.list(collection);
   const existingPaths = new Set<string>();
   const claimedIds = new Set<string>();
