@@ -9,6 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { Agent, AgentError } from '../src/llm/agent.js';
+import { SecurityBlockError } from '../src/security/index.js';
 
 function toolCallResp(name: string, args: object) {
   return {
@@ -124,5 +125,29 @@ describe('Agent — tool loop 触顶兜底', () => {
     };
     const agent = new Agent(client as never, 'm', buildCtx() as never, { maxSteps: 1 });
     await expect(agent.send('问题', {})).rejects.toBeInstanceOf(AgentError);
+  });
+
+  it('强制收尾请求被 SecurityBlockError 阻断 → 回滚本轮并原样抛出', async () => {
+    const block = new SecurityBlockError([{ label: 'KEYWORD', source: 'test', sample: '违禁词' }]);
+    let n = 0;
+    const client = {
+      chat: {
+        completions: {
+          create: async () => {
+            n += 1;
+            if (n === 1) return finalResp('先前回答');
+            if (n === 2) return toolCallResp('wiki_list', {});
+            throw block;
+          },
+        },
+      },
+    };
+    const agent = new Agent(client as never, 'm', buildCtx() as never, { maxSteps: 1 });
+    expect(await agent.send('先前的问题')).toBe('先前回答');
+    const before = agent.exportHistory();
+
+    await expect(agent.send('包含违禁词的问题')).rejects.toBe(block);
+    // 触顶后的兜底请求与主循环同一条回滚：违禁轮（提问、工具轮、收尾提示）不留在历史里。
+    expect(agent.exportHistory()).toEqual(before);
   });
 });
