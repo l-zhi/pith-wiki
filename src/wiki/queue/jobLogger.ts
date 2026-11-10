@@ -10,11 +10,10 @@ import path from 'node:path';
  *   - 每个 job 写量 < 数十行，根本谈不上性能压力。
  */
 
-export type LogLevel = 'INFO' | 'WARN' | 'ERROR';
+export type LogLevel = 'INFO' | 'ERROR';
 
 export interface JobLogger {
   info(msg: string): void;
-  warn(msg: string): void;
   error(msg: string): void;
   /** 关闭句柄。当前实现是 no-op（每次写都是独立 syscall）。 */
   close(): void;
@@ -33,7 +32,6 @@ export function openJobLog(logDir: string, jobId: string): JobLogger {
 
   return {
     info: (msg) => write('INFO', msg),
-    warn: (msg) => write('WARN', msg),
     error: (msg) => write('ERROR', msg),
     close: () => {},
     path: filePath,
