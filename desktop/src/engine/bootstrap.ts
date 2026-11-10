@@ -34,6 +34,7 @@ import { CodexAgent, readPithMcpSpec } from './codexAgent.js';
 import { PiAgent } from './piAgent.js';
 import { readCodexModelOptions, applyProviderModelSettings } from './providerModelSettings.js';
 import { collectionFolders } from './collectionFolders.js';
+import { bootstrapReadiness } from './bootstrapReadiness.js';
 import { reasoningEffortsFor } from '@core/llm/modelSettings.js';
 import { PiCoreAgent } from './piCoreAgent.js';
 import { buildScopePreamble, toToolSpecs } from './piCoreWiring.js';
@@ -806,10 +807,10 @@ async function handle(req: EngineRequest): Promise<unknown> {
           process.env[(p as { apiKeyEnv?: string }).apiKeyEnv ?? ''],
         ),
       }));
+      const { ready, needsOnboarding } = bootstrapReadiness(s.config);
       return {
-        ready: s.config.apiKey.length > 0,
-        // 委托型 CLI（claude-code/codex）没有 apiKey（走订阅），不该被当成"未配置"而弹引导页
-        needsOnboarding: s.config.apiKey.length === 0 && s.config.providerKind === 'openai',
+        ready,
+        needsOnboarding,
         provider: s.config.activeProvider || 'deepseek',
         model: s.config.model,
         wikiRoot: s.config.wikiRoot,
